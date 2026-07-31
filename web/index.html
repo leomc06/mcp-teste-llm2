@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    >
+    <meta
+      name="description"
+      content="Consulta interna de ordens de serviço."
+    >
+
+    <title>Consultas</title>
+
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <h1>Consultas</h1>
+      </header>
+
+      <section class="query-section" aria-labelledby="query-title">
+        <h2 id="query-title" class="visually-hidden">
+          Nova consulta
+        </h2>
+
+        <form id="query-form">
+          <div class="composer">
+            <textarea
+              id="question"
+              name="question"
+              maxlength="2000"
+              placeholder="Pergunte sobre uma ordem de serviço"
+              aria-label="Pergunta sobre ordens de serviço"
+              required
+            ></textarea>
+
+            <div class="composer-footer">
+              <span id="character-count">0 / 2000</span>
+
+              <button
+                id="submit-button"
+                class="submit-button"
+                type="submit"
+                aria-label="Enviar pergunta"
+                title="Enviar pergunta"
+              >
+                <span aria-hidden="true">↑</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section
+        id="loading"
+        class="loading-panel"
+        aria-live="polite"
+        hidden
+      >
+        <span class="loading-indicator" aria-hidden="true"></span>
+
+        <div>
+          <strong>Consultando</strong>
+          <p>Aguarde a resposta.</p>
+        </div>
+      </section>
+
+      <section
+        id="error-panel"
+        class="error-panel"
+        role="alert"
+        hidden
+      >
+        <strong>Não foi possível concluir a consulta</strong>
+        <p id="error-message"></p>
+      </section>
+
+      <section
+        id="response-panel"
+        class="response-panel"
+        aria-labelledby="response-title"
+        hidden
+      >
+        <div class="response-heading">
+          <h2 id="response-title">Resposta</h2>
+          <span id="duration"></span>
+        </div>
+
+        <div id="answer" class="answer"></div>
+
+        <div id="sources" class="sources" hidden>
+          <div class="sources-heading">
+            <h3>Ordens de serviço consultadas</h3>
+            <span id="source-count"></span>
+          </div>
+
+          <div id="source-list" class="source-list"></div>
+        </div>
+
+        <details class="technical-details">
+          <summary>Detalhes da consulta</summary>
+
+          <dl>
+            <div>
+              <dt>Requisição</dt>
+              <dd id="request-id">-</dd>
+            </div>
+
+            <div>
+              <dt>Tools</dt>
+              <dd id="tools-used">-</dd>
+            </div>
+          </dl>
+        </details>
+      </section>
+    </main>
+
+    <template id="source-template">
+      <article class="source-card">
+        <span class="source-number"></span>
+        <span class="source-tool"></span>
+      </article>
+    </template>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

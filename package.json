@@ -1,0 +1,23 @@
+{
+  "name": "mcp-teste-llm",
+  "version": "1.0.0",
+  "description": "Servidor MCP e backend agente local para consulta segura de ordens de serviço fictícias.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "./run-mcp.sh",
+    "start:mcp": "./run-mcp.sh",
+    "start:agent": "./run-agent.sh",
+    "check": "node --check src/server.js && for file in agent/*.js; do node --check \"$file\"; done",
+    "test": "npm run check && node --test",
+    "test:integration": "node integration-agent.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
+  }
+}
