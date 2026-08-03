@@ -84,7 +84,29 @@ async function consult(question) {
   return data;
 }
 
-for (const testCase of cases) {
+const requestedCase = process.argv[2];
+let selectedCases = cases;
+
+if (requestedCase !== undefined) {
+  const caseNumber = Number(requestedCase);
+
+  if (
+    !Number.isInteger(caseNumber)
+    || caseNumber < 1
+    || caseNumber > cases.length
+  ) {
+    console.error(
+      `Informe um caso entre 1 e ${cases.length}.`,
+    );
+    process.exit(1);
+  }
+
+  selectedCases = [
+    cases[caseNumber - 1],
+  ];
+}
+
+for (const testCase of selectedCases) {
   const data = await consult(testCase.question);
 
   if (testCase.expectedTool) {
@@ -173,5 +195,5 @@ for (const testCase of cases) {
 }
 
 console.log(
-  `Integração concluída: ${cases.length}/${cases.length}.`,
+  `Integração concluída: ${selectedCases.length}/${selectedCases.length}.`,
 );
