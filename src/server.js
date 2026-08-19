@@ -184,7 +184,7 @@ server.registerTool(
         .enum(["aberta", "em_andamento", "aguardando", "concluida", "cancelada"])
         .optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -256,7 +256,7 @@ server.registerTool(
       responsavel: z.string().trim().min(1).max(150).optional(),
       solicitante: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -347,7 +347,7 @@ server.registerTool(
         .optional(),
       solicitante: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -442,7 +442,7 @@ server.registerTool(
         ])
         .optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -535,7 +535,7 @@ server.registerTool(
         .optional(),
       responsavel: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -721,7 +721,7 @@ server.registerTool(
       responsavel: z.string().trim().min(1).max(150).optional(),
       solicitante: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -791,7 +791,7 @@ server.registerTool(
     inputSchema: {
       responsavel: z.string().trim().min(1).max(150).optional(),
       solicitante: z.string().trim().min(1).max(150).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
     },
   },
   async ({ responsavel, solicitante, dias }) => {
@@ -856,7 +856,7 @@ server.registerTool(
     inputSchema: {
       responsavel: z.string().trim().min(1).max(150).optional(),
       solicitante: z.string().trim().min(1).max(150).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
     },
   },
   async ({ responsavel, solicitante, dias }) => {
@@ -935,7 +935,7 @@ server.registerTool(
         "cancelada",
       ]),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -1016,7 +1016,7 @@ server.registerTool(
         "concluida",
         "cancelada",
       ]).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -1128,7 +1128,7 @@ server.registerTool(
     description:
       "Agrupa as ordens de serviço por responsável e informa a quantidade total e a quantidade atrasada de cada um, ordenado do responsável com mais OS para o com menos. Útil para perguntas como 'quantas OS cada responsável tem'.",
     inputSchema: {
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -1171,7 +1171,7 @@ server.registerTool(
     description:
       "Agrupa as ordens de serviço por solicitante e informa a quantidade total e a quantidade atrasada de cada um, ordenado do solicitante com mais OS para o com menos. Útil para perguntas como 'quantas OS cada solicitante tem'.",
     inputSchema: {
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
@@ -1216,7 +1216,7 @@ server.registerTool(
     inputSchema: {
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
       responsavel: z.string().trim().min(1).max(150).optional(),
-      dias: z.number().int().min(1).max(3650).default(365),
+      dias: z.number().int().min(1).max(3650).default(3650),
     },
   },
   async ({ prioridade, responsavel, dias }) => {

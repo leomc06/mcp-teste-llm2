@@ -1088,6 +1088,22 @@ export function routeOsQuestion(value) {
     );
   }
 
+  const hasAllIntent =
+    /\btodas?\b/.test(text)
+    || /\bqualquer\b/.test(text);
+
+  if (
+    hasAllIntent
+    && responsavel === undefined
+    && solicitante === undefined
+  ) {
+    return createDecision(
+      "listar_recentes",
+      "listar_os_recentes",
+      entities,
+    );
+  }
+
   return createClarification(
     entities,
     "Especifique se deseja consultar a OS por número, status, prioridade, atraso, responsável, solicitante ou histórico.",

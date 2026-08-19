@@ -2,6 +2,54 @@ function label(value) {
   return String(value).replaceAll("_", " ");
 }
 
+function formatDate(value) {
+  if (!value) {
+    return value;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+function formatMonth(value) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value ?? ""));
+
+  if (!match) {
+    return value;
+  }
+
+  const [, ano, mes] = match;
+
+  return `${mes}/${ano}`;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return value;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const hora = date.toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return `${formatDate(value)} ${hora}`;
+}
+
 function formatOrder(ordem) {
   const parts = [
     `OS ${ordem.numero}: ${ordem.titulo}`,
@@ -47,11 +95,11 @@ function formatOrderByNumber(data) {
   }
 
   if (ordem.prazo) {
-    details.push(`Prazo: ${ordem.prazo}`);
+    details.push(`Prazo: ${formatDateTime(ordem.prazo)}`);
   }
 
   if (ordem.concluida_em) {
-    details.push(`Conclusão: ${ordem.concluida_em}`);
+    details.push(`Conclusão: ${formatDateTime(ordem.concluida_em)}`);
   }
 
   return details.join("\n");
@@ -80,7 +128,7 @@ function formatHistory(data) {
     ...header,
     ...eventos.map(
       (evento) =>
-        `- ${evento.registrado_em}: ${label(evento.status)}; ${evento.descricao}; autor: ${evento.autor}`,
+        `- ${formatDateTime(evento.registrado_em)}: ${label(evento.status)}; ${evento.descricao}; autor: ${evento.autor}`,
     ),
   ].join("\n");
 }
@@ -96,7 +144,7 @@ function formatHistoryList(data) {
     `${data.quantidade ?? eventos.length} evento(s) de histórico no período de ${data.periodo_dias} dias:`,
     ...eventos.map(
       (evento) =>
-        `- ${evento.registrado_em}: OS ${evento.os_numero} (${evento.os_titulo}); ${label(evento.status)}; ${evento.descricao}; autor: ${evento.autor}`,
+        `- ${formatDateTime(evento.registrado_em)}: OS ${evento.os_numero} (${evento.os_titulo}); ${label(evento.status)}; ${evento.descricao}; autor: ${evento.autor}`,
     ),
   ].join("\n");
 }
@@ -204,7 +252,7 @@ function formatClient(cliente) {
     `Cliente ${cliente.id}: ${cliente.nome}`,
     `e-mail: ${cliente.email}`,
     `status: ${cliente.ativo ? "ativo" : "inativo"}`,
-    `cadastro: ${cliente.criado_em}`,
+    `cadastro: ${formatDate(cliente.criado_em)}`,
   ];
 
   if (cliente.documento_numero) {
@@ -265,8 +313,16 @@ function formatClientSummary(data) {
     `Resumo de clientes: total ${data.total}`,
     `Ativos: ${data.ativos}`,
     `Inativos: ${data.inativos}`,
-    `Primeiro cadastro: ${data.primeiro_cadastro ?? "não informado"}`,
-    `Último cadastro: ${data.ultimo_cadastro ?? "não informado"}`,
+    `Primeiro cadastro: ${
+      data.primeiro_cadastro
+        ? formatDate(data.primeiro_cadastro)
+        : "não informado"
+    }`,
+    `Último cadastro: ${
+      data.ultimo_cadastro
+        ? formatDate(data.ultimo_cadastro)
+        : "não informado"
+    }`,
   ].join("\n");
 }
 
@@ -280,7 +336,8 @@ function formatClientsByMonth(data) {
   return [
     `${data.quantidade_meses} mês(es) com cadastros de clientes:`,
     ...rows.map(
-      (row) => `- ${row.mes}: total ${row.total}; ativos ${row.ativos}`,
+      (row) =>
+        `- ${formatMonth(row.mes)}: total ${row.total}; ativos ${row.ativos}`,
     ),
   ].join("\n");
 }

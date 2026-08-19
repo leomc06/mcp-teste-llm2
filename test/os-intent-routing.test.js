@@ -521,3 +521,29 @@ test("OS recentes com responsável nomeado continua indo para listar_os_por_resp
   assert.deepEqual(decision.toolNames, ["listar_os_por_responsavel"]);
   assert.equal(decision.entities.responsavel, "Carlos");
 });
+
+test("liste todas as OS roteia para listar_os_recentes", () => {
+  const decision = routeOsQuestion("liste todas os");
+
+  assert.equal(decision.intent, "listar_recentes");
+  assert.deepEqual(decision.toolNames, ["listar_os_recentes"]);
+  assert.equal(decision.fallback, false);
+});
+
+test("todas as OS canceladas continua indo para listar_os_por_status", () => {
+  const decision = routeOsQuestion("Liste todas as OS canceladas.");
+
+  assert.equal(decision.intent, "listar_por_status");
+  assert.deepEqual(decision.toolNames, ["listar_os_por_status"]);
+  assert.equal(decision.entities.status, "cancelada");
+});
+
+test("todas as OS do responsável Carlos continua indo para listar_os_por_responsavel", () => {
+  const decision = routeOsQuestion(
+    "Liste todas as OS do responsável Carlos.",
+  );
+
+  assert.equal(decision.intent, "listar_por_responsavel");
+  assert.deepEqual(decision.toolNames, ["listar_os_por_responsavel"]);
+  assert.equal(decision.entities.responsavel, "Carlos");
+});
