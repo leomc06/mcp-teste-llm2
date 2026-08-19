@@ -1,87 +1,58 @@
 import {
+  hasAmbiguousRequesterExtraction,
+  hasAmbiguousResponsibleExtraction,
   normalizeText,
   routeOsQuestion,
 } from "./os-routing.js";
+import { routeClientQuestion } from "./client-routing.js";
 
-function selectClientTool(text, selectedNames) {
-  const asksForBothStatuses =
-    /\bativos?\s+e\s+inativos?\b/.test(text)
-    || /\binativos?\s+e\s+ativos?\b/.test(text)
-    || /\btodos os clientes\b/.test(text);
+const PERSON_LOOKUP_PATTERN =
+  /\b(?:informa\w*|dados|detalhes)\s+(?:sobre|de|do|da)\s+\S/u;
 
-  if (/\bresumo\b/.test(text)) {
-    selectedNames.add("resumo_clientes");
-    return;
-  }
-
-  if (/\bdominio/.test(text)) {
-    selectedNames.add("listar_dominios_email");
-    return;
-  }
-
-  if (/\b(e mail|email)\b/.test(text)) {
-    selectedNames.add("buscar_cliente_por_email");
-    return;
-  }
-
-  if (
-    /\b(id|identificador)\b/.test(text)
-    && /\bcliente/.test(text)
-  ) {
-    selectedNames.add("buscar_cliente_por_id");
-    return;
-  }
-
-  if (
-    /\b(nome|chamad|chama se)\b/.test(text)
-    && /\bcliente/.test(text)
-  ) {
-    selectedNames.add("buscar_clientes_por_nome");
-    return;
-  }
-
-  if (
-    /\brecent/.test(text)
-    || (
-      /\bultim/.test(text)
-      && /\b(dia|dias|semana|semanas|mes|meses|ano|anos)\b/.test(
-        text,
-      )
-    )
-  ) {
-    selectedNames.add("listar_clientes_recentes");
-    return;
-  }
-
-  if (
-    /\binativ/.test(text)
-    && !asksForBothStatuses
-  ) {
-    selectedNames.add("listar_clientes_inativos");
-    return;
-  }
-
-  selectedNames.add("listar_clientes");
-}
+const AMBIGUOUS_PERSON_TOOL_CHECKS = Object.freeze({
+  listar_por_responsavel: hasAmbiguousResponsibleExtraction,
+  listar_por_solicitante: hasAmbiguousRequesterExtraction,
+});
 
 export function selectToolDecision(
   pergunta,
   availableTools,
 ) {
   const text = normalizeText(pergunta);
-  const selectedNames = new Set();
 
-  let route = null;
+  const osRoute = routeOsQuestion(pergunta);
 
-  if (/\bclientes?\b/.test(text)) {
-    selectClientTool(text, selectedNames);
-  } else {
-    route = routeOsQuestion(pergunta);
+  const mentionsClient = /\bclientes?\b/.test(text);
+  const looksLikePersonLookup = PERSON_LOOKUP_PATTERN.test(text);
 
-    for (const toolName of route?.toolNames ?? []) {
-      selectedNames.add(toolName);
-    }
+  const clientRoute =
+    mentionsClient || looksLikePersonLookup
+      ? routeClientQuestion(pergunta)
+      : null;
+
+  let route =
+    mentionsClient
+      ? clientRoute
+      : (osRoute ?? clientRoute);
+
+  const ambiguityCheck =
+    !mentionsClient && osRoute
+      ? AMBIGUOUS_PERSON_TOOL_CHECKS[osRoute.intent]
+      : undefined;
+
+  if (ambiguityCheck?.(pergunta)) {
+    route = {
+      ...osRoute,
+      toolNames: [
+        ...osRoute.toolNames,
+        "listar_os_por_cliente",
+      ],
+    };
   }
+
+  const selectedNames = new Set(
+    route?.toolNames ?? [],
+  );
 
   const tools = availableTools.filter((tool) =>
     selectedNames.has(tool.function.name)

@@ -101,6 +101,104 @@ const combinationCases = [
       dias: 180,
     },
   },
+  {
+    question:
+      "Liste as OS canceladas de prioridade alta.",
+    tool: "listar_os_por_status",
+    intent: "listar_por_status",
+    entities: {
+      status: "cancelada",
+      prioridade: "alta",
+    },
+  },
+  {
+    question:
+      "Liste as OS críticas com limite 30 nos últimos 10 dias.",
+    tool: "listar_os_por_prioridade",
+    intent: "listar_por_prioridade",
+    entities: {
+      prioridade: "critica",
+      dias: 10,
+      limite: 30,
+    },
+  },
+  {
+    question:
+      "Liste as OS solicitadas pela Ana de prioridade alta.",
+    tool: "listar_os_por_solicitante",
+    intent: "listar_por_solicitante",
+    entities: {
+      solicitante: "Ana",
+      prioridade: "alta",
+    },
+  },
+  {
+    question:
+      "Liste as OS do responsável Carlos de prioridade alta.",
+    tool: "listar_os_por_responsavel",
+    intent: "listar_por_responsavel",
+    entities: {
+      responsavel: "Carlos",
+      prioridade: "alta",
+    },
+  },
+  {
+    question:
+      "Qual as OS críticas de Carlos Souza",
+    tool: "listar_os_por_responsavel",
+    intent: "listar_por_responsavel",
+    entities: {
+      responsavel: "Carlos Souza",
+      prioridade: "critica",
+    },
+  },
+  {
+    question:
+      "Qual o resumo por status das OS do responsável Carlos Souza?",
+    tool: "resumo_os_por_status",
+    intent: "resumo_por_status",
+    entities: {
+      responsavel: "Carlos Souza",
+    },
+  },
+  {
+    question:
+      "Quantas OS de prioridade alta foram solicitadas pela Ana?",
+    tool: "resumo_os_por_prioridade",
+    intent: "resumo_por_prioridade",
+    entities: {
+      prioridade: "alta",
+      solicitante: "Ana",
+    },
+  },
+  {
+    question:
+      "Mostre o histórico de todas as OS canceladas.",
+    tool: "listar_historico_os",
+    intent: "historico_geral",
+    entities: {
+      status: "cancelada",
+    },
+  },
+  {
+    question:
+      "Mostre o histórico de todas as OS do responsável Carlos Souza.",
+    tool: "listar_historico_os",
+    intent: "historico_geral",
+    entities: {
+      responsavel: "Carlos Souza",
+    },
+  },
+  {
+    question:
+      "Quais OS atrasadas do responsável Carlos Souza têm prioridade alta?",
+    tool: "listar_os_atrasadas",
+    intent: "listar_atrasadas",
+    entities: {
+      responsavel: "Carlos Souza",
+      prioridade: "alta",
+    },
+  },
 ];
 
 for (const {
@@ -234,30 +332,6 @@ for (
 }
 
 const clarificationCases = [
-  {
-    question:
-      "Liste as OS canceladas de prioridade alta.",
-    fields: {
-      status: "cancelada",
-      prioridade: "alta",
-    },
-  },
-  {
-    question:
-      "Liste as OS solicitadas pela Ana de prioridade alta.",
-    fields: {
-      solicitante: "Ana",
-      prioridade: "alta",
-    },
-  },
-  {
-    question:
-      "Liste as OS do responsável Carlos de prioridade alta.",
-    fields: {
-      responsavel: "Carlos",
-      prioridade: "alta",
-    },
-  },
   {
     question:
       "Mostre o histórico das OS.",

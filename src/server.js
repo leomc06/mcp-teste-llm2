@@ -46,6 +46,16 @@ function failure(error) {
     isError: true,
   };
 }
+
+function escapeLikePattern(value) {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+function escapeLikeOrNull(value) {
+  return value === undefined || value === null
+    ? null
+    : escapeLikePattern(value);
+}
 server.registerTool(
   "buscar_os_por_numero",
   {
@@ -100,7 +110,7 @@ server.registerTool(
     inputSchema: {
       responsavel: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
-      limite: z.number().int().min(1).max(50).default(20),
+      limite: z.number().int().min(1).max(100).default(20),
     },
   },
   async ({ responsavel, prioridade, limite }) => {
@@ -125,7 +135,7 @@ server.registerTool(
           WHERE status NOT IN ('concluida', 'cancelada')
             AND (
               $1::text IS NULL
-              OR LOWER(responsavel) = LOWER($1)
+              OR responsavel ILIKE '%' || $1 || '%'
             )
             AND (
               $2::text IS NULL
@@ -143,7 +153,7 @@ server.registerTool(
           LIMIT $3
         `,
         [
-          responsavel ?? null,
+          escapeLikeOrNull(responsavel),
           prioridade ?? null,
           limite,
         ],
@@ -164,19 +174,93 @@ server.registerTool(
   },
 );
 server.registerTool(
+  "listar_os_recentes",
+  {
+    title: "Listar OS recentes",
+    description:
+      "Lista as ordens de serviço abertas mais recentemente, da mais nova para a mais antiga. Permite filtrar por status e prioridade.",
+    inputSchema: {
+      status: z
+        .enum(["aberta", "em_andamento", "aguardando", "concluida", "cancelada"])
+        .optional(),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ status, prioridade, dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            id,
+            numero,
+            titulo,
+            status,
+            prioridade,
+            solicitante,
+            responsavel,
+            aberta_em,
+            prazo,
+            (
+              prazo < CURRENT_TIMESTAMP
+              AND status NOT IN ('concluida', 'cancelada')
+            ) AS atrasada
+          FROM ordens_servico
+          WHERE aberta_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND (
+              $2::text IS NULL
+              OR status = $2
+            )
+            AND (
+              $3::text IS NULL
+              OR prioridade = $3
+            )
+          ORDER BY aberta_em DESC, numero DESC
+          LIMIT $4
+        `,
+        [dias, status ?? null, prioridade ?? null, limite],
+      );
+
+      return success({
+        filtros: {
+          status: status ?? null,
+          prioridade: prioridade ?? null,
+          periodo_dias: dias,
+          limite,
+        },
+        quantidade: result.rowCount,
+        ordens_servico: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+server.registerTool(
   "listar_os_atrasadas",
   {
     title: "Listar OS atrasadas",
     description:
-      "Lista ordens de serviço com prazo vencido que ainda não foram concluídas nem canceladas. Permite filtrar por responsável e prioridade.",
+      "Lista ordens de serviço com prazo vencido que ainda não foram concluídas nem canceladas. Permite filtrar por status, responsável, solicitante e prioridade.",
     inputSchema: {
+      status: z
+        .enum([
+          "aberta",
+          "em_andamento",
+          "aguardando",
+          "concluida",
+          "cancelada",
+        ])
+        .optional(),
       responsavel: z.string().trim().min(1).max(150).optional(),
+      solicitante: z.string().trim().min(1).max(150).optional(),
       prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
-      limite: z.number().int().min(1).max(50).default(20),
+      limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ responsavel, prioridade, dias, limite }) => {
+  async ({ responsavel, solicitante, prioridade, status, dias, limite }) => {
     try {
       const result = await pool.query(
         `
@@ -199,19 +283,29 @@ server.registerTool(
             AND prazo >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
             AND (
               $2::text IS NULL
-              OR LOWER(responsavel) = LOWER($2)
+              OR responsavel ILIKE '%' || $2 || '%'
             )
             AND (
               $3::text IS NULL
-              OR prioridade = $3
+              OR solicitante ILIKE '%' || $3 || '%'
+            )
+            AND (
+              $4::text IS NULL
+              OR prioridade = $4
+            )
+            AND (
+              $5::text IS NULL
+              OR status = $5
             )
           ORDER BY prazo, numero
-          LIMIT $4
+          LIMIT $6
         `,
         [
           dias,
-          responsavel ?? null,
+          escapeLikeOrNull(responsavel),
+          escapeLikeOrNull(solicitante),
           prioridade ?? null,
+          status ?? null,
           limite,
         ],
       );
@@ -220,7 +314,9 @@ server.registerTool(
         filtros: {
           periodo_dias: dias,
           responsavel: responsavel ?? null,
+          solicitante: solicitante ?? null,
           prioridade: prioridade ?? null,
+          status: status ?? null,
           limite,
         },
         quantidade: result.rowCount,
@@ -237,7 +333,7 @@ server.registerTool(
   {
     title: "Listar OS por responsável",
     description:
-      "Lista ordens de serviço atribuídas a um responsável. Aceita o nome completo ou parte do nome e permite filtrar por status.",
+      "Lista ordens de serviço atribuídas a um responsável. Aceita o nome completo ou parte do nome e permite filtrar por status, solicitante e prioridade.",
     inputSchema: {
       responsavel: z.string().trim().min(1).max(150),
       status: z
@@ -249,11 +345,13 @@ server.registerTool(
           "cancelada",
         ])
         .optional(),
+      solicitante: z.string().trim().min(1).max(150).optional(),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
-      limite: z.number().int().min(1).max(50).default(20),
+      limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ responsavel, status, dias, limite }) => {
+  async ({ responsavel, status, solicitante, prioridade, dias, limite }) => {
     try {
       const result = await pool.query(
         `
@@ -279,6 +377,14 @@ server.registerTool(
               $3::text IS NULL
               OR status = $3
             )
+            AND (
+              $4::text IS NULL
+              OR solicitante ILIKE '%' || $4 || '%'
+            )
+            AND (
+              $5::text IS NULL
+              OR prioridade = $5
+            )
           ORDER BY
             CASE status
               WHEN 'aberta' THEN 1
@@ -289,12 +395,14 @@ server.registerTool(
             END,
             prazo,
             numero
-          LIMIT $4
+          LIMIT $6
         `,
         [
-          responsavel,
+          escapeLikePattern(responsavel),
           dias,
           status ?? null,
+          escapeLikeOrNull(solicitante),
+          prioridade ?? null,
           limite,
         ],
       );
@@ -303,6 +411,100 @@ server.registerTool(
         filtros: {
           responsavel,
           status: status ?? null,
+          solicitante: solicitante ?? null,
+          prioridade: prioridade ?? null,
+          periodo_dias: dias,
+          limite,
+        },
+        quantidade: result.rowCount,
+        ordens_servico: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+server.registerTool(
+  "listar_os_por_cliente",
+  {
+    title: "Listar OS por cliente",
+    description:
+      "Lista ordens de serviço vinculadas a um cliente cadastrado. Aceita o nome completo ou parte do nome e permite filtrar por status e prioridade.",
+    inputSchema: {
+      cliente: z.string().trim().min(1).max(150),
+      status: z
+        .enum([
+          "aberta",
+          "em_andamento",
+          "aguardando",
+          "concluida",
+          "cancelada",
+        ])
+        .optional(),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ cliente, status, prioridade, dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            os.id,
+            os.numero,
+            os.titulo,
+            os.status,
+            os.prioridade,
+            os.solicitante,
+            os.responsavel,
+            os.aberta_em,
+            os.prazo,
+            os.concluida_em,
+            c.id AS cliente_id,
+            c.nome AS cliente_nome,
+            (
+              os.prazo < CURRENT_TIMESTAMP
+              AND os.status NOT IN ('concluida', 'cancelada')
+            ) AS atrasada
+          FROM ordens_servico os
+          JOIN clientes c ON c.id = os.cliente_id
+          WHERE c.nome ILIKE '%' || $1 || '%'
+            AND os.aberta_em >= CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day')
+            AND (
+              $3::text IS NULL
+              OR os.status = $3
+            )
+            AND (
+              $4::text IS NULL
+              OR os.prioridade = $4
+            )
+          ORDER BY
+            CASE os.status
+              WHEN 'aberta' THEN 1
+              WHEN 'em_andamento' THEN 2
+              WHEN 'aguardando' THEN 3
+              WHEN 'concluida' THEN 4
+              WHEN 'cancelada' THEN 5
+            END,
+            os.prazo,
+            os.numero
+          LIMIT $5
+        `,
+        [
+          escapeLikePattern(cliente),
+          dias,
+          status ?? null,
+          prioridade ?? null,
+          limite,
+        ],
+      );
+
+      return success({
+        filtros: {
+          cliente,
+          status: status ?? null,
+          prioridade: prioridade ?? null,
           periodo_dias: dias,
           limite,
         },
@@ -319,7 +521,7 @@ server.registerTool(
   {
     title: "Listar OS por solicitante",
     description:
-      "Lista ordens de serviço registradas por um solicitante. Aceita o nome completo ou parte do nome e permite filtrar por status.",
+      "Lista ordens de serviço registradas por um solicitante. Aceita o nome completo ou parte do nome e permite filtrar por status, responsável e prioridade.",
     inputSchema: {
       solicitante: z.string().trim().min(1).max(150),
       status: z
@@ -331,11 +533,13 @@ server.registerTool(
           "cancelada",
         ])
         .optional(),
+      responsavel: z.string().trim().min(1).max(150).optional(),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
-      limite: z.number().int().min(1).max(50).default(20),
+      limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ solicitante, status, dias, limite }) => {
+  async ({ solicitante, status, responsavel, prioridade, dias, limite }) => {
     try {
       const result = await pool.query(
         `
@@ -361,13 +565,23 @@ server.registerTool(
               $3::text IS NULL
               OR status = $3
             )
+            AND (
+              $4::text IS NULL
+              OR responsavel ILIKE '%' || $4 || '%'
+            )
+            AND (
+              $5::text IS NULL
+              OR prioridade = $5
+            )
           ORDER BY aberta_em DESC, numero DESC
-          LIMIT $4
+          LIMIT $6
         `,
         [
-          solicitante,
+          escapeLikePattern(solicitante),
           dias,
           status ?? null,
+          escapeLikeOrNull(responsavel),
+          prioridade ?? null,
           limite,
         ],
       );
@@ -376,6 +590,8 @@ server.registerTool(
         filtros: {
           solicitante,
           status: status ?? null,
+          responsavel: responsavel ?? null,
+          prioridade: prioridade ?? null,
           periodo_dias: dias,
           limite,
         },
@@ -485,17 +701,100 @@ server.registerTool(
     }
   },
 );
+
+server.registerTool(
+  "listar_historico_os",
+  {
+    title: "Listar histórico de todas as OS",
+    description:
+      "Lista os eventos de histórico de todas as ordens de serviço, do mais recente para o mais antigo. Permite filtrar pelo status atual, pelo responsável, pelo solicitante e pela prioridade da OS.",
+    inputSchema: {
+      status: z
+        .enum([
+          "aberta",
+          "em_andamento",
+          "aguardando",
+          "concluida",
+          "cancelada",
+        ])
+        .optional(),
+      responsavel: z.string().trim().min(1).max(150).optional(),
+      solicitante: z.string().trim().min(1).max(150).optional(),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ status, responsavel, solicitante, prioridade, dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            o.numero AS os_numero,
+            o.titulo AS os_titulo,
+            h.status,
+            h.descricao,
+            h.autor,
+            h.registrado_em
+          FROM historico_ordens_servico h
+          JOIN ordens_servico o ON o.id = h.ordem_servico_id
+          WHERE h.registrado_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND (
+              $2::text IS NULL
+              OR o.status = $2
+            )
+            AND (
+              $3::text IS NULL
+              OR o.responsavel ILIKE '%' || $3 || '%'
+            )
+            AND (
+              $4::text IS NULL
+              OR o.solicitante ILIKE '%' || $4 || '%'
+            )
+            AND (
+              $5::text IS NULL
+              OR o.prioridade = $5
+            )
+          ORDER BY h.registrado_em DESC, h.id DESC
+          LIMIT $6
+        `,
+        [
+          dias,
+          status ?? null,
+          escapeLikeOrNull(responsavel),
+          escapeLikeOrNull(solicitante),
+          prioridade ?? null,
+          limite,
+        ],
+      );
+
+      return success({
+        periodo_dias: dias,
+        status: status ?? null,
+        responsavel: responsavel ?? null,
+        solicitante: solicitante ?? null,
+        prioridade: prioridade ?? null,
+        quantidade: result.rowCount,
+        eventos: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
 server.registerTool(
   "resumo_os_por_status",
   {
     title: "Resumo de OS por status",
     description:
-      "Agrupa as ordens de serviço por status e informa a quantidade total e a quantidade atrasada em cada grupo.",
+      "Agrupa as ordens de serviço por status e informa a quantidade total e a quantidade atrasada em cada grupo. Permite filtrar por responsável e solicitante.",
     inputSchema: {
+      responsavel: z.string().trim().min(1).max(150).optional(),
+      solicitante: z.string().trim().min(1).max(150).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
     },
   },
-  async ({ dias }) => {
+  async ({ responsavel, solicitante, dias }) => {
     try {
       const result = await pool.query(
         `
@@ -509,6 +808,14 @@ server.registerTool(
           FROM ordens_servico
           WHERE aberta_em >=
             CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND (
+              $2::text IS NULL
+              OR responsavel ILIKE '%' || $2 || '%'
+            )
+            AND (
+              $3::text IS NULL
+              OR solicitante ILIKE '%' || $3 || '%'
+            )
           GROUP BY status
           ORDER BY
             CASE status
@@ -519,7 +826,7 @@ server.registerTool(
               WHEN 'cancelada' THEN 5
             END
         `,
-        [dias],
+        [dias, escapeLikeOrNull(responsavel), escapeLikeOrNull(solicitante)],
       );
 
       const total = result.rows.reduce(
@@ -529,6 +836,8 @@ server.registerTool(
 
       return success({
         periodo_dias: dias,
+        responsavel: responsavel ?? null,
+        solicitante: solicitante ?? null,
         total,
         quantidade_status: result.rowCount,
         resumo: result.rows,
@@ -543,12 +852,14 @@ server.registerTool(
   {
     title: "Resumo de OS por prioridade",
     description:
-      "Agrupa as ordens de serviço por prioridade e informa quantidades totais, pendentes, atrasadas, concluídas e canceladas.",
+      "Agrupa as ordens de serviço por prioridade e informa quantidades totais, pendentes, atrasadas, concluídas e canceladas. Permite filtrar por responsável e solicitante.",
     inputSchema: {
+      responsavel: z.string().trim().min(1).max(150).optional(),
+      solicitante: z.string().trim().min(1).max(150).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
     },
   },
-  async ({ dias }) => {
+  async ({ responsavel, solicitante, dias }) => {
     try {
       const result = await pool.query(
         `
@@ -571,6 +882,14 @@ server.registerTool(
           FROM ordens_servico
           WHERE aberta_em >=
             CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND (
+              $2::text IS NULL
+              OR responsavel ILIKE '%' || $2 || '%'
+            )
+            AND (
+              $3::text IS NULL
+              OR solicitante ILIKE '%' || $3 || '%'
+            )
           GROUP BY prioridade
           ORDER BY
             CASE prioridade
@@ -580,7 +899,7 @@ server.registerTool(
               WHEN 'baixa' THEN 4
             END
         `,
-        [dias],
+        [dias, escapeLikeOrNull(responsavel), escapeLikeOrNull(solicitante)],
       );
 
       const total = result.rows.reduce(
@@ -590,6 +909,8 @@ server.registerTool(
 
       return success({
         periodo_dias: dias,
+        responsavel: responsavel ?? null,
+        solicitante: solicitante ?? null,
         total,
         quantidade_prioridades: result.rowCount,
         resumo: result.rows,
@@ -604,7 +925,7 @@ server.registerTool(
   {
     title: "Listar OS por status",
     description:
-      "Lista ordens de serviço de um status específico. Use para consultar OS abertas, em andamento, aguardando, concluídas ou canceladas.",
+      "Lista ordens de serviço de um status específico. Use para consultar OS abertas, em andamento, aguardando, concluídas ou canceladas. Permite filtrar também por prioridade.",
     inputSchema: {
       status: z.enum([
         "aberta",
@@ -613,11 +934,12 @@ server.registerTool(
         "concluida",
         "cancelada",
       ]),
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
       dias: z.number().int().min(1).max(3650).default(365),
-      limite: z.number().int().min(1).max(50).default(20),
+      limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ status, dias, limite }) => {
+  async ({ status, prioridade, dias, limite }) => {
     try {
       const result = await pool.query(
         `
@@ -640,6 +962,10 @@ server.registerTool(
           WHERE status = $1
             AND aberta_em >=
               CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day')
+            AND (
+              $3::text IS NULL
+              OR prioridade = $3
+            )
           ORDER BY
             CASE prioridade
               WHEN 'critica' THEN 1
@@ -649,11 +975,12 @@ server.registerTool(
             END,
             prazo,
             numero
-          LIMIT $3
+          LIMIT $4
         `,
         [
           status,
           dias,
+          prioridade ?? null,
           limite,
         ],
       );
@@ -661,11 +988,279 @@ server.registerTool(
       return success({
         filtros: {
           status,
+          prioridade: prioridade ?? null,
           periodo_dias: dias,
           limite,
         },
         quantidade: result.rowCount,
         ordens_servico: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "listar_os_por_prioridade",
+  {
+    title: "Listar OS por prioridade",
+    description:
+      "Lista ordens de serviço de uma prioridade específica, não importa o status. Permite filtrar também por status.",
+    inputSchema: {
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]),
+      status: z.enum([
+        "aberta",
+        "em_andamento",
+        "aguardando",
+        "concluida",
+        "cancelada",
+      ]).optional(),
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ prioridade, status, dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            id,
+            numero,
+            titulo,
+            status,
+            prioridade,
+            solicitante,
+            responsavel,
+            aberta_em,
+            prazo,
+            concluida_em,
+            (
+              prazo < CURRENT_TIMESTAMP
+              AND status NOT IN ('concluida', 'cancelada')
+            ) AS atrasada
+          FROM ordens_servico
+          WHERE prioridade = $1
+            AND aberta_em >=
+              CURRENT_TIMESTAMP - ($2 * INTERVAL '1 day')
+            AND (
+              $3::text IS NULL
+              OR status = $3
+            )
+          ORDER BY
+            CASE status
+              WHEN 'aberta' THEN 1
+              WHEN 'em_andamento' THEN 2
+              WHEN 'aguardando' THEN 3
+              WHEN 'concluida' THEN 4
+              WHEN 'cancelada' THEN 5
+            END,
+            prazo,
+            numero
+          LIMIT $4
+        `,
+        [
+          prioridade,
+          dias,
+          status ?? null,
+          limite,
+        ],
+      );
+
+      return success({
+        filtros: {
+          prioridade,
+          status: status ?? null,
+          periodo_dias: dias,
+          limite,
+        },
+        quantidade: result.rowCount,
+        ordens_servico: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "resumo_geral_os",
+  {
+    title: "Resumo geral de OS",
+    description:
+      "Retorna a contagem total de ordens de serviço, sem agrupar por status ou prioridade, incluindo quantas estão atrasadas.",
+    inputSchema: {
+      dias: z.number().int().min(1).max(3650).default(3650),
+    },
+  },
+  async ({ dias }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            COUNT(*)::integer AS total,
+            COUNT(*) FILTER (WHERE status = 'aberta')::integer AS abertas,
+            COUNT(*) FILTER (WHERE status = 'em_andamento')::integer AS em_andamento,
+            COUNT(*) FILTER (WHERE status = 'aguardando')::integer AS aguardando,
+            COUNT(*) FILTER (WHERE status = 'concluida')::integer AS concluidas,
+            COUNT(*) FILTER (WHERE status = 'cancelada')::integer AS canceladas,
+            COUNT(*) FILTER (
+              WHERE prazo < CURRENT_TIMESTAMP
+                AND status NOT IN ('concluida', 'cancelada')
+            )::integer AS atrasadas
+          FROM ordens_servico
+          WHERE aberta_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+        `,
+        [dias],
+      );
+
+      return success({ periodo_dias: dias, ...result.rows[0] });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "resumo_os_por_responsavel",
+  {
+    title: "Resumo de OS por responsável",
+    description:
+      "Agrupa as ordens de serviço por responsável e informa a quantidade total e a quantidade atrasada de cada um, ordenado do responsável com mais OS para o com menos. Útil para perguntas como 'quantas OS cada responsável tem'.",
+    inputSchema: {
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            responsavel AS nome,
+            COUNT(*)::integer AS total,
+            COUNT(*) FILTER (
+              WHERE prazo < CURRENT_TIMESTAMP
+                AND status NOT IN ('concluida', 'cancelada')
+            )::integer AS atrasadas
+          FROM ordens_servico
+          WHERE aberta_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND responsavel IS NOT NULL
+          GROUP BY responsavel
+          ORDER BY total DESC, responsavel ASC
+          LIMIT $2
+        `,
+        [dias, limite],
+      );
+
+      return success({
+        periodo_dias: dias,
+        quantidade_responsaveis: result.rowCount,
+        resumo: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "resumo_os_por_solicitante",
+  {
+    title: "Resumo de OS por solicitante",
+    description:
+      "Agrupa as ordens de serviço por solicitante e informa a quantidade total e a quantidade atrasada de cada um, ordenado do solicitante com mais OS para o com menos. Útil para perguntas como 'quantas OS cada solicitante tem'.",
+    inputSchema: {
+      dias: z.number().int().min(1).max(3650).default(365),
+      limite: z.number().int().min(1).max(100).default(20),
+    },
+  },
+  async ({ dias, limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            solicitante AS nome,
+            COUNT(*)::integer AS total,
+            COUNT(*) FILTER (
+              WHERE prazo < CURRENT_TIMESTAMP
+                AND status NOT IN ('concluida', 'cancelada')
+            )::integer AS atrasadas
+          FROM ordens_servico
+          WHERE aberta_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND solicitante IS NOT NULL
+          GROUP BY solicitante
+          ORDER BY total DESC, solicitante ASC
+          LIMIT $2
+        `,
+        [dias, limite],
+      );
+
+      return success({
+        periodo_dias: dias,
+        quantidade_solicitantes: result.rowCount,
+        resumo: result.rows,
+      });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "tempo_medio_resolucao_os",
+  {
+    title: "Tempo médio de resolução de OS",
+    description:
+      "Calcula o tempo médio, mínimo e máximo, em horas, entre a abertura e a conclusão das ordens de serviço já concluídas. Permite filtrar por prioridade e responsável.",
+    inputSchema: {
+      prioridade: z.enum(["baixa", "media", "alta", "critica"]).optional(),
+      responsavel: z.string().trim().min(1).max(150).optional(),
+      dias: z.number().int().min(1).max(3650).default(365),
+    },
+  },
+  async ({ prioridade, responsavel, dias }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            COUNT(*)::integer AS quantidade_concluidas,
+            ROUND(
+              AVG(EXTRACT(EPOCH FROM (concluida_em - aberta_em)) / 3600)::numeric,
+              1
+            ) AS horas_medias,
+            ROUND(
+              MIN(EXTRACT(EPOCH FROM (concluida_em - aberta_em)) / 3600)::numeric,
+              1
+            ) AS horas_minimas,
+            ROUND(
+              MAX(EXTRACT(EPOCH FROM (concluida_em - aberta_em)) / 3600)::numeric,
+              1
+            ) AS horas_maximas
+          FROM ordens_servico
+          WHERE status = 'concluida'
+            AND concluida_em IS NOT NULL
+            AND aberta_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND ($2::text IS NULL OR prioridade = $2)
+            AND ($3::text IS NULL OR responsavel ILIKE '%' || $3 || '%')
+        `,
+        [dias, prioridade ?? null, escapeLikeOrNull(responsavel)],
+      );
+
+      return success({
+        periodo_dias: dias,
+        prioridade: prioridade ?? null,
+        responsavel: responsavel ?? null,
+        quantidade_concluidas: result.rows[0].quantidade_concluidas,
+        horas_medias: result.rows[0].horas_medias
+          ? Number(result.rows[0].horas_medias)
+          : null,
+        horas_minimas: result.rows[0].horas_minimas
+          ? Number(result.rows[0].horas_minimas)
+          : null,
+        horas_maximas: result.rows[0].horas_maximas
+          ? Number(result.rows[0].horas_maximas)
+          : null,
       });
     } catch (error) {
       return failure(error);
@@ -725,13 +1320,23 @@ server.registerTool(
   "buscar_cliente_por_email",
   {
     title: "Buscar cliente por e-mail",
-    description: "Procura um cliente pelo e-mail exato no PostgreSQL de teste.",
-    inputSchema: { email: z.string().email() },
+    description: "Procura um cliente pelo e-mail exato no PostgreSQL de teste. Retorna dados cadastrais completos: documento (CPF/CNPJ), RG, telefones, endereço, gênero e profissão.",
+    inputSchema: { email: z.string().trim().email() },
   },
   async ({ email }) => {
     try {
       const result = await pool.query(
-        `SELECT id, nome, email, ativo, criado_em FROM clientes WHERE email = $1`,
+        `
+          SELECT
+            id, nome, email, ativo, criado_em,
+            documento_tipo, documento_numero, rg,
+            telefone_celular, telefone_whatsapp,
+            endereco_rua, endereco_numero, endereco_bairro,
+            endereco_cidade, endereco_estado, endereco_cep,
+            genero, profissao
+          FROM clientes
+          WHERE email = $1
+        `,
         [email],
       );
       return success({ encontrado: result.rowCount > 0, cliente: result.rows[0] ?? null });
@@ -745,13 +1350,23 @@ server.registerTool(
   "buscar_cliente_por_id",
   {
     title: "Buscar cliente por ID",
-    description: "Procura um cliente pelo identificador numérico.",
+    description: "Procura um cliente pelo identificador numérico. Retorna dados cadastrais completos: documento (CPF/CNPJ), RG, telefones, endereço, gênero e profissão.",
     inputSchema: { id: z.number().int().positive() },
   },
   async ({ id }) => {
     try {
       const result = await pool.query(
-        `SELECT id, nome, email, ativo, criado_em FROM clientes WHERE id = $1`,
+        `
+          SELECT
+            id, nome, email, ativo, criado_em,
+            documento_tipo, documento_numero, rg,
+            telefone_celular, telefone_whatsapp,
+            endereco_rua, endereco_numero, endereco_bairro,
+            endereco_cidade, endereco_estado, endereco_cep,
+            genero, profissao
+          FROM clientes
+          WHERE id = $1
+        `,
         [id],
       );
       return success({ encontrado: result.rowCount > 0, cliente: result.rows[0] ?? null });
@@ -765,25 +1380,38 @@ server.registerTool(
   "buscar_clientes_por_nome",
   {
     title: "Buscar clientes por nome",
-    description: "Busca clientes cujo nome contenha o texto informado, sem diferenciar maiúsculas de minúsculas.",
+    description: "Busca clientes cujo nome contenha o texto informado, sem diferenciar maiúsculas de minúsculas. Permite filtrar por status ativo/inativo e por período de cadastro. Retorna dados cadastrais completos: documento (CPF/CNPJ), RG, telefones, endereço, gênero e profissão.",
     inputSchema: {
       nome: z.string().trim().min(1).max(150),
+      ativo: z.boolean().optional(),
+      dias: z.number().int().min(1).max(3650).default(3650),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ nome, limite }) => {
+  async ({ nome, ativo, dias, limite }) => {
     try {
       const result = await pool.query(
         `
-          SELECT id, nome, email, ativo, criado_em
+          SELECT
+            id, nome, email, ativo, criado_em,
+            documento_tipo, documento_numero, rg,
+            telefone_celular, telefone_whatsapp,
+            endereco_rua, endereco_numero, endereco_bairro,
+            endereco_cidade, endereco_estado, endereco_cep,
+            genero, profissao
           FROM clientes
           WHERE nome ILIKE '%' || $1 || '%'
+            AND (
+              $2::boolean IS NULL
+              OR ativo = $2
+            )
+            AND criado_em >= CURRENT_TIMESTAMP - ($3 * INTERVAL '1 day')
           ORDER BY nome, id
-          LIMIT $2
+          LIMIT $4
         `,
-        [nome, limite],
+        [escapeLikePattern(nome), ativo ?? null, dias, limite],
       );
-      return success({ quantidade: result.rowCount, clientes: result.rows });
+      return success({ ativo: ativo ?? null, periodo_dias: dias, quantidade: result.rowCount, clientes: result.rows });
     } catch (error) {
       return failure(error);
     }
@@ -794,25 +1422,30 @@ server.registerTool(
   "listar_clientes_recentes",
   {
     title: "Listar clientes recentes",
-    description: "Lista os clientes cadastrados nos últimos dias, do mais recente para o mais antigo.",
+    description: "Lista os clientes cadastrados nos últimos dias, do mais recente para o mais antigo. Permite filtrar por status ativo/inativo.",
     inputSchema: {
+      ativo: z.boolean().optional(),
       dias: z.number().int().min(1).max(3650).default(30),
       limite: z.number().int().min(1).max(100).default(20),
     },
   },
-  async ({ dias, limite }) => {
+  async ({ ativo, dias, limite }) => {
     try {
       const result = await pool.query(
         `
           SELECT id, nome, email, ativo, criado_em
           FROM clientes
           WHERE criado_em >= CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
+            AND (
+              $2::boolean IS NULL
+              OR ativo = $2
+            )
           ORDER BY criado_em DESC, id DESC
-          LIMIT $2
+          LIMIT $3
         `,
-        [dias, limite],
+        [dias, ativo ?? null, limite],
       );
-      return success({ periodo_dias: dias, quantidade: result.rowCount, clientes: result.rows });
+      return success({ periodo_dias: dias, ativo: ativo ?? null, quantidade: result.rowCount, clientes: result.rows });
     } catch (error) {
       return failure(error);
     }
@@ -890,6 +1523,35 @@ server.registerTool(
         [limite],
       );
       return success({ quantidade: result.rowCount, dominios: result.rows });
+    } catch (error) {
+      return failure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "resumo_clientes_por_mes",
+  {
+    title: "Resumo de clientes por mês de cadastro",
+    description: "Agrupa os clientes pelo mês de cadastro e informa a quantidade total e ativa em cada mês.",
+    inputSchema: { limite: z.number().int().min(1).max(100).default(24) },
+  },
+  async ({ limite }) => {
+    try {
+      const result = await pool.query(
+        `
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', criado_em), 'YYYY-MM') AS mes,
+            COUNT(*)::integer AS total,
+            COUNT(*) FILTER (WHERE ativo)::integer AS ativos
+          FROM clientes
+          GROUP BY DATE_TRUNC('month', criado_em)
+          ORDER BY DATE_TRUNC('month', criado_em)
+          LIMIT $1
+        `,
+        [limite],
+      );
+      return success({ quantidade_meses: result.rowCount, resumo: result.rows });
     } catch (error) {
       return failure(error);
     }

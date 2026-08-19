@@ -4,13 +4,21 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const allowedToolNames = new Set([
   "buscar_os_por_numero",
   "listar_os_abertas",
+  "listar_os_recentes",
   "listar_os_por_status",
+  "listar_os_por_prioridade",
   "listar_os_atrasadas",
   "listar_os_por_responsavel",
   "listar_os_por_solicitante",
+  "listar_os_por_cliente",
   "consultar_historico_os",
+  "listar_historico_os",
   "resumo_os_por_status",
   "resumo_os_por_prioridade",
+  "resumo_geral_os",
+  "resumo_os_por_responsavel",
+  "resumo_os_por_solicitante",
+  "tempo_medio_resolucao_os",
 
   "listar_clientes",
   "listar_clientes_inativos",
@@ -20,6 +28,7 @@ const allowedToolNames = new Set([
   "buscar_clientes_por_nome",
   "listar_dominios_email",
   "resumo_clientes",
+  "resumo_clientes_por_mes",
 ]);
 
 export async function createMcpClient({ projectDir }) {

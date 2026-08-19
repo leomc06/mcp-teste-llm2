@@ -41,5 +41,7 @@ ALTER ROLE mcp_reader SET default_transaction_read_only = ON;
 ALTER ROLE mcp_reader SET statement_timeout = '5s';
 
 \ir /docker-entrypoint-initdb.d/migrations/001_ordens_servico.sql
+\ir /docker-entrypoint-initdb.d/migrations/002_clientes_documentos.sql
+\ir /docker-entrypoint-initdb.d/migrations/003_ordens_servico_cliente.sql
 
 EOSQL

@@ -30,8 +30,73 @@ const cases = [
   },
   {
     question:
+      "Liste as OS do cliente Bruno Santos.",
+    expectedTool: "listar_os_por_cliente",
+  },
+  {
+    question:
       "Mostre o histórico da OS 1004.",
     expectedTool: "consultar_historico_os",
+  },
+  {
+    question:
+      "Mostre o histórico de todas as OS.",
+    expectedTool: "listar_historico_os",
+  },
+  {
+    question:
+      "Liste as OS canceladas de prioridade baixa.",
+    expectedTool: "listar_os_por_status",
+  },
+  {
+    question:
+      "Liste as OS solicitadas por Fernanda de prioridade crítica.",
+    expectedTool: "listar_os_por_solicitante",
+  },
+  {
+    question:
+      "Liste as OS do responsável Carlos Souza de prioridade alta.",
+    expectedTool: "listar_os_por_responsavel",
+  },
+  {
+    question:
+      "Liste as OS do responsável Carlos solicitadas pelo Rafael.",
+    expectedTool: "listar_os_por_solicitante",
+  },
+  {
+    question:
+      "Quais OS atrasadas foram solicitadas pelo Rafael Martins?",
+    expectedTool: "listar_os_atrasadas",
+  },
+  {
+    question:
+      "Qual o resumo por status das OS do responsável Carlos Souza?",
+    expectedTool: "resumo_os_por_status",
+  },
+  {
+    question:
+      "Quantas OS de prioridade alta foram solicitadas pela Ana?",
+    expectedTool: "resumo_os_por_prioridade",
+  },
+  {
+    question:
+      "Mostre o histórico de todas as OS canceladas.",
+    expectedTool: "listar_historico_os",
+  },
+  {
+    question:
+      "Liste as OS abertas de prioridade crítica do responsável",
+    expectedTool: "listar_os_abertas",
+  },
+  {
+    question:
+      "Busque clientes inativos cujo nome contenha Oliveira.",
+    expectedTool: "buscar_clientes_por_nome",
+  },
+  {
+    question:
+      "Quais clientes ativos foram cadastrados recentemente?",
+    expectedTool: "listar_clientes_recentes",
   },
   {
     question:
@@ -57,6 +122,26 @@ const cases = [
     question:
       "Cancele a OS 1004.",
     expectedWriteBlock: true,
+  },
+  {
+    question:
+      "Busque o cliente com o e-mail bruno@example.com.",
+    expectedTool: "buscar_cliente_por_email",
+  },
+  {
+    question:
+      "Busque o cliente com id 2.",
+    expectedTool: "buscar_cliente_por_id",
+  },
+  {
+    question:
+      "Busque clientes cujo nome contenha Silva.",
+    expectedTool: "buscar_clientes_por_nome",
+  },
+  {
+    question:
+      "Liste todos os clientes, incluindo ativos e inativos.",
+    expectedTool: "listar_clientes",
   },
 ];
 

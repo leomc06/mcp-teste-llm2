@@ -49,6 +49,8 @@ export const STATUS_ALIASES = Object.freeze({
     "resolvidas",
     "resolvido",
     "resolvidos",
+    "resolveu",
+    "resolveram",
     "encerrada",
     "encerradas",
     "encerrado",
@@ -170,7 +172,12 @@ export function extractStatus(value) {
 }
 
 export function extractPriority(value) {
-  return extractCanonicalValue(value, PRIORITY_ALIASES);
+  const text = String(value ?? "").replace(
+    /\b(?:tempo|prazo)\s+m[ée]dio\b/giu,
+    "",
+  );
+
+  return extractCanonicalValue(text, PRIORITY_ALIASES);
 }
 
 export function extractOsNumber(value) {
@@ -298,10 +305,13 @@ export function extractLimit(value) {
 
   return undefined;
 }
-function cleanPersonName(value) {
+const NON_NAME_WORDS = /\b(?:tem|têm|ha|há|existe|existem|mais|atendimento|resolucao|resolução|resposta|tempo|prazo|ja|já|resolveu|resolveram|atendeu|atenderam|concluiu|concluíram|concluiram|fechou|fecharam|encerrou|encerraram|finalizou|finalizaram|abriu|abriram|solicitou|solicitaram|registrou|registraram|criou|criaram|cada|respons[áa]vel|respons[áa]veis|solicitante|solicitantes)\b/iu;
+
+export function cleanPersonName(value) {
   let candidate = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
-    .trim();
+    .trim()
+    .replace(/^(?:o|a|os|as)\b\s+/iu, "");
 
   candidate = candidate
     .replace(
@@ -309,11 +319,19 @@ function cleanPersonName(value) {
       "",
     )
     .replace(
-      /\s+(?:(?:com|de)\s+)?(?:status|prioridade|limite)\b.*$/iu,
+      /\s+(?:(?:que\s+)?(?:tem|têm|possui|possuem|está|estão|esta|estao)\s+)?(?:(?:com|de)\s+)?(?:status|prioridade|limite)\b.*$/iu,
       "",
     )
     .replace(
       /\s+(?:em andamento|em espera|aguardando\b.*|cancelad\p{L}*|concluíd\p{L}*|concluid\p{L}*|atrasad\p{L}*|vencid\p{L}*)\b.*$/iu,
+      "",
+    )
+    .replace(
+      /\s+(?:(?:do|da|e|que\s+foi|que\s+esta)\s+)?(?:solicitante|requerente|responsável|responsavel|técnico|tecnico|atendente)\b.*$/iu,
+      "",
+    )
+    .replace(
+      /\s+(?:(?:do|da|e|que\s+foi|que\s+esta)\s+)?(?:solicitad[oa]s?|registrad[oa]s?|abert[oa]s?|criad[oa]s?|atribuíd[oa]s?|atendid[oa]s?|designad[oa]s?)\s+(?:por|pelo|pela|a|ao|à)\b.*$/iu,
       "",
     )
     .trim();
@@ -321,6 +339,7 @@ function cleanPersonName(value) {
   if (
     candidate.length < 2
     || candidate.length > 150
+    || NON_NAME_WORDS.test(candidate)
     || !/^[\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*)*$/u.test(
       candidate,
     )
@@ -351,7 +370,7 @@ function cleanPersonName(value) {
   return candidate;
 }
 
-function extractPersonByPatterns(value, patterns) {
+export function extractPersonByPatterns(value, patterns) {
   const originalText = String(value ?? "");
 
   for (const pattern of patterns) {
@@ -375,16 +394,66 @@ export function extractRequester(value) {
   return extractPersonByPatterns(value, [
     /\b(?:solicitante|requerente)\s*(?::|-)?\s+(.+)$/iu,
     /\b(?:solicitad[oa]s?|registrad[oa]s?|abert[oa]s?|criad[oa]s?)\s+(?:por|pelo|pela)\s+(.+)$/iu,
+    /\b(?:o|a|os|as)\s+(.+?)\s+(?:j[áa]\s+)?(?:abriu|abriram|solicitou|solicitaram|registrou|registraram|criou|criaram)\b/iu,
   ]);
 }
+
+const RESPONSIBLE_GENITIVE_TERMS = [
+  ...Object.values(STATUS_ALIASES).flat(),
+  ...Object.values(PRIORITY_ALIASES).flat(),
+  "atrasada",
+  "atrasadas",
+  "atrasado",
+  "atrasados",
+  "vencida",
+  "vencidas",
+  "vencido",
+  "vencidos",
+]
+  .filter((term) => !term.includes(" "))
+  .sort((left, right) => right.length - left.length)
+  .join("|");
+
+const RESPONSIBLE_GENITIVE_PATTERN = new RegExp(
+  `\\b(?:${RESPONSIBLE_GENITIVE_TERMS})\\s+(?:do|da|de)\\s+(?!(?:prioridade|status|número|numero|solicitante|responsável|responsavel|alta|baixa|média|media|crítica|critica)\\b)(.+)$`,
+  "iu",
+);
 
 export function extractResponsible(value) {
   return extractPersonByPatterns(value, [
     /\b(?:responsável|responsavel|técnico|tecnico|atendente)\s*(?::|-)?\s+(.+)$/iu,
     /\b(?:atribuíd[oa]s?|atribuid[oa]s?|designad[oa]s?|atendid[oa]s?)\s+(?:a|ao|à|por|pelo|pela)\s+(.+)$/iu,
-    /\b(?:atrasad[oa]s?|vencid[oa]s?)\s+(?:do|da|de)\s+(?!(?:prioridade|status|número|numero|solicitante|responsável|responsavel|alta|baixa|média|media|crítica|critica)\b)(.+)$/iu,
+    RESPONSIBLE_GENITIVE_PATTERN,
+    /\b(?:o|a|os|as)\s+(.+?)\s+(?:j[áa]\s+)?(?:resolveu|resolveram|atendeu|atenderam|concluiu|conclu[íi]ram|fechou|fecharam|encerrou|encerraram|finalizou|finalizaram)\b/iu,
   ]);
 }
+const REQUESTER_AMBIGUOUS_VERB_TERMS = Object.freeze([
+  "abriu",
+  "abriram",
+  "solicitou",
+  "solicitaram",
+  "registrou",
+  "registraram",
+  "criou",
+  "criaram",
+]);
+
+const RESPONSIBLE_AMBIGUOUS_VERB_TERMS = Object.freeze([
+  "resolveu",
+  "resolveram",
+  "atendeu",
+  "atenderam",
+  "concluiu",
+  "concluíram",
+  "concluiram",
+  "fechou",
+  "fecharam",
+  "encerrou",
+  "encerraram",
+  "finalizou",
+  "finalizaram",
+]);
+
 export const INTENT_PATTERNS = Object.freeze({
   history: Object.freeze([
     "histórico",
@@ -486,6 +555,7 @@ export const INTENT_PATTERNS = Object.freeze({
     "quem abriu",
     "quem registrou",
     "quem solicitou",
+    ...REQUESTER_AMBIGUOUS_VERB_TERMS,
   ]),
 
   responsible: Object.freeze([
@@ -529,6 +599,7 @@ export const INTENT_PATTERNS = Object.freeze({
     "os do responsavel",
     "os da responsável",
     "os da responsavel",
+    ...RESPONSIBLE_AMBIGUOUS_VERB_TERMS,
   ]),
 
   statusSummary: Object.freeze([
@@ -571,7 +642,74 @@ export const INTENT_PATTERNS = Object.freeze({
     "número de",
     "numero de",
   ]),
+
+  averageTime: Object.freeze([
+    "tempo médio",
+    "tempo medio",
+    "tempo médio de atendimento",
+    "tempo medio de atendimento",
+    "tempo médio de resolução",
+    "tempo medio de resolucao",
+    "tempo de atendimento",
+    "tempo de resolução",
+    "tempo de resolucao",
+    "prazo médio",
+    "prazo medio",
+    "prazo médio de atendimento",
+    "prazo medio de atendimento",
+    "quanto tempo leva",
+    "quanto tempo demora",
+    "quanto tempo demoram",
+  ]),
+
+  recent: Object.freeze([
+    "recente",
+    "recentes",
+    "mais recente",
+    "mais recentes",
+    "recentemente",
+    "últimas os",
+    "ultimas os",
+    "últimos chamados",
+    "ultimos chamados",
+    "últimas ordens",
+    "ultimas ordens",
+    "novas os",
+    "novas ordens",
+  ]),
 });
+
+function hasOnlyAmbiguousVerbMatch(text, allTerms, ambiguousTerms) {
+  const hasAmbiguousTerm = containsAnyPhrase(text, ambiguousTerms);
+
+  const explicitTerms = allTerms.filter(
+    (term) => !ambiguousTerms.includes(term),
+  );
+
+  const hasExplicitTerm = containsAnyPhrase(text, explicitTerms);
+
+  return hasAmbiguousTerm && !hasExplicitTerm;
+}
+
+export function hasAmbiguousResponsibleExtraction(value) {
+  const text = normalizeText(value);
+
+  return hasOnlyAmbiguousVerbMatch(
+    text,
+    INTENT_PATTERNS.responsible,
+    RESPONSIBLE_AMBIGUOUS_VERB_TERMS,
+  );
+}
+
+export function hasAmbiguousRequesterExtraction(value) {
+  const text = normalizeText(value);
+
+  return hasOnlyAmbiguousVerbMatch(
+    text,
+    INTENT_PATTERNS.requester,
+    REQUESTER_AMBIGUOUS_VERB_TERMS,
+  );
+}
 
 const OS_ENTITY_TERMS = Object.freeze([
   "os",
@@ -593,7 +731,7 @@ function containsAnyPhrase(text, phrases) {
   );
 }
 
-function compactEntities(values) {
+export function compactEntities(values) {
   return Object.fromEntries(
     Object.entries(values).filter(
       ([, value]) => value !== undefined,
@@ -695,6 +833,11 @@ export function routeOsQuestion(value) {
       && mentionsPriorityDimension
     );
 
+  const hasAverageTimeIntent = containsAnyPhrase(
+    text,
+    INTENT_PATTERNS.averageTime,
+  );
+
   const hasHistoryIntent = containsAnyPhrase(
     text,
     INTENT_PATTERNS.history,
@@ -705,15 +848,18 @@ export function routeOsQuestion(value) {
     INTENT_PATTERNS.overdue,
   );
 
-  const hasRequesterIntent = containsAnyPhrase(
+  const hasRecentIntent = containsAnyPhrase(
     text,
-    INTENT_PATTERNS.requester,
+    INTENT_PATTERNS.recent,
   );
 
-  const hasResponsibleIntent = containsAnyPhrase(
-    text,
-    INTENT_PATTERNS.responsible,
-  );
+  const hasRequesterIntent =
+    containsAnyPhrase(text, INTENT_PATTERNS.requester)
+    || solicitante !== undefined;
+
+  const hasResponsibleIntent =
+    containsAnyPhrase(text, INTENT_PATTERNS.responsible)
+    || responsavel !== undefined;
 
   const hasOpenIntent = containsAnyPhrase(
     text,
@@ -739,6 +885,18 @@ export function routeOsQuestion(value) {
 
   if (hasHistoryIntent) {
     if (numero === undefined) {
+      const asksForAllOs =
+        /\btodas?\b/.test(text)
+        || /\bgeral\b/.test(text);
+
+      if (asksForAllOs) {
+        return createDecision(
+          "historico_geral",
+          "listar_historico_os",
+          entities,
+        );
+      }
+
       return createClarification(
         entities,
         "Informe o número da OS para consultar o histórico.",
@@ -765,6 +923,8 @@ export function routeOsQuestion(value) {
     || (
       hasCountIntent
       && status !== undefined
+      && !hasResponsibleIntent
+      && !hasRequesterIntent
     )
   ) {
     return createDecision(
@@ -779,11 +939,45 @@ export function routeOsQuestion(value) {
     || (
       hasCountIntent
       && prioridade !== undefined
+      && !hasResponsibleIntent
+      && !hasRequesterIntent
     )
   ) {
     return createDecision(
       "resumo_por_prioridade",
       "resumo_os_por_prioridade",
+      entities,
+    );
+  }
+
+  if (hasAverageTimeIntent) {
+    return createDecision(
+      "tempo_medio_resolucao",
+      "tempo_medio_resolucao_os",
+      entities,
+    );
+  }
+
+  if (
+    hasCountIntent
+    && hasResponsibleIntent
+    && responsavel === undefined
+  ) {
+    return createDecision(
+      "resumo_por_responsavel",
+      "resumo_os_por_responsavel",
+      entities,
+    );
+  }
+
+  if (
+    hasCountIntent
+    && hasRequesterIntent
+    && solicitante === undefined
+  ) {
+    return createDecision(
+      "resumo_por_solicitante",
+      "resumo_os_por_solicitante",
       entities,
     );
   }
@@ -797,13 +991,14 @@ export function routeOsQuestion(value) {
   }
 
   if (
-    status !== undefined
-    && prioridade !== undefined
-    && status !== "aberta"
+    hasRecentIntent
+    && responsavel === undefined
+    && solicitante === undefined
   ) {
-    return createClarification(
+    return createDecision(
+      "listar_recentes",
+      "listar_os_recentes",
       entities,
-      "Não existe uma tool de listagem que combine status e prioridade. Informe qual filtro deve prevalecer.",
     );
   }
 
@@ -815,27 +1010,10 @@ export function routeOsQuestion(value) {
       );
     }
 
-    if (prioridade !== undefined) {
-      return createClarification(
-        entities,
-        "A consulta por solicitante não aceita prioridade. Informe qual filtro deve prevalecer.",
-      );
-    }
-
     return createDecision(
       "listar_por_solicitante",
       "listar_os_por_solicitante",
       entities,
-    );
-  }
-
-  if (
-    hasResponsibleIntent
-    && responsavel === undefined
-  ) {
-    return createClarification(
-      entities,
-      "Informe o nome do responsável.",
     );
   }
 
@@ -850,18 +1028,21 @@ export function routeOsQuestion(value) {
     );
   }
 
-  if (hasResponsibleIntent) {
-    if (prioridade !== undefined) {
-      return createClarification(
-        entities,
-        "A consulta por responsável só pode combinar prioridade quando a intenção for OS abertas ou atrasadas.",
-      );
-    }
-
+  if (
+    hasResponsibleIntent
+    && responsavel !== undefined
+  ) {
     return createDecision(
       "listar_por_responsavel",
       "listar_os_por_responsavel",
       entities,
+    );
+  }
+
+  if (hasResponsibleIntent) {
+    return createClarification(
+      entities,
+      "Informe o nome do responsável.",
     );
   }
 
@@ -892,9 +1073,18 @@ export function routeOsQuestion(value) {
   }
 
   if (prioridade !== undefined) {
-    return createClarification(
+    return createDecision(
+      "listar_por_prioridade",
+      "listar_os_por_prioridade",
       entities,
-      "A listagem geral por prioridade não está disponível. Você deseja um resumo por prioridade ou somente OS abertas ou atrasadas?",
+    );
+  }
+
+  if (hasCountIntent) {
+    return createDecision(
+      "resumo_geral",
+      "resumo_geral_os",
+      entities,
     );
   }
 

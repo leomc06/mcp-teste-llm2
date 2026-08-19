@@ -144,10 +144,166 @@ test("não classifica consulta de clientes como OS", () => {
     clientTools,
   );
 
-  assert.equal(decision.route, null);
+  assert.equal(decision.route.entity, "cliente");
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["listar_clientes"],
+  );
 
   assert.equal(
     decision.tools[0]?.function.name,
     "listar_clientes",
+  );
+});
+
+test("prioriza a rota de cliente mesmo quando a pergunta também bate com um padrão de OS", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "listar_clientes",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Quantos clientes têm status ativo?",
+    clientTools,
+  );
+
+  assert.equal(decision.route.entity, "cliente");
+  assert.equal(decision.route.fallback, false);
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["listar_clientes"],
+  );
+
+  assert.equal(
+    decision.tools[0]?.function.name,
+    "listar_clientes",
+  );
+});
+
+test("expõe listar_os_por_responsavel e listar_os_por_cliente quando o nome só vem de um verbo ambíguo", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "listar_os_por_cliente",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Quantas OS a Ana Silva já resolveu?",
+    clientTools,
+  );
+
+  assert.equal(decision.route.fallback, false);
+
+  assert.deepEqual(
+    new Set(decision.route.toolNames),
+    new Set(["listar_os_por_responsavel", "listar_os_por_cliente"]),
+  );
+
+  assert.deepEqual(
+    new Set(decision.tools.map((tool) => tool.function.name)),
+    new Set(["listar_os_por_responsavel", "listar_os_por_cliente"]),
+  );
+});
+
+test("não duplica a tool quando o responsável vem de uma palavra-chave explícita", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "listar_os_por_cliente",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Liste as OS do responsável Ana Silva.",
+    clientTools,
+  );
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["listar_os_por_responsavel"],
+  );
+});
+
+test("expõe listar_os_por_solicitante e listar_os_por_cliente quando o nome só vem de um verbo ambíguo", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "listar_os_por_cliente",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Quantas OS a Fernanda já abriu?",
+    clientTools,
+  );
+
+  assert.equal(decision.route.fallback, false);
+
+  assert.deepEqual(
+    new Set(decision.route.toolNames),
+    new Set(["listar_os_por_solicitante", "listar_os_por_cliente"]),
+  );
+});
+
+test("não duplica a tool quando o solicitante vem de uma palavra-chave explícita", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "listar_os_por_cliente",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Liste as OS solicitadas por Fernanda.",
+    clientTools,
+  );
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["listar_os_por_solicitante"],
+  );
+});
+
+test("reconhece pedido de informações de uma pessoa sem a palavra cliente", () => {
+  const clientTools = [
+    {
+      function: {
+        name: "buscar_clientes_por_nome",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Me dê as informações de Carla Oliveira.",
+    clientTools,
+  );
+
+  assert.equal(decision.route.entity, "cliente");
+  assert.equal(decision.route.fallback, false);
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["buscar_clientes_por_nome"],
+  );
+
+  assert.equal(
+    decision.tools[0]?.function.name,
+    "buscar_clientes_por_nome",
   );
 });

@@ -127,6 +127,30 @@ test("não converte urgente para prioridade crítica", () => {
   );
 });
 
+test("não confunde tempo médio ou prazo médio com prioridade média", () => {
+  assert.equal(
+    extractPriority("Qual o tempo médio de atendimento das OS?"),
+    undefined,
+  );
+
+  assert.equal(
+    extractPriority("Qual o prazo médio das OS?"),
+    undefined,
+  );
+
+  assert.equal(
+    extractPriority("Liste as OS de prioridade média."),
+    "media",
+  );
+
+  assert.equal(
+    extractPriority(
+      "Qual o tempo médio de atendimento das OS de prioridade média?",
+    ),
+    "media",
+  );
+});
+
 test("não converte status negado para o valor negado", () => {
   assert.equal(
     extractStatus("Liste as OS não concluídas"),
@@ -267,6 +291,8 @@ test("extrai nomes de solicitantes", () => {
     ["OS criadas pela Érica Lima", "Érica Lima"],
     ["Solicitante: João da Silva", "João da Silva"],
     ["Requerente Maria de Souza", "Maria de Souza"],
+    ["Quantas OS a Fernanda já abriu?", "Fernanda"],
+    ["Quantas OS o Bruno solicitou?", "Bruno"],
   ];
 
   for (const [question, expectedName] of cases) {
@@ -289,6 +315,11 @@ test("extrai nomes de responsáveis", () => {
     ["OS atrasadas do Carlos", "Carlos"],
     ["OS críticas atrasadas do João da Silva", "João da Silva"],
     ["Chamados vencidos da Ana Costa", "Ana Costa"],
+    ["Qual as OS críticas de Carlos Souza", "Carlos Souza"],
+    ["Liste as OS abertas de Carlos Souza", "Carlos Souza"],
+    ["Liste as OS canceladas de Ana Costa", "Ana Costa"],
+    ["Quantas OS o Marcos já resolveu?", "Marcos"],
+    ["Quantas OS a Ana atendeu?", "Ana"],
   ];
 
   for (const [question, expectedName] of cases) {
@@ -298,6 +329,36 @@ test("extrai nomes de responsáveis", () => {
       question,
     );
   }
+});
+
+test("extrai responsável e solicitante juntos sem misturar os nomes", () => {
+  assert.equal(
+    extractResponsible(
+      "Liste as OS do responsável Carlos solicitadas pela Ana.",
+    ),
+    "Carlos",
+  );
+
+  assert.equal(
+    extractRequester(
+      "Liste as OS do responsável Carlos solicitadas pela Ana.",
+    ),
+    "Ana",
+  );
+
+  assert.equal(
+    extractRequester(
+      "Liste as OS solicitadas pela Ana do responsável Carlos.",
+    ),
+    "Ana",
+  );
+
+  assert.equal(
+    extractResponsible(
+      "Liste as OS solicitadas pela Ana do responsável Carlos.",
+    ),
+    "Carlos",
+  );
 });
 
 test("remove filtros posteriores sem alterar o nome", () => {
@@ -320,6 +381,20 @@ test("remove filtros posteriores sem alterar o nome", () => {
       "Chamados atendidos pela Maria em andamento",
     ),
     "Maria",
+  );
+
+  assert.equal(
+    extractResponsible(
+      "Quais OS atrasadas do responsável Carlos Souza têm prioridade alta?",
+    ),
+    "Carlos Souza",
+  );
+
+  assert.equal(
+    extractRequester(
+      "Quais OS solicitadas pela Ana Costa têm prioridade alta?",
+    ),
+    "Ana Costa",
   );
 });
 
@@ -348,6 +423,33 @@ test("não inventa pessoas em perguntas sem nome", () => {
     extractResponsible(
       "Liste as OS atrasadas de prioridade alta",
     ),
+    undefined,
+  );
+
+  assert.equal(
+    extractResponsible(
+      "Liste as OS canceladas de prioridade alta",
+    ),
+    undefined,
+  );
+
+  assert.equal(
+    extractResponsible("Liste as OS de prioridade alta"),
+    undefined,
+  );
+
+  assert.equal(
+    extractResponsible("Quantas OS cada responsável tem?"),
+    undefined,
+  );
+
+  assert.equal(
+    extractResponsible("Qual responsável tem mais OS atrasadas?"),
+    undefined,
+  );
+
+  assert.equal(
+    extractResponsible("Qual o tempo médio de atendimento das OS?"),
     undefined,
   );
 });

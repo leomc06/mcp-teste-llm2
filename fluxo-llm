@@ -1,8 +1,0 @@
-1. O usuário escreve uma pergunta na interface.
-2. O backend valida a pergunta.
-3. O seletor escolhe as tools compatíveis.
-4. O Ollama gera uma chamada estruturada de tool.
-5. O cliente MCP encaminha a chamada ao servidor MCP.
-6. O servidor MCP consulta o PostgreSQL.
-7. O backend formata o resultado.
-8. A interface apresenta a resposta como texto.

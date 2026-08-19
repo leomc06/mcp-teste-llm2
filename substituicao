@@ -1,8 +1,0 @@
-POST /api/ia/consultar-os
-→ backend agente
-→ Ollama
-→ chamada de tool
-→ cliente MCP
-→ servidor MCP
-→ PostgreSQL
-→ resposta final

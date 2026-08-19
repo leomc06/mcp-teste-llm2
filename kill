@@ -1,3 +1,0 @@
-pkill -f "agent/server.js"
-Para confirmar que encerrou:
-pgrep -af "agent/server.js"
