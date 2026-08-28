@@ -10,7 +10,7 @@ import {
 } from "./tool-selector.js";
 import {
   buildToolArguments,
-} from "./os-routing.js";
+} from "./routing-utils.js";
 import { isWriteRequest } from "./write-policy.js";
 import { serveStaticFile } from "./static-files.js";
 
@@ -230,7 +230,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 200, {
           requestId,
           resposta:
-            "Este sistema permite somente consultas de ordens de serviço. Operações de criação, alteração, conclusão, cancelamento ou exclusão não são permitidas.",
+            "Este sistema permite somente consultas de tickets. Operações de criação, alteração, mudança de status ou comentário não são permitidas.",
           fontes: [],
           toolsUtilizadas: [],
           quantidadeChamadas: 0,

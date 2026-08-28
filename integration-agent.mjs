@@ -5,143 +5,73 @@ const endpoint =
 
 const cases = [
   {
-    question: "Mostre a OS 1002.",
-    expectedTool: "buscar_os_por_numero",
+    question: "Busque o ticket 4830.",
+    expectedTool: "buscar_ticket_por_numero",
   },
   {
     question:
-      "Liste as OS abertas de prioridade alta.",
-    expectedTool: "listar_os_abertas",
+      "Liste os tickets da área de WEB.",
+    expectedTool: "listar_tickets",
   },
   {
     question:
-      "Liste as OS críticas atrasadas.",
-    expectedTool: "listar_os_atrasadas",
+      "Liste os tickets com status Encerrada.",
+    expectedTool: "listar_tickets",
   },
   {
     question:
-      "Liste as OS do responsável Ana Costa.",
-    expectedTool: "listar_os_por_responsavel",
+      "Quais tickets estão congelados?",
+    expectedTool: "listar_tickets_congelados",
   },
   {
     question:
-      "Liste as OS solicitadas por João Mendes.",
-    expectedTool: "listar_os_por_solicitante",
+      "Resumo dos tickets por status.",
+    expectedTool: "resumo_tickets_por_status",
   },
   {
     question:
-      "Liste as OS do cliente Bruno Santos.",
-    expectedTool: "listar_os_por_cliente",
+      "Quantos tickets por prioridade?",
+    expectedTool: "resumo_tickets_por_prioridade",
   },
   {
     question:
-      "Mostre o histórico da OS 1004.",
-    expectedTool: "consultar_historico_os",
+      "Resumo de tickets por área.",
+    expectedTool: "resumo_tickets_por_area",
   },
   {
     question:
-      "Mostre o histórico de todas as OS.",
-    expectedTool: "listar_historico_os",
+      "Quais áreas de ticket existem?",
+    expectedTool: "listar_areas_tickets",
   },
   {
     question:
-      "Liste as OS canceladas de prioridade baixa.",
-    expectedTool: "listar_os_por_status",
+      "Quais prioridades de ticket existem?",
+    expectedTool: "listar_prioridades_tickets",
   },
   {
     question:
-      "Liste as OS solicitadas por Fernanda de prioridade crítica.",
-    expectedTool: "listar_os_por_solicitante",
+      "Quais canais de ticket existem?",
+    expectedTool: "listar_canais_tickets",
   },
   {
     question:
-      "Liste as OS do responsável Carlos Souza de prioridade alta.",
-    expectedTool: "listar_os_por_responsavel",
+      "Liste os status de ticket.",
+    expectedTool: "listar_status_tickets",
   },
   {
     question:
-      "Liste as OS do responsável Carlos solicitadas pelo Rafael.",
-    expectedTool: "listar_os_por_solicitante",
+      "Quais departamentos de ticket existem?",
+    expectedTool: "listar_departamentos_tickets",
   },
   {
     question:
-      "Quais OS atrasadas foram solicitadas pelo Rafael Martins?",
-    expectedTool: "listar_os_atrasadas",
+      "Quais usuários de ticket existem?",
+    expectedTool: "listar_usuarios_tickets",
   },
   {
     question:
-      "Qual o resumo por status das OS do responsável Carlos Souza?",
-    expectedTool: "resumo_os_por_status",
-  },
-  {
-    question:
-      "Quantas OS de prioridade alta foram solicitadas pela Ana?",
-    expectedTool: "resumo_os_por_prioridade",
-  },
-  {
-    question:
-      "Mostre o histórico de todas as OS canceladas.",
-    expectedTool: "listar_historico_os",
-  },
-  {
-    question:
-      "Liste as OS abertas de prioridade crítica do responsável",
-    expectedTool: "listar_os_abertas",
-  },
-  {
-    question:
-      "Busque clientes inativos cujo nome contenha Oliveira.",
-    expectedTool: "buscar_clientes_por_nome",
-  },
-  {
-    question:
-      "Quais clientes ativos foram cadastrados recentemente?",
-    expectedTool: "listar_clientes_recentes",
-  },
-  {
-    question:
-      "Mostre o resumo das OS por status.",
-    expectedTool: "resumo_os_por_status",
-  },
-  {
-    question:
-      "Mostre a distribuição das OS por prioridade.",
-    expectedTool: "resumo_os_por_prioridade",
-  },
-  {
-    question:
-      "Liste as OS canceladas.",
-    expectedTool: "listar_os_por_status",
-  },
-  {
-    question:
-      "Mostre informações sobre as OS.",
-    expectedClarification: true,
-  },
-  {
-    question:
-      "Cancele a OS 1004.",
+      "Cancele o ticket 4830.",
     expectedWriteBlock: true,
-  },
-  {
-    question:
-      "Busque o cliente com o e-mail bruno@example.com.",
-    expectedTool: "buscar_cliente_por_email",
-  },
-  {
-    question:
-      "Busque o cliente com id 2.",
-    expectedTool: "buscar_cliente_por_id",
-  },
-  {
-    question:
-      "Busque clientes cujo nome contenha Silva.",
-    expectedTool: "buscar_clientes_por_nome",
-  },
-  {
-    question:
-      "Liste todos os clientes, incluindo ativos e inativos.",
-    expectedTool: "listar_clientes",
   },
 ];
 

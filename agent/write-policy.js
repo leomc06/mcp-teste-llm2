@@ -1,6 +1,6 @@
 import {
   normalizeText,
-} from "./os-routing.js";
+} from "./routing-utils.js";
 
 const imperativeVerbs = [
   "crie",

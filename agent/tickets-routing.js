@@ -2,7 +2,7 @@ import {
   compactEntities,
   extractLimit,
   normalizeText,
-} from "./os-routing.js";
+} from "./routing-utils.js";
 
 const TRAILING_FILTER_CLAUSE_PATTERN =
   /\s+(?:com|e|que\s+(?:tem|est[áa]))\s+(?:o\s+|a\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|limite)\b.*$/iu;

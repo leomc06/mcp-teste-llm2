@@ -10,44 +10,31 @@ import {
 const ollamaTools = [
   {
     function: {
-      name: "listar_os_por_status",
+      name: "listar_tickets",
       parameters: {
         type: "object",
         properties: {
           status: {
             type: "string",
-            enum: [
-              "aberta",
-              "em_andamento",
-              "aguardando",
-              "concluida",
-              "cancelada",
-            ],
+            minLength: 1,
+            maxLength: 100,
           },
-          dias: {
+          limite: {
             type: "integer",
             minimum: 1,
-            maximum: 3650,
-            default: 365,
+            maximum: 100,
+            default: 50,
           },
         },
-        required: ["status"],
       },
     },
   },
   {
     function: {
-      name: "listar_clientes",
+      name: "listar_areas_tickets",
       parameters: {
         type: "object",
-        properties: {
-          limite: {
-            type: "integer",
-            minimum: 1,
-            maximum: 100,
-            default: 20,
-          },
-        },
+        properties: {},
       },
     },
   },
@@ -55,38 +42,38 @@ const ollamaTools = [
 
 test("argumentos da rota substituem argumentos inventados", () => {
   const result = resolveToolArguments({
-    name: "listar_os_por_status",
+    name: "listar_tickets",
     modelArgs: {
-      status: "concluida",
-      dias: 0,
+      status: "Encerrada",
+      limite: 5,
     },
     ollamaTools,
     routeToolArguments: {
-      name: "listar_os_por_status",
+      name: "listar_tickets",
       args: {
-        status: "cancelada",
-        dias: 30,
+        status: "Aguardando atendimento",
+        limite: 30,
       },
     },
     pergunta:
-      "Liste as OS canceladas nos últimos 30 dias.",
+      "Liste os tickets aguardando atendimento, limite 30.",
   });
 
   assert.deepEqual(result, {
-    status: "cancelada",
-    dias: 30,
+    status: "Aguardando atendimento",
+    limite: 30,
   });
 });
 
-test("mantém normalização existente quando não há rota de OS", () => {
+test("mantém normalização existente quando não há rota", () => {
   const result = resolveToolArguments({
-    name: "listar_clientes",
+    name: "listar_tickets",
     modelArgs: {
       limite: 10,
     },
     ollamaTools,
     routeToolArguments: null,
-    pergunta: "Liste os clientes com limite 10.",
+    pergunta: "Liste os tickets com limite 10.",
   });
 
   assert.deepEqual(result, {
@@ -97,11 +84,11 @@ test("mantém normalização existente quando não há rota de OS", () => {
 test("rejeita tool não disponibilizada", () => {
   assert.throws(
     () => resolveToolArguments({
-      name: "informacoes_banco",
+      name: "buscar_ticket_por_numero",
       modelArgs: {},
       ollamaTools,
       routeToolArguments: null,
-      pergunta: "Mostre o banco.",
+      pergunta: "Busque o ticket 1.",
     }),
     (error) =>
       error instanceof AgentError
@@ -112,16 +99,16 @@ test("rejeita tool não disponibilizada", () => {
 test("rejeita tool diferente da rota", () => {
   assert.throws(
     () => resolveToolArguments({
-      name: "listar_clientes",
+      name: "listar_areas_tickets",
       modelArgs: {},
       ollamaTools,
       routeToolArguments: {
-        name: "listar_os_por_status",
+        name: "listar_tickets",
         args: {
-          status: "cancelada",
+          status: "Aguardando atendimento",
         },
       },
-      pergunta: "Liste as OS canceladas.",
+      pergunta: "Liste os tickets aguardando atendimento.",
     }),
     (error) =>
       error instanceof AgentError
@@ -157,12 +144,11 @@ test("força a tool da rota quando a LLM não cria tool call", async () => {
             type: "text",
             text: JSON.stringify({
               filtros: {
-                status: "cancelada",
-                periodo_dias: 30,
-                limite: 20,
+                status: "Aguardando atendimento",
+                limite: 30,
               },
-              quantidade: 0,
-              ordens_servico: [],
+              total: 0,
+              tickets: [],
             }),
           },
         ],
@@ -172,17 +158,17 @@ test("força a tool da rota quando a LLM não cria tool call", async () => {
 
   const result = await runAgent({
     pergunta:
-      "Liste as OS canceladas nos últimos 30 dias.",
+      "Liste os tickets aguardando atendimento, limite 30.",
     mcp,
     ollama,
     ollamaTools: [
       ollamaTools[0],
     ],
     routeToolArguments: {
-      name: "listar_os_por_status",
+      name: "listar_tickets",
       args: {
-        status: "cancelada",
-        dias: 30,
+        status: "Aguardando atendimento",
+        limite: 30,
       },
     },
     maxToolCalls: 1,
@@ -190,17 +176,17 @@ test("força a tool da rota quando a LLM não cria tool call", async () => {
 
   assert.deepEqual(calls, [
     {
-      name: "listar_os_por_status",
+      name: "listar_tickets",
       args: {
-        status: "cancelada",
-        dias: 30,
+        status: "Aguardando atendimento",
+        limite: 30,
       },
     },
   ]);
 
   assert.deepEqual(
     result.toolsUtilizadas,
-    ["listar_os_por_status"],
+    ["listar_tickets"],
   );
 
   assert.equal(

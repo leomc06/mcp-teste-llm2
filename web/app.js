@@ -61,7 +61,7 @@ function renderSources(items) {
     const fragment = sourceTemplate.content.cloneNode(true);
 
     fragment.querySelector(".source-number").textContent =
-      `OS ${item.numero}`;
+      `Ticket ${item.numero}`;
 
     fragment.querySelector(".source-tool").textContent =
       item.tool;
