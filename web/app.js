@@ -19,6 +19,13 @@ const sourceTemplate = document.querySelector("#source-template");
 const requestId = document.querySelector("#request-id");
 const toolsUsed = document.querySelector("#tools-used");
 
+const pagination = document.querySelector("#pagination");
+const paginationPrev = document.querySelector("#pagination-prev");
+const paginationStatus = document.querySelector("#pagination-status");
+const paginationNext = document.querySelector("#pagination-next");
+
+let baseQuestion = null;
+
 function updateCharacterCount() {
   characterCount.textContent =
     `${questionInput.value.length} / 2000`;
@@ -34,6 +41,7 @@ function hideResults() {
   errorPanel.hidden = true;
   responsePanel.hidden = true;
   sources.hidden = true;
+  pagination.hidden = true;
 }
 
 function showError(message) {
@@ -67,6 +75,45 @@ function renderSources(items) {
   sources.hidden = false;
 }
 
+function findPaginatedResult(dadosConsultados) {
+  if (!Array.isArray(dadosConsultados)) {
+    return null;
+  }
+
+  for (const item of dadosConsultados) {
+    const dados = item?.dados;
+
+    if (
+      dados
+      && Number.isFinite(dados.pagina)
+      && Number.isFinite(dados.paginas)
+    ) {
+      return dados;
+    }
+  }
+
+  return null;
+}
+
+function renderPagination(dadosConsultados) {
+  const info = findPaginatedResult(dadosConsultados);
+
+  if (!info || info.paginas <= 1 || !baseQuestion) {
+    pagination.hidden = true;
+    return;
+  }
+
+  paginationStatus.textContent =
+    `Página ${info.pagina} de ${info.paginas}`;
+
+  paginationPrev.disabled = info.pagina <= 1;
+  paginationNext.disabled = info.pagina >= info.paginas;
+
+  pagination.dataset.currentPage = String(info.pagina);
+  pagination.dataset.totalPages = String(info.paginas);
+  pagination.hidden = false;
+}
+
 function renderResponse(data) {
   answer.textContent = data.resposta ?? "Resposta não disponível.";
 
@@ -83,6 +130,7 @@ function renderResponse(data) {
       : "Nenhuma";
 
   renderSources(data.fontes);
+  renderPagination(data.dadosConsultados);
   responsePanel.hidden = false;
 }
 
@@ -105,16 +153,7 @@ questionInput.addEventListener("keydown", (event) => {
   }
 });
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  const question = questionInput.value.trim();
-
-  if (!question) {
-    form.reportValidity();
-    return;
-  }
-
+async function submitQuestion(pergunta) {
   hideResults();
   setLoading(true);
 
@@ -126,7 +165,7 @@ form.addEventListener("submit", async (event) => {
         "X-User-Id": "interface-local",
       },
       body: JSON.stringify({
-        pergunta: question,
+        pergunta,
       }),
       signal: AbortSignal.timeout(310000),
     });
@@ -158,6 +197,30 @@ form.addEventListener("submit", async (event) => {
   } finally {
     setLoading(false);
   }
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const question = questionInput.value.trim();
+
+  if (!question) {
+    form.reportValidity();
+    return;
+  }
+
+  baseQuestion = question;
+  submitQuestion(question);
+});
+
+paginationPrev.addEventListener("click", () => {
+  const current = Number(pagination.dataset.currentPage ?? "1");
+  submitQuestion(`${baseQuestion} (página ${current - 1})`);
+});
+
+paginationNext.addEventListener("click", () => {
+  const current = Number(pagination.dataset.currentPage ?? "1");
+  submitQuestion(`${baseQuestion} (página ${current + 1})`);
 });
 
 updateCharacterCount();

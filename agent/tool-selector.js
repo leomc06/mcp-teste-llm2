@@ -5,6 +5,7 @@ import {
   routeOsQuestion,
 } from "./os-routing.js";
 import { routeClientQuestion } from "./client-routing.js";
+import { routeTicketQuestion } from "./tickets-routing.js";
 
 const PERSON_LOOKUP_PATTERN =
   /\b(?:informa\w*|dados|detalhes)\s+(?:sobre|de|do|da)\s+\S/u;
@@ -20,23 +21,29 @@ export function selectToolDecision(
 ) {
   const text = normalizeText(pergunta);
 
-  const osRoute = routeOsQuestion(pergunta);
+  const mentionsTicket = /\btickets?\b/.test(text);
+
+  const osRoute = mentionsTicket ? null : routeOsQuestion(pergunta);
 
   const mentionsClient = /\bclientes?\b/.test(text);
   const looksLikePersonLookup = PERSON_LOOKUP_PATTERN.test(text);
 
   const clientRoute =
-    mentionsClient || looksLikePersonLookup
+    !mentionsTicket && (mentionsClient || looksLikePersonLookup)
       ? routeClientQuestion(pergunta)
       : null;
 
+  const ticketRoute = mentionsTicket
+    ? routeTicketQuestion(pergunta)
+    : null;
+
   let route =
-    mentionsClient
-      ? clientRoute
-      : (osRoute ?? clientRoute);
+    mentionsTicket
+      ? ticketRoute
+      : (mentionsClient ? clientRoute : (osRoute ?? clientRoute));
 
   const ambiguityCheck =
-    !mentionsClient && osRoute
+    !mentionsTicket && !mentionsClient && osRoute
       ? AMBIGUOUS_PERSON_TOOL_CHECKS[osRoute.intent]
       : undefined;
 

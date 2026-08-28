@@ -279,6 +279,49 @@ test("não duplica a tool quando o solicitante vem de uma palavra-chave explíci
   );
 });
 
+test("prioriza a rota de ticket quando a pergunta menciona ticket", () => {
+  const ticketTools = [
+    {
+      function: {
+        name: "buscar_ticket_por_numero",
+      },
+    },
+    ...availableTools,
+  ];
+
+  const decision = selectToolDecision(
+    "Busque o ticket 1001.",
+    ticketTools,
+  );
+
+  assert.equal(decision.route.entity, "ticket");
+  assert.equal(decision.route.fallback, false);
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["buscar_ticket_por_numero"],
+  );
+
+  assert.equal(
+    decision.tools[0]?.function.name,
+    "buscar_ticket_por_numero",
+  );
+});
+
+test("chamado sem a palavra ticket continua no domínio de OS", () => {
+  const decision = selectToolDecision(
+    "Liste as OS canceladas.",
+    availableTools,
+  );
+
+  assert.equal(decision.route.entity, "os");
+
+  assert.deepEqual(
+    decision.route.toolNames,
+    ["listar_os_por_status"],
+  );
+});
+
 test("reconhece pedido de informações de uma pessoa sem a palavra cliente", () => {
   const clientTools = [
     {

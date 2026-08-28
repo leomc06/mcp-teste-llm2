@@ -8,7 +8,7 @@
     "start": "./run-mcp.sh",
     "start:mcp": "./run-mcp.sh",
     "start:agent": "./run-agent.sh",
-    "check": "node --check src/server.js && for file in agent/*.js; do node --check \"$file\"; done",
+    "check": "node --check src/server.js && node --check src/tickets-api.js && for file in agent/*.js; do node --check \"$file\"; done",
     "test": "npm run check && node --test",
     "test:integration": "node integration-agent.mjs"
   },
