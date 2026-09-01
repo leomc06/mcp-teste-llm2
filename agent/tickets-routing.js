@@ -5,18 +5,67 @@ import {
 } from "./routing-utils.js";
 
 const TRAILING_FILTER_CLAUSE_PATTERN =
-  /\s+(?:com|e|que\s+(?:tem|est[áa]))\s+(?:o\s+|a\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|limite)\b.*$/iu;
+  /\s+(?:com|e|que\s+(?:tem|est[áa])|d[oa])\s+(?:o\s+|a\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\b.*$/iu;
 
 const TRAILING_PAGE_CLAUSE_PATTERN =
   /\s*\(?\s*p[áa]gina\s+\d+\)?\s*$/iu;
 
 const ISO_DATE_SOURCE = "\\d{4}-\\d{2}-\\d{2}";
 
+const MONTH_NAME_SOURCE =
+  "janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro";
+
+const MONTH_NUMBERS = {
+  janeiro: "01",
+  fevereiro: "02",
+  marco: "03",
+  abril: "04",
+  maio: "05",
+  junho: "06",
+  julho: "07",
+  agosto: "08",
+  setembro: "09",
+  outubro: "10",
+  novembro: "11",
+  dezembro: "12",
+};
+
+// Data por extenso, ex.: "dia 2 de agosto de 2026" ou "2 de agosto de 2026".
+const LONG_DATE_SOURCE =
+  `(?:dia\\s+)?\\d{1,2}\\s+de\\s+(?:${MONTH_NAME_SOURCE})\\s+de\\s+\\d{4}`;
+
+// Qualquer formato de data aceito (ISO ou por extenso), como um único token.
+const DATE_TOKEN_SOURCE = `(?:${ISO_DATE_SOURCE}|${LONG_DATE_SOURCE})`;
+
+// Normaliza um token de data (ISO ou por extenso) para "AAAA-MM-DD".
+function parseDateToken(token) {
+  const texto = token.trim();
+
+  if (new RegExp(`^${ISO_DATE_SOURCE}$`).test(texto)) {
+    return texto;
+  }
+
+  const longMatch = texto.match(
+    new RegExp(`^(?:dia\\s+)?(\\d{1,2})\\s+de\\s+(${MONTH_NAME_SOURCE})\\s+de\\s+(\\d{4})$`, "iu"),
+  );
+
+  if (!longMatch) {
+    return undefined;
+  }
+
+  const dia = longMatch[1].padStart(2, "0");
+  const mesChave = longMatch[2].toLowerCase().replace("ç", "c");
+  const mes = MONTH_NUMBERS[mesChave];
+  const ano = longMatch[3];
+
+  return mes === undefined ? undefined : `${ano}-${mes}-${dia}`;
+}
+
 const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:(?:entre|per[íi]odo\\s+de)\\s+${ISO_DATE_SOURCE}\\s+(?:e|a|at[ée])\\s+${ISO_DATE_SOURCE}`
-    + `|desde\\s+${ISO_DATE_SOURCE}`
-    + `|a\\s+partir\\s+de\\s+${ISO_DATE_SOURCE}`
-    + `|at[ée]\\s+${ISO_DATE_SOURCE})\\s*$`,
+  `\\s+(?:(?:entre|per[íi]odo\\s+de)\\s+${DATE_TOKEN_SOURCE}\\s+(?:e|a|at[ée])\\s+${DATE_TOKEN_SOURCE}`
+    + `|desde\\s+${DATE_TOKEN_SOURCE}`
+    + `|a\\s+partir\\s+de\\s+${DATE_TOKEN_SOURCE}`
+    + `|at[ée]\\s+${DATE_TOKEN_SOURCE})\\s*$`,
   "iu",
 );
 
@@ -101,6 +150,12 @@ export function extractOperatorName(value) {
   ]);
 }
 
+export function extractClientName(value) {
+  return extractByPatterns(value, [
+    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(.+)$/iu,
+  ]);
+}
+
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
     /\bstatus\s+(?:de\s+)?(.+)$/iu,
@@ -134,24 +189,30 @@ export function extractDateRange(value) {
 
   const rangeMatch = text.match(
     new RegExp(
-      `\\b(?:entre|per[íi]odo\\s+de)\\s+(${ISO_DATE_SOURCE})\\s+(?:e|a|at[ée])\\s+(${ISO_DATE_SOURCE})\\b`,
+      `\\b(?:entre|per[íi]odo\\s+de)\\s+(${DATE_TOKEN_SOURCE})\\s+(?:e|a|at[ée])\\s+(${DATE_TOKEN_SOURCE})\\b`,
       "iu",
     ),
   );
 
   if (rangeMatch) {
-    return { dataInicio: rangeMatch[1], dataFim: rangeMatch[2] };
+    return {
+      dataInicio: parseDateToken(rangeMatch[1]),
+      dataFim: parseDateToken(rangeMatch[2]),
+    };
   }
 
-  const dataInicio = text.match(
-    new RegExp(`\\b(?:desde|a\\s+partir\\s+de)\\s+(${ISO_DATE_SOURCE})\\b`, "iu"),
-  )?.[1];
+  const inicioMatch = text.match(
+    new RegExp(`\\b(?:desde|a\\s+partir\\s+de)\\s+(${DATE_TOKEN_SOURCE})\\b`, "iu"),
+  );
 
-  const dataFim = text.match(
-    new RegExp(`\\bat[ée]\\s+(${ISO_DATE_SOURCE})\\b`, "iu"),
-  )?.[1];
+  const fimMatch = text.match(
+    new RegExp(`\\bat[ée]\\s+(${DATE_TOKEN_SOURCE})\\b`, "iu"),
+  );
 
-  return compactEntities({ dataInicio, dataFim });
+  return compactEntities({
+    dataInicio: inicioMatch ? parseDateToken(inicioMatch[1]) : undefined,
+    dataFim: fimMatch ? parseDateToken(fimMatch[1]) : undefined,
+  });
 }
 
 export function extractPage(value) {
@@ -248,6 +309,7 @@ export function routeTicketQuestion(pergunta) {
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operador = extractOperatorName(pergunta);
+  const cliente = extractClientName(pergunta);
   const prioridade = extractPriorityName(pergunta);
   const limite = extractLimit(pergunta);
   const pagina = extractPage(pergunta);
@@ -258,6 +320,7 @@ export function routeTicketQuestion(pergunta) {
     area,
     departamento,
     operador,
+    cliente,
     prioridade,
     numero,
     dataInicio,
@@ -336,7 +399,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
-      compactEntities({ status, area, departamento, operador }),
+      compactEntities({ status, area, departamento, operador, limite }),
     );
   }
 
@@ -357,6 +420,27 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
+  const isMostRecentIntent =
+    /\bmais\s+recent/.test(text)
+    || /\bultimo/.test(text)
+    || /\bmais\s+nov[oa]/.test(text);
+
+  if (isMostRecentIntent) {
+    const numeroSolto = text.match(/\b(\d+)\b/);
+
+    return createTicketDecision(
+      "listar_mais_recentes",
+      "listar_tickets_mais_recentes",
+      compactEntities({
+        status,
+        area,
+        departamento,
+        operador: extractOperatorNameForSituacao(pergunta),
+        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+      }),
+    );
+  }
+
   const isAbertoIntent = /\babert[oa]s?\b/.test(text);
   const isFechadoIntent = /\bfechad[oa]s?\b/.test(text);
 
@@ -368,6 +452,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        limite,
       }),
     );
   }
@@ -380,6 +465,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        limite,
       }),
     );
   }
@@ -391,7 +477,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
-      compactEntities({ status, area, departamento }),
+      compactEntities({ status, area, departamento, limite }),
     );
   }
 

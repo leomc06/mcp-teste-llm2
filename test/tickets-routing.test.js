@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   extractAreaName,
+  extractClientName,
   extractDateRange,
   extractDepartmentName,
   extractOperatorName,
@@ -220,6 +221,28 @@ test("roteia listagem de tickets sem operador atribuído", () => {
   assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
 });
 
+test("roteia listagem de tickets mais recentes ('últimos N')", () => {
+  const route = routeTicketQuestion("Liste os últimos 5 tickets da área de Suporte.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.limite, 5);
+});
+
+test("roteia listagem de tickets mais recentes com 'mais recentes'", () => {
+  const route = routeTicketQuestion("Quais os tickets mais recentes do operador Cesar?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.operador, "Cesar");
+});
+
+test("'por <nome>' funciona como operador na intenção de mais recentes", () => {
+  const route = routeTicketQuestion("Quais os últimos tickets abertos por Cesar?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.operador, "Cesar");
+});
+
 test("roteia listagem de tickets não atribuídos", () => {
   const route = routeTicketQuestion("Liste os tickets não atribuídos na área de Suporte.");
 
@@ -232,6 +255,20 @@ test("roteia listagem de tickets fechados", () => {
 
   assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
   assert.equal(route.entities.area, "Redes");
+});
+
+test("'no máximo N' aplica limite em tickets fechados", () => {
+  const route = routeTicketQuestion("Liste no máximo 10 tickets fechados.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.limite, 10);
+});
+
+test("'no máximo N' aplica limite em tickets abertos", () => {
+  const route = routeTicketQuestion("Liste no máximo 3 tickets abertos.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.limite, 3);
 });
 
 test("'por <nome>' não captura operador quando seguido de uma dimensão conhecida", () => {
@@ -273,6 +310,37 @@ test("extrai período de datas em diferentes frases", () => {
   assert.deepEqual(extractDateRange("Liste os tickets."), {});
 });
 
+test("extrai período de datas por extenso (dia D de MÊS de AAAA)", () => {
+  assert.deepEqual(
+    extractDateRange("Liste os tickets desde dia 2 de agosto de 2026."),
+    { dataInicio: "2026-08-02" },
+  );
+  assert.deepEqual(
+    extractDateRange("Liste os tickets a partir de 2 de agosto de 2026."),
+    { dataInicio: "2026-08-02" },
+  );
+  assert.deepEqual(
+    extractDateRange("Liste os tickets até dia 2 de março de 2026."),
+    { dataFim: "2026-03-02" },
+  );
+  assert.deepEqual(
+    extractDateRange(
+      "Liste os tickets entre dia 2 de agosto de 2026 e 15 de setembro de 2026.",
+    ),
+    { dataInicio: "2026-08-02", dataFim: "2026-09-15" },
+  );
+});
+
+test("data por extenso combinada com outros filtros na listagem genérica", () => {
+  const route = routeTicketQuestion(
+    "Liste os tickets da área de Suporte desde dia 2 de agosto de 2026.",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.dataInicio, "2026-08-02");
+});
+
 test("roteia listagem de tickets filtrada por período", () => {
   const route = routeTicketQuestion(
     "Liste os tickets da área de Redes entre 2026-01-01 e 2026-01-31.",
@@ -282,4 +350,29 @@ test("roteia listagem de tickets filtrada por período", () => {
   assert.equal(route.entities.area, "Redes");
   assert.equal(route.entities.dataInicio, "2026-01-01");
   assert.equal(route.entities.dataFim, "2026-01-31");
+});
+
+test("extrai nome de cliente", () => {
+  assert.equal(
+    extractClientName("Liste os tickets do cliente Diego Mota."),
+    "Diego Mota",
+  );
+  assert.equal(extractClientName("Liste os tickets."), undefined);
+});
+
+test("roteia listagem de tickets filtrada por cliente", () => {
+  const route = routeTicketQuestion("liste os tickets do cliente diego mota");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.equal(route.entities.cliente, "diego mota");
+});
+
+test("cliente combinado com outros filtros na listagem genérica", () => {
+  const route = routeTicketQuestion(
+    "Liste os tickets da área de Suporte do cliente Diego Mota.",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.equal(route.entities.cliente, "Diego Mota");
+  assert.equal(route.entities.area, "Suporte");
 });

@@ -46,16 +46,35 @@ function ticketsFailure(error) {
   };
 }
 
+// Casa nomes ignorando maiúscula/minúscula e acentuação (ex.: "supercomputacao"
+// == "Supercomputação"), já que quem pergunta raramente digita acentos.
+function normalizeForMatch(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Remove uma terminação de gênero/número (o/a/os/as) pra permitir casar
+// variações como "encerrado" com "ENCERRADA", sem exigir concordância exata.
+function stripGenderSuffix(value) {
+  return value.replace(/(os|as|o|a)$/u, "");
+}
+
 async function resolveMetaId(listFn, nome) {
   if (nome === undefined) {
-    return { id: undefined, naoEncontrado: false };
+    return { id: undefined, nomeCanonico: undefined, naoEncontrado: false };
   }
 
-  const alvo = nome.trim().toLowerCase();
+  const alvo = normalizeForMatch(nome);
   const itens = await listFn();
+  const normalizados = itens.map((candidato) => normalizeForMatch(candidato.name));
 
-  const item = itens.find((candidato) => candidato.name.toLowerCase() === alvo)
-    ?? itens.find((candidato) => candidato.name.toLowerCase().includes(alvo));
+  const item =
+    itens.find((candidato, i) => normalizados[i] === alvo)
+    ?? itens.find((candidato, i) => normalizados[i].includes(alvo))
+    ?? itens.find((candidato, i) => stripGenderSuffix(normalizados[i]) === stripGenderSuffix(alvo));
 
   return item
     ? { id: item.id, nomeCanonico: item.name, naoEncontrado: false }
@@ -197,12 +216,12 @@ server.registerTool(
   async ({ nome }) => {
     try {
       const usuarios = await ticketsApi.listUsers();
-      const alvo = nome.trim().toLowerCase();
+      const alvo = normalizeForMatch(nome);
 
       const encontrados = usuarios.filter(
         (usuario) =>
-          usuario.name.toLowerCase().includes(alvo)
-          || usuario.login.toLowerCase().includes(alvo),
+          normalizeForMatch(usuario.name).includes(alvo)
+          || normalizeForMatch(usuario.login).includes(alvo),
       );
 
       return success({ quantidade: encontrados.length, usuarios: encontrados });
@@ -237,12 +256,13 @@ server.registerTool(
   "listar_tickets",
   {
     title: "Listar tickets",
-    description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD). Não filtra por coluna do Kanban.",
+    description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, cliente (nome do solicitante), prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD). Não filtra por coluna do Kanban.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       numero: z.number().int().positive().max(2147483647).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -251,7 +271,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, numero, dataInicio, dataFim, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, numero, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -284,8 +304,9 @@ server.registerTool(
         operator: operadorResolvido.id,
       };
 
-      const filtros = { status, area, departamento, operador, prioridade, numero, dataInicio, dataFim, limite, pagina };
-      const precisaFiltroLocal = prioridade !== undefined || dataInicio !== undefined || dataFim !== undefined;
+      const filtros = { status, area, departamento, operador, cliente, prioridade, numero, dataInicio, dataFim, limite, pagina };
+      const precisaFiltroLocal =
+        cliente !== undefined || prioridade !== undefined || dataInicio !== undefined || dataFim !== undefined;
 
       if (!precisaFiltroLocal) {
         const resultado = await listTicketsSafe({
@@ -304,18 +325,21 @@ server.registerTool(
         });
       }
 
-      // A API não filtra tickets por prioridade nem por período de abertura,
-      // então buscamos tudo com os demais filtros e filtramos/paginamos
-      // localmente. opening_date é uma string "AAAA-MM-DD HH:MM:SS", então dá
-      // pra comparar lexicograficamente com as datas AAAA-MM-DD informadas.
+      // A API não filtra tickets por cliente, prioridade nem por período de
+      // abertura, então buscamos tudo com os demais filtros e filtramos/
+      // paginamos localmente. opening_date é uma string "AAAA-MM-DD HH:MM:SS",
+      // então dá pra comparar lexicograficamente com as datas AAAA-MM-DD
+      // informadas.
       const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase);
 
+      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
       const limiteFim = dataFim === undefined ? undefined : `${dataFim} 23:59:59`;
 
       const filtrados = todos.filter(
         (ticket) =>
           (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
           && (numero === undefined || ticket.number === numero)
+          && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo))
           && (dataInicio === undefined || ticket.opening_date >= dataInicio)
           && (limiteFim === undefined || ticket.opening_date <= limiteFim),
       );
@@ -686,14 +710,15 @@ server.registerTool(
   "listar_tickets_sem_operador",
   {
     title: "Listar tickets sem operador atribuído",
-    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área e departamento.",
+    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento e limite de resultados.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ status, area, departamento }) => {
+  async ({ status, area, departamento, limite }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -725,7 +750,7 @@ server.registerTool(
       return success({
         quantidade: semOperador.length,
         truncado,
-        tickets: semOperador,
+        tickets: limite === undefined ? semOperador : semOperador.slice(0, limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -788,18 +813,77 @@ server.registerTool(
 );
 
 server.registerTool(
-  "listar_tickets_congelados",
+  "listar_tickets_mais_recentes",
   {
-    title: "Listar tickets congelados",
-    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento e operador.",
+    title: "Listar tickets mais recentes",
+    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento e operador.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(50).default(10),
     },
   },
-  async ({ status, area, departamento, operador }) => {
+  async ({ status, area, departamento, operador, limite }) => {
+    try {
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
+        resolveMetaId(() => ticketsApi.listStatuses(), status),
+        resolveMetaId(() => ticketsApi.listAreas(), area),
+        resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+        resolveMetaId(() => ticketsApi.listUsers(), operador),
+      ]);
+
+      const naoEncontrados = [
+        statusResolvido.naoEncontrado ? `status "${status}"` : null,
+        areaResolvida.naoEncontrado ? `área "${area}"` : null,
+        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
+        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
+      ].filter(Boolean);
+
+      if (naoEncontrados.length > 0) {
+        return success({
+          encontrado: false,
+          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+        });
+      }
+
+      const { tickets, truncado } = await fetchAllTicketsSafe({
+        status: statusResolvido.id,
+        area: areaResolvida.id,
+        department: departamentoResolvido.id,
+        operator: operadorResolvido.id,
+      });
+
+      const recentes = [...tickets].sort(
+        (a, b) => (a.opening_date < b.opening_date ? 1 : a.opening_date > b.opening_date ? -1 : 0),
+      );
+
+      return success({
+        quantidade_total: recentes.length,
+        truncado,
+        tickets: recentes.slice(0, limite),
+      });
+    } catch (error) {
+      return ticketsFailure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "listar_tickets_congelados",
+  {
+    title: "Listar tickets congelados",
+    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador e limite de resultados.",
+    inputSchema: {
+      status: z.string().trim().min(1).max(100).optional(),
+      area: z.string().trim().min(1).max(100).optional(),
+      departamento: z.string().trim().min(1).max(100).optional(),
+      operador: z.string().trim().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).optional(),
+    },
+  },
+  async ({ status, area, departamento, operador, limite }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido] =
         await Promise.all([
@@ -835,7 +919,7 @@ server.registerTool(
       return success({
         quantidade: congelados.length,
         truncado,
-        tickets: congelados,
+        tickets: limite === undefined ? congelados : congelados.slice(0, limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -847,14 +931,15 @@ server.registerTool(
   "listar_tickets_abertos",
   {
     title: "Listar tickets abertos",
-    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento e operador.",
+    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador e limite de resultados.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ area, departamento, operador }) => {
+  async ({ area, departamento, operador, limite }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -886,7 +971,7 @@ server.registerTool(
       return success({
         quantidade: abertos.length,
         truncado,
-        tickets: abertos,
+        tickets: limite === undefined ? abertos : abertos.slice(0, limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -898,14 +983,15 @@ server.registerTool(
   "listar_tickets_fechados",
   {
     title: "Listar tickets fechados",
-    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento e operador.",
+    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador e limite de resultados.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ area, departamento, operador }) => {
+  async ({ area, departamento, operador, limite }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -937,7 +1023,7 @@ server.registerTool(
       return success({
         quantidade: fechados.length,
         truncado,
-        tickets: fechados,
+        tickets: limite === undefined ? fechados : fechados.slice(0, limite),
       });
     } catch (error) {
       return ticketsFailure(error);

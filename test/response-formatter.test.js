@@ -33,6 +33,53 @@ test("formata a lista de tickets, incluindo a data de abertura sem hora bruta", 
   assert.doesNotMatch(resposta, /2026-08-20 09:15:00/);
 });
 
+test("formata a lista de tickets incluindo o cliente (solicitante)", () => {
+  const resposta = format("listar_tickets", {
+    filtros: {},
+    total: 1,
+    pagina: 1,
+    paginas: 1,
+    tickets: [
+      {
+        number: 2,
+        opening_date: "2026-08-20 09:15:00",
+        priority: "Alta",
+        area: "Suporte",
+        issue: "Rede",
+        contact_name: "Diego Mota",
+        operator: "admin",
+        status: "Aguardando atendimento",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /cliente: Diego Mota/);
+});
+
+test("deixa claro quando a lista exibida é menor que o total encontrado (ex.: 'primeiros N')", () => {
+  const resposta = format("listar_tickets", {
+    filtros: { area: "Suporte", limite: 5 },
+    total: 4285,
+    pagina: 1,
+    paginas: 857,
+    tickets: [
+      {
+        number: 1,
+        opening_date: "2026-08-20 09:15:00",
+        priority: "Baixa",
+        area: "Suporte",
+        issue: "Rede",
+        operator: "admin",
+        status: "Aguardando atendimento",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /Exibindo 1 de 4285 ticket\(s\) encontrado\(s\) \(página 1 de 857\):/);
+});
+
 test("avisa quando a lista de tickets foi truncada por volume", () => {
   const resposta = format("listar_tickets", {
     filtros: {},
@@ -55,6 +102,27 @@ test("avisa quando a lista de tickets foi truncada por volume", () => {
   });
 
   assert.match(resposta, /resultado parcial: consulta truncada por volume de tickets/);
+});
+
+test("deixa claro quando a lista de tickets fechados exibida é menor que o total (limite aplicado)", () => {
+  const resposta = format("listar_tickets_fechados", {
+    quantidade: 960,
+    truncado: false,
+    tickets: [
+      {
+        number: 4848,
+        opening_date: "2026-08-31 12:24:00",
+        priority: "Baixa",
+        area: "Redes e Segurança",
+        issue: "DNS",
+        operator: "Helpdesk",
+        status: "ENCERRADA",
+        is_frozen: true,
+      },
+    ],
+  });
+
+  assert.match(resposta, /Exibindo 1 de 960 ticket\(s\) fechado\(s\):/);
 });
 
 test("formata o detalhe do ticket com SLA e datas ISO em hora de Brasília", () => {
@@ -86,6 +154,40 @@ test("formata o detalhe do ticket com SLA e datas ISO em hora de Brasília", () 
   assert.match(resposta, /SLA de resposta: excedeu o SLA; SLA de solução: não definido/);
   assert.match(resposta, /SLA congelado: sim/);
   assert.doesNotMatch(resposta, /2026-08-27T16:10/);
+});
+
+test("formata os comentários (entries) do ticket, não só a contagem", () => {
+  const resposta = format("buscar_ticket_por_numero", {
+    encontrado: true,
+    ticket: {
+      number: 3289,
+      opening_date: "2026-02-25 09:00:00",
+      priority: "Baixa",
+      area: "WEB",
+      issue: "Portal",
+      operator: "admin",
+      status: "ENCERRADA",
+      entries: [
+        {
+          entry: "Em atendimento",
+          author: "Bruno de Souza Castro",
+          date: "2026-02-25 09:18:13",
+          type: 2,
+        },
+        {
+          entry: "Arquivos identificados, renomeados e processamento seguindo sem conflito.",
+          author: "Bruno de Souza Castro",
+          date: "2026-02-25 09:31:43",
+          type: 4,
+        },
+      ],
+      files: [],
+    },
+  });
+
+  assert.match(resposta, /Comentários \(2\):/);
+  assert.match(resposta, /\[25\/02\/2026 09:18\] Bruno de Souza Castro: Em atendimento/);
+  assert.match(resposta, /Arquivos identificados, renomeados e processamento seguindo sem conflito\./);
 });
 
 test("ticket não encontrado retorna mensagem amigável", () => {
@@ -170,4 +272,26 @@ test("formata lista de áreas de ticket", () => {
 
   assert.match(resposta, /2 área\(s\) de ticket encontrada\(s\):/);
   assert.match(resposta, /- Redes \(inativa\)/);
+});
+
+test("formata lista de tickets mais recentes", () => {
+  const resposta = format("listar_tickets_mais_recentes", {
+    quantidade_total: 42,
+    truncado: false,
+    tickets: [
+      {
+        number: 4850,
+        opening_date: "2026-09-01 07:47:00",
+        priority: "Baixa",
+        area: "Suporte",
+        issue: "Rede",
+        operator: "admin",
+        status: "AGUARDANDO ATENDIMENTO",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /1 ticket\(s\) mais recente\(s\) de 42 no total:/);
+  assert.match(resposta, /Ticket 4850: Rede/);
 });

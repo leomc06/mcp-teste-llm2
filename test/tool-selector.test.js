@@ -19,6 +19,7 @@ const ticketToolNames = [
   "listar_tickets_fechados",
   "listar_tickets_sem_operador",
   "listar_tickets_abertos_mais_antigos",
+  "listar_tickets_mais_recentes",
   "listar_areas_tickets",
   "listar_status_tickets",
 ];
@@ -35,6 +36,7 @@ const toolCases = [
   ["Liste os tickets fechados.", "listar_tickets_fechados"],
   ["Liste os tickets sem operador atribuído.", "listar_tickets_sem_operador"],
   ["Quais os tickets mais antigos ainda abertos?", "listar_tickets_abertos_mais_antigos"],
+  ["Liste os últimos tickets da área de Suporte.", "listar_tickets_mais_recentes"],
   ["Resumo dos tickets por status.", "resumo_tickets_por_status"],
   ["Quantos tickets por prioridade?", "resumo_tickets_por_prioridade"],
   ["Resumo de tickets por área.", "resumo_tickets_por_area"],

@@ -104,6 +104,7 @@ function formatTicket(ticket) {
     `status: ${ticket.status}`,
     `prioridade: ${ticket.priority}`,
     `área: ${ticket.area}`,
+    `cliente: ${firstNonEmpty([ticket.client, ticket.contact_name], "não informado")}`,
     `operador: ${decodeHtmlEntities(ticket.operator) ?? "não atribuído"}`,
     `aberto em: ${formatNaiveDateTime(ticket.opening_date)}`,
   ];
@@ -126,6 +127,8 @@ function formatTicketList(data) {
     return "Nenhum ticket foi encontrado para os filtros informados.";
   }
 
+  const total = data.total ?? tickets.length;
+
   const paginacao =
     data.paginas !== undefined
       ? ` (página ${data.pagina} de ${data.paginas})`
@@ -135,8 +138,13 @@ function formatTicketList(data) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const cabecalho =
+    tickets.length < total
+      ? `Exibindo ${tickets.length} de ${total} ticket(s) encontrado(s)${paginacao}${truncadoAviso}:`
+      : `${total} ticket(s) encontrado(s)${paginacao}${truncadoAviso}:`;
+
   return [
-    `${data.total ?? tickets.length} ticket(s) encontrado(s)${paginacao}${truncadoAviso}:`,
+    cabecalho,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -180,7 +188,19 @@ function formatTicketDetail(data) {
   }
 
   const entries = ticket.entries ?? [];
-  details.push(`Comentários: ${entries.length}`);
+
+  if (entries.length > 0) {
+    details.push(`Comentários (${entries.length}):`);
+
+    for (const entrada of entries) {
+      const quando = formatNaiveDateTime(entrada.date);
+      const autor = decodeHtmlEntities(entrada.author) ?? "desconhecido";
+      const texto = decodeHtmlEntities(entrada.entry) ?? "";
+      details.push(`  - [${quando}] ${autor}: ${texto}`);
+    }
+  } else {
+    details.push("Comentários: nenhum");
+  }
 
   const files = ticket.files ?? [];
 
@@ -307,12 +327,19 @@ function formatFrozenTickets(data) {
     return "Nenhum ticket com SLA congelado foi encontrado.";
   }
 
+  const quantidade = data.quantidade ?? tickets.length;
+
   const truncadoAviso = data.truncado
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const cabecalho =
+    tickets.length < quantidade
+      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) com SLA congelado${truncadoAviso}:`
+      : `${quantidade} ticket(s) com SLA congelado${truncadoAviso}:`;
+
   return [
-    `${data.quantidade ?? tickets.length} ticket(s) com SLA congelado${truncadoAviso}:`,
+    cabecalho,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -328,12 +355,19 @@ function formatTicketsBySituacao(data, situacaoLabel) {
     return `Nenhum ticket ${situacaoLabel} foi encontrado.`;
   }
 
+  const quantidade = data.quantidade ?? tickets.length;
+
   const truncadoAviso = data.truncado
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const cabecalho =
+    tickets.length < quantidade
+      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) ${situacaoLabel}${truncadoAviso}:`
+      : `${quantidade} ticket(s) ${situacaoLabel}${truncadoAviso}:`;
+
   return [
-    `${data.quantidade ?? tickets.length} ticket(s) ${situacaoLabel}${truncadoAviso}:`,
+    cabecalho,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -355,6 +389,27 @@ function formatOldestOpenTickets(data) {
 
   return [
     `${tickets.length} ticket(s) aberto(s) mais antigo(s) de ${data.quantidade_total_abertos ?? tickets.length} no total${truncadoAviso}:`,
+    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+  ].join("\n");
+}
+
+function formatMostRecentTickets(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const tickets = data.tickets ?? [];
+
+  if (tickets.length === 0) {
+    return "Nenhum ticket foi encontrado para os filtros informados.";
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  return [
+    `${tickets.length} ticket(s) mais recente(s) de ${data.quantidade_total ?? tickets.length} no total${truncadoAviso}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -417,6 +472,9 @@ function formatOne(toolResult) {
 
     case "listar_tickets_abertos_mais_antigos":
       return formatOldestOpenTickets(dados);
+
+    case "listar_tickets_mais_recentes":
+      return formatMostRecentTickets(dados);
 
     default:
       throw new Error(
