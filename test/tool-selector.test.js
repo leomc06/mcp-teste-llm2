@@ -12,7 +12,13 @@ const ticketToolNames = [
   "resumo_tickets_por_status",
   "resumo_tickets_por_prioridade",
   "resumo_tickets_por_area",
+  "resumo_tickets_por_operador",
+  "resumo_tickets_por_departamento",
   "listar_tickets_congelados",
+  "listar_tickets_abertos",
+  "listar_tickets_fechados",
+  "listar_tickets_sem_operador",
+  "listar_tickets_abertos_mais_antigos",
   "listar_areas_tickets",
   "listar_status_tickets",
 ];
@@ -25,10 +31,15 @@ const availableTools = ticketToolNames.map((name) => ({
 
 const toolCases = [
   ["Busque o ticket 1001.", "buscar_ticket_por_numero"],
-  ["Liste os tickets abertos.", "listar_tickets"],
+  ["Liste os tickets abertos.", "listar_tickets_abertos"],
+  ["Liste os tickets fechados.", "listar_tickets_fechados"],
+  ["Liste os tickets sem operador atribuído.", "listar_tickets_sem_operador"],
+  ["Quais os tickets mais antigos ainda abertos?", "listar_tickets_abertos_mais_antigos"],
   ["Resumo dos tickets por status.", "resumo_tickets_por_status"],
   ["Quantos tickets por prioridade?", "resumo_tickets_por_prioridade"],
   ["Resumo de tickets por área.", "resumo_tickets_por_area"],
+  ["Quantos tickets por operador?", "resumo_tickets_por_operador"],
+  ["Quantos tickets por departamento?", "resumo_tickets_por_departamento"],
   ["Quais tickets estão congelados?", "listar_tickets_congelados"],
   ["Quais áreas de ticket existem?", "listar_areas_tickets"],
 ];

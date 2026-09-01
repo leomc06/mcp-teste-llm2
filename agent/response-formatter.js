@@ -131,8 +131,12 @@ function formatTicketList(data) {
       ? ` (página ${data.pagina} de ${data.paginas})`
       : "";
 
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
   return [
-    `${data.total ?? tickets.length} ticket(s) encontrado(s)${paginacao}:`,
+    `${data.total ?? tickets.length} ticket(s) encontrado(s)${paginacao}${truncadoAviso}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -280,10 +284,16 @@ function formatTicketSummary(data, dimensaoLabel) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
-  return [
+  const linhas = [
     `Resumo de ${data.total_tickets ?? 0} ticket(s) por ${dimensaoLabel}${truncadoAviso}:`,
-    ...resumo.map((row) => `- ${row.chave}: ${row.quantidade}`),
-  ].join("\n");
+    ...resumo.map((row) => `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade}`),
+  ];
+
+  if (data.abertos !== undefined && data.fechados !== undefined) {
+    linhas.push(`Total abertos: ${data.abertos}; total fechados: ${data.fechados}`);
+  }
+
+  return linhas.join("\n");
 }
 
 function formatFrozenTickets(data) {
@@ -303,6 +313,48 @@ function formatFrozenTickets(data) {
 
   return [
     `${data.quantidade ?? tickets.length} ticket(s) com SLA congelado${truncadoAviso}:`,
+    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+  ].join("\n");
+}
+
+function formatTicketsBySituacao(data, situacaoLabel) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const tickets = data.tickets ?? [];
+
+  if (tickets.length === 0) {
+    return `Nenhum ticket ${situacaoLabel} foi encontrado.`;
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  return [
+    `${data.quantidade ?? tickets.length} ticket(s) ${situacaoLabel}${truncadoAviso}:`,
+    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+  ].join("\n");
+}
+
+function formatOldestOpenTickets(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const tickets = data.tickets ?? [];
+
+  if (tickets.length === 0) {
+    return "Nenhum ticket aberto foi encontrado.";
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  return [
+    `${tickets.length} ticket(s) aberto(s) mais antigo(s) de ${data.quantidade_total_abertos ?? tickets.length} no total${truncadoAviso}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -327,6 +379,7 @@ function formatOne(toolResult) {
       return formatDepartmentsList(dados);
 
     case "listar_usuarios_tickets":
+    case "buscar_usuarios_por_nome":
       return formatUsersList(dados);
 
     case "buscar_ticket_por_numero":
@@ -344,8 +397,26 @@ function formatOne(toolResult) {
     case "resumo_tickets_por_area":
       return formatTicketSummary(dados, "área");
 
+    case "resumo_tickets_por_operador":
+      return formatTicketSummary(dados, "operador");
+
+    case "resumo_tickets_por_departamento":
+      return formatTicketSummary(dados, "departamento");
+
     case "listar_tickets_congelados":
       return formatFrozenTickets(dados);
+
+    case "listar_tickets_abertos":
+      return formatTicketsBySituacao(dados, "aberto(s)");
+
+    case "listar_tickets_fechados":
+      return formatTicketsBySituacao(dados, "fechado(s)");
+
+    case "listar_tickets_sem_operador":
+      return formatTicketsBySituacao(dados, "sem operador atribuído");
+
+    case "listar_tickets_abertos_mais_antigos":
+      return formatOldestOpenTickets(dados);
 
     default:
       throw new Error(

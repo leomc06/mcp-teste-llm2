@@ -33,6 +33,30 @@ test("formata a lista de tickets, incluindo a data de abertura sem hora bruta", 
   assert.doesNotMatch(resposta, /2026-08-20 09:15:00/);
 });
 
+test("avisa quando a lista de tickets foi truncada por volume", () => {
+  const resposta = format("listar_tickets", {
+    filtros: {},
+    total: 1,
+    pagina: 1,
+    paginas: 1,
+    truncado: true,
+    tickets: [
+      {
+        number: 1,
+        opening_date: "2026-08-20 09:15:00",
+        priority: "Alta",
+        area: "DEFAULT",
+        issue: "Rede",
+        operator: "admin",
+        status: "Aguardando atendimento",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /resultado parcial: consulta truncada por volume de tickets/);
+});
+
 test("formata o detalhe do ticket com SLA e datas ISO em hora de Brasília", () => {
   const resposta = format("buscar_ticket_por_numero", {
     encontrado: true,
@@ -86,6 +110,53 @@ test("formata resumo de tickets por status", () => {
 
   assert.match(resposta, /Resumo de 3 ticket\(s\) por status:/);
   assert.match(resposta, /- Aguardando atendimento: 2/);
+});
+
+test("formata resumo de tickets por status com totais de abertos e fechados", () => {
+  const resposta = format("resumo_tickets_por_status", {
+    filtros: {},
+    total_tickets: 3,
+    truncado: false,
+    abertos: 2,
+    fechados: 1,
+    resumo: [
+      { chave: "Aguardando atendimento", quantidade: 2 },
+      { chave: "Encerrada", quantidade: 1 },
+    ],
+  });
+
+  assert.match(resposta, /Total abertos: 2; total fechados: 1/);
+});
+
+test("formata resumo de tickets por prioridade com totais de abertos e fechados", () => {
+  const resposta = format("resumo_tickets_por_prioridade", {
+    filtros: {},
+    total_tickets: 3,
+    truncado: false,
+    abertos: 1,
+    fechados: 2,
+    resumo: [
+      { chave: "Alta", quantidade: 1 },
+      { chave: "Baixa", quantidade: 2 },
+    ],
+  });
+
+  assert.match(resposta, /Total abertos: 1; total fechados: 2/);
+});
+
+test("formata resumo de tickets por área com totais de abertos e fechados", () => {
+  const resposta = format("resumo_tickets_por_area", {
+    filtros: {},
+    total_tickets: 5,
+    truncado: false,
+    abertos: 4,
+    fechados: 1,
+    resumo: [
+      { chave: "Suporte", quantidade: 5 },
+    ],
+  });
+
+  assert.match(resposta, /Total abertos: 4; total fechados: 1/);
 });
 
 test("formata lista de áreas de ticket", () => {

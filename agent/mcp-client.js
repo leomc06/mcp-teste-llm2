@@ -8,12 +8,19 @@ const allowedToolNames = new Set([
   "listar_status_tickets",
   "listar_departamentos_tickets",
   "listar_usuarios_tickets",
+  "buscar_usuarios_por_nome",
   "buscar_ticket_por_numero",
   "listar_tickets",
   "resumo_tickets_por_status",
   "resumo_tickets_por_prioridade",
   "resumo_tickets_por_area",
+  "resumo_tickets_por_operador",
+  "resumo_tickets_por_departamento",
   "listar_tickets_congelados",
+  "listar_tickets_abertos",
+  "listar_tickets_fechados",
+  "listar_tickets_sem_operador",
+  "listar_tickets_abertos_mais_antigos",
 ]);
 
 export async function createMcpClient({ projectDir }) {
