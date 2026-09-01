@@ -3,21 +3,25 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
-  color: #f5f5f5;
-  background: #080808;
+  color: #eef2f4;
+  background: #1a232b;
   font-synthesis: none;
 
-  --background: #080808;
-  --surface: #1f1f1f;
-  --surface-hover: #292929;
-  --surface-light: #303030;
-  --border: #343434;
-  --text: #f5f5f5;
-  --muted: #a3a3a3;
-  --danger: #ffb4b4;
-  --danger-background: #351d1d;
-  --accent: #f4f4f4;
-  --accent-text: #171717;
+  --background: #1a232b;
+  --topbar: #263340;
+  --surface: #2a3640;
+  --surface-hover: #34424d;
+  --surface-light: #3c4c58;
+  --border: #435562;
+  --text: #eef2f4;
+  --muted: #9fb2bc;
+  --danger: #f6b9d6;
+  --danger-background: #3a1a2c;
+  --accent: #2fae8e;
+  --accent-hover: #279a7c;
+  --accent-text: #0e2420;
+  --wine: #82235a;
+  --wine-hover: #952868;
 }
 
 * {
@@ -47,10 +51,36 @@ button {
   cursor: pointer;
 }
 
+.app-topbar {
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 22px;
+  background: var(--topbar);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-topbar-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.app-topbar-mark {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+}
+
 .page {
   width: min(860px, calc(100% - 32px));
   margin: 0 auto;
-  padding: clamp(70px, 12vh, 130px) 0 80px;
+  padding: clamp(50px, 10vh, 100px) 0 80px;
 }
 
 .page-header {
@@ -89,19 +119,19 @@ button {
   border-radius: 8px;
   outline: none;
   color: var(--text);
-  background: #151515;
+  background: var(--surface);
 }
 
 .user-field input:focus {
-  border-color: #666;
-  box-shadow: 0 0 0 3px rgb(255 255 255 / 7%);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(47 174 142 / 18%);
 }
 
 .composer {
   min-height: 190px;
   padding: 18px 18px 14px;
   border: 1px solid var(--border);
-  border-radius: 28px;
+  border-radius: 20px;
   background: var(--surface);
   box-shadow: 0 18px 55px rgb(0 0 0 / 32%);
   transition:
@@ -110,10 +140,10 @@ button {
 }
 
 .composer:focus-within {
-  border-color: #505050;
+  border-color: var(--accent);
   box-shadow:
     0 18px 55px rgb(0 0 0 / 38%),
-    0 0 0 3px rgb(255 255 255 / 4%);
+    0 0 0 3px rgb(47 174 142 / 18%);
 }
 
 .composer textarea {
@@ -133,7 +163,7 @@ button {
 
 .composer textarea::placeholder,
 .user-field input::placeholder {
-  color: #898989;
+  color: #7c8f99;
 }
 
 .composer-footer {
@@ -145,7 +175,7 @@ button {
 }
 
 #character-count {
-  color: #858585;
+  color: var(--muted);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
@@ -158,7 +188,7 @@ button {
   place-items: center;
   border: 0;
   border-radius: 50%;
-  color: var(--accent-text);
+  color: #ffffff;
   background: var(--accent);
   transition:
     background 150ms ease,
@@ -173,7 +203,7 @@ button {
 }
 
 .submit-button:hover {
-  background: #d8d8d8;
+  background: var(--accent-hover);
 }
 
 .submit-button:active {
@@ -190,7 +220,7 @@ button {
 .response-panel {
   margin-top: 22px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 16px;
 }
 
 .loading-panel[hidden],
@@ -219,8 +249,8 @@ button {
   width: 21px;
   height: 21px;
   flex: 0 0 auto;
-  border: 3px solid #4a4a4a;
-  border-top-color: #f2f2f2;
+  border: 3px solid var(--surface-light);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: rotate 800ms linear infinite;
 }
@@ -229,18 +259,19 @@ button {
   padding: 18px 20px;
   color: var(--danger);
   background: var(--danger-background);
-  border-color: #643737;
+  border-color: var(--wine);
 }
 
 .error-panel p {
   margin: 4px 0 0;
-  color: #e8bcbc;
+  color: #eec3d8;
   font-size: 0.85rem;
 }
 
 .response-panel {
   padding: clamp(22px, 5vw, 34px);
-  background: #131313;
+  background: var(--surface);
+  border-top: 3px solid var(--accent);
 }
 
 .response-heading {
@@ -264,7 +295,7 @@ button {
 }
 
 .answer {
-  color: #e8e8e8;
+  color: var(--text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 0.98rem;
@@ -285,23 +316,27 @@ button {
 
 .pagination-button {
   padding: 8px 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   border-radius: 20px;
-  color: var(--text);
-  background: var(--surface);
+  color: var(--accent);
+  background: transparent;
   font-size: 0.82rem;
   transition:
     background 150ms ease,
+    color 150ms ease,
     opacity 150ms ease;
 }
 
 .pagination-button:hover:not(:disabled) {
-  background: var(--surface-hover);
+  color: #ffffff;
+  background: var(--accent);
 }
 
 .pagination-button:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  border-color: var(--border);
+  color: var(--muted);
+  opacity: 0.6;
 }
 
 #pagination-status {
@@ -343,8 +378,9 @@ button {
 .source-card {
   padding: 12px 13px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-left: 3px solid var(--wine);
+  border-radius: 8px;
+  background: var(--surface-hover);
 }
 
 .source-number,
@@ -388,7 +424,7 @@ button {
 }
 
 .technical-details dt {
-  color: #c9c9c9;
+  color: #c3d2d9;
 }
 
 .technical-details dd {
@@ -415,9 +451,13 @@ button {
 }
 
 @media (max-width: 620px) {
+  .app-topbar {
+    padding: 0 14px;
+  }
+
   .page {
     width: min(100% - 20px, 860px);
-    padding-top: 54px;
+    padding-top: 34px;
   }
 
   .page-header {
@@ -438,7 +478,7 @@ button {
 
   .composer {
     min-height: 220px;
-    border-radius: 22px;
+    border-radius: 18px;
   }
 
   .composer textarea {
@@ -446,7 +486,7 @@ button {
   }
 
   .response-panel {
-    border-radius: 14px;
+    border-radius: 12px;
   }
 
   .technical-details dl div {
