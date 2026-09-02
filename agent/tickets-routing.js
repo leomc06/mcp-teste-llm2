@@ -26,6 +26,11 @@ const TRAILING_BARE_VERB_PATTERN = new RegExp(`\\s+(?:tem|possui|${ESTAR_SOURCE}
 // estão abertos há mais tempo") — corta tudo a partir de "está(m)".
 const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${ESTAR_SOURCE}\\s+.+$`, "iu");
 
+// "resolveu/resolveram <período>" no fim da captura não faz parte do nome
+// (ex.: "o pessoal da Infraestrutura Científica resolveu esse mês" → a área
+// é só "Infraestrutura Científica").
+const TRAILING_RESOLVED_CLAUSE_PATTERN = /\s+resolv(?:eu|eram|ido|ida|idos|idas)\b.*$/iu;
+
 // Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
 // de "por X", aceita "em cada X", "por cada X", "de cada X" e "cada X" (ex.:
 // "quantos tickets existem em cada departamento?").
@@ -95,6 +100,84 @@ function parseDateToken(token) {
   return mes === undefined ? undefined : `${ano}-${mes}-${dia}`;
 }
 
+function formatIsoDate(date) {
+  const ano = date.getFullYear();
+  const mes = String(date.getMonth() + 1).padStart(2, "0");
+  const dia = String(date.getDate()).padStart(2, "0");
+
+  return `${ano}-${mes}-${dia}`;
+}
+
+// Segunda-feira da semana que contém `date`.
+function startOfWeek(date) {
+  const resultado = new Date(date);
+  const diaSemana = resultado.getDay();
+  const deslocamento = diaSemana === 0 ? -6 : 1 - diaSemana;
+
+  resultado.setDate(resultado.getDate() + deslocamento);
+
+  return resultado;
+}
+
+// Datas relativas ("essa semana", "hoje", "mês passado" etc.) não têm um
+// token de data explícito — calculadas a partir do momento da pergunta.
+// `agora` é parametrizável só para permitir teste determinístico.
+export function extractRelativeDateRange(text, agora = new Date()) {
+  if (/\bhoje\b/.test(text)) {
+    const hoje = formatIsoDate(agora);
+
+    return { dataInicio: hoje, dataFim: hoje };
+  }
+
+  if (/\bontem\b/.test(text)) {
+    const ontem = new Date(agora);
+    ontem.setDate(ontem.getDate() - 1);
+    const isoOntem = formatIsoDate(ontem);
+
+    return { dataInicio: isoOntem, dataFim: isoOntem };
+  }
+
+  if (/\bsemana\s+passada\b/.test(text) || /\bultima\s+semana\b/.test(text)) {
+    const segundaAtual = startOfWeek(agora);
+    const segundaPassada = new Date(segundaAtual);
+    segundaPassada.setDate(segundaPassada.getDate() - 7);
+    const sextaPassada = new Date(segundaPassada);
+    sextaPassada.setDate(sextaPassada.getDate() + 4);
+
+    return { dataInicio: formatIsoDate(segundaPassada), dataFim: formatIsoDate(sextaPassada) };
+  }
+
+  // "Semana de trabalho" = segunda a sexta da semana atual.
+  if (/\b(?:essa|esta)\s+semana\b/.test(text)) {
+    const segunda = startOfWeek(agora);
+    const sexta = new Date(segunda);
+    sexta.setDate(sexta.getDate() + 4);
+
+    return { dataInicio: formatIsoDate(segunda), dataFim: formatIsoDate(sexta) };
+  }
+
+  if (/\bmes\s+passado\b/.test(text)) {
+    const primeiroDiaMesAtual = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    const ultimoDiaMesPassado = new Date(primeiroDiaMesAtual);
+    ultimoDiaMesPassado.setDate(ultimoDiaMesPassado.getDate() - 1);
+    const primeiroDiaMesPassado = new Date(ultimoDiaMesPassado.getFullYear(), ultimoDiaMesPassado.getMonth(), 1);
+
+    return {
+      dataInicio: formatIsoDate(primeiroDiaMesPassado),
+      dataFim: formatIsoDate(ultimoDiaMesPassado),
+    };
+  }
+
+  if (/\b(?:esse|este)\s+mes\b/.test(text)) {
+    const primeiroDia = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
+
+    return { dataInicio: formatIsoDate(primeiroDia), dataFim: formatIsoDate(ultimoDia) };
+  }
+
+  return undefined;
+}
+
 const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
   `\\s+(?:(?:entre|per[íi]odo\\s+de)\\s+${DATE_TOKEN_SOURCE}\\s+(?:e|a|at[ée])\\s+${DATE_TOKEN_SOURCE}`
     + `|desde\\s+${DATE_TOKEN_SOURCE}`
@@ -108,8 +191,10 @@ function cleanFreeText(value) {
     .split(/[,.!?;:]/u, 1)[0]
     .trim()
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
+    .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_RESOLVED_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
@@ -175,6 +260,10 @@ export function extractTicketNumber(value) {
 export function extractAreaName(value) {
   return extractByPatterns(value, [
     /(?<![\p{L}\p{N}])[áa]rea\s+(?:de\s+)?(.+)$/iu,
+    // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
+    // sem usar a palavra "área" — resolveMetaId falha graciosamente se não
+    // for um nome de área real, então o risco de falso positivo é baixo.
+    /\bpessoal\s+d[ao]\s+(.+)$/iu,
   ]);
 }
 
@@ -208,12 +297,32 @@ export function extractPriorityName(value) {
   ]);
 }
 
+// "Urgente" é uma prioridade real do sistema (distinta de "Alta"), então a
+// palavra solta já é um sinal inequívoco, mesmo sem a palavra "prioridade"
+// do lado. Não generalizamos para "alta/média/baixa" soltas: são adjetivos
+// comuns demais em português e dariam falso positivo fora do contexto.
+export function extractPriorityIntent(value) {
+  return extractPriorityName(value) ?? (/\burgente/.test(normalizeText(value)) ? "Urgente" : undefined);
+}
+
 export function extractUserName(value) {
   return extractByPatterns(value, [
     /\b(?:busque|busca|procure|procura|encontre|encontra)\s+(?:o\s+|a\s+)?usu[áa]rios?\s+(?:chamados?\s+|de\s+nome\s+)?(.+)$/iu,
     /\busu[áa]rio\s+(?:chamado\s+|de\s+nome\s+)(.+)$/iu,
     /\bquem\s+[ée]\s+(?:o\s+|a\s+)?usu[áa]rio\s+(.+)$/iu,
     /\binforma[çc][õo]es\s+(?:do|sobre\s+o)\s+usu[áa]rio\s+(.+)$/iu,
+  ]);
+}
+
+// "Fábio está com muito ticket na mão?" / "Fábio tem muitos chamados?" /
+// "Fábio está sobrecarregado?" — nome solto antes de uma frase de carga de
+// trabalho, sem palavra-marcador como "operador". Alimenta a análise de
+// carga por operador (analisar_carga_operador), não um filtro de listagem.
+export function extractOperatorWorkloadName(value) {
+  return extractByPatterns(value, [
+    /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
+    /^(.+?)\s+(?:esta|está|estao|estão)\s+sobrecarregad[oa]s?\b/iu,
+    /^(.+?)\s+tem\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
   ]);
 }
 
@@ -249,10 +358,16 @@ export function extractDateRange(value) {
     new RegExp(`\\bat[ée]\\s+(${DATE_TOKEN_SOURCE})\\b`, "iu"),
   );
 
-  return compactEntities({
+  const absoluto = compactEntities({
     dataInicio: inicioMatch ? parseDateToken(inicioMatch[1]) : undefined,
     dataFim: fimMatch ? parseDateToken(fimMatch[1]) : undefined,
   });
+
+  if (absoluto.dataInicio !== undefined || absoluto.dataFim !== undefined) {
+    return absoluto;
+  }
+
+  return extractRelativeDateRange(normalizeText(value)) ?? {};
 }
 
 export function extractPage(value) {
@@ -356,7 +471,7 @@ export function routeTicketQuestion(pergunta) {
   const departamento = extractDepartmentName(pergunta);
   const operador = extractOperatorName(pergunta);
   const cliente = extractClientName(pergunta);
-  const prioridade = extractPriorityName(pergunta);
+  const prioridade = extractPriorityIntent(pergunta);
   const limite = extractLimit(pergunta);
   const pagina = extractPage(pergunta);
   const { dataInicio, dataFim } = extractDateRange(pergunta);
@@ -375,6 +490,40 @@ export function routeTicketQuestion(pergunta) {
     pagina,
   });
 
+  // "ainda não fechado"/"não encerrado"/"não resolveu" significam aberto,
+  // mas contêm palavras que indicariam fechado — tratadas à parte, negando
+  // isFechadoIntent e alimentando isAbertoIntent. Calculado cedo (antes do
+  // bloco de resumos) porque resumo_tickets_por_operador também usa a
+  // situação aberto/fechado.
+  const NEGATED_CLOSED_SOURCE =
+    "nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?(?:fechad[oa]s?|encerrad[oa]s?|concluid[oa]s?|finalizad[oa]s?|resolv(?:eu|ido[as]?))";
+  const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
+
+  const isAbertoIntent =
+    /\babert[oa]s?\b/.test(text)
+    || /\bpendente/.test(text)
+    || isNegatedClosed;
+
+  const isFechadoIntent =
+    (
+      /\bfechad[oa]s?\b/.test(text)
+      || /\bencerrad[oa]s?\b/.test(text)
+      || /\bconcluid[oa]s?\b/.test(text)
+      || /\bfinalizad[oa]s?\b/.test(text)
+      || /\bresolv(?:eu|ido|ida|idos|idas)\b/.test(text)
+    )
+    && !isNegatedClosed;
+
+  // Situação só é definida quando a frase menciona aberto/fechado de forma
+  // inequívoca — usada tanto no resumo por operador quanto em "mais
+  // recentes"; se mencionar as duas, segue sem filtro de situação.
+  const situacaoInequivoca =
+    isFechadoIntent && !isAbertoIntent
+      ? "fechado"
+      : isAbertoIntent && !isFechadoIntent
+        ? "aberto"
+        : undefined;
+
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -389,6 +538,32 @@ export function routeTicketQuestion(pergunta) {
   const mentionsAreaDimension = mentionsDimension(text, "areas?");
   const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
+
+  // "Quem tem mais chamados...?" já implica ranking por operador nesse
+  // domínio, mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
+  const isOperatorRankingIntent = /\bquem\s+(?:tem|possui|esta\s+com)\s+mais\b/.test(text);
+
+  // Perguntas de "visão geral" da operação — não é uma dimensão específica,
+  // é um retrato amplo (total, abertos, fechados, sem operador, congelados,
+  // por prioridade, backlog antigo).
+  const isDashboardIntent =
+    /\bvisao\s+geral\b/.test(text)
+    || /\bsituacao\s+geral\b/.test(text)
+    || /\bcomo\s+esta\s+a\s+operacao\b/.test(text)
+    || /\bcomo\s+estao\s+as\s+coisas\b/.test(text)
+    || /\b(?:algo|alguma\s+coisa)\s+preocupante\b/.test(text)
+    || /\bmerece\s+(?:minha\s+)?atencao\b/.test(text)
+    || /\bsinal\s+de\s+alerta\b/.test(text)
+    || /\bdando\s+conta\s+da\s+demanda\b/.test(text)
+    || /\btem\s+algum\s+problema\b/.test(text);
+
+  if (isDashboardIntent) {
+    return createTicketDecision(
+      "resumo_operacional",
+      "resumo_operacional_tickets",
+      compactEntities({ area, departamento, dataInicio, dataFim }),
+    );
+  }
 
   if (hasResumoIntent && mentionsStatusDimension) {
     return createTicketDecision(
@@ -414,11 +589,11 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
-  if (hasResumoIntent && mentionsOperatorDimension) {
+  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent)) {
     return createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
-      compactEntities({ status, area, departamento }),
+      compactEntities({ status, area, departamento, situacao: situacaoInequivoca }),
     );
   }
 
@@ -451,10 +626,17 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
+  // "Atrasado"/"vencido"/"estourado" não têm dado real de prazo de SLA em
+  // lote disponível na API (só por ticket individual, caro demais pra
+  // listar todos) — o melhor proxy honesto é o ticket aberto há mais tempo;
+  // a resposta mostra "mais antigos", não afirma "atrasado".
   const isOldestOpenIntent =
     /\bmais\s+antig/.test(text)
     || /\bmais\s+velh/.test(text)
-    || /\bha\s+mais\s+tempo\b/.test(text);
+    || /\bha\s+mais\s+tempo\b/.test(text)
+    || /\batrasad[oa]s?\b/.test(text)
+    || /\bvencid[oa]s?\b/.test(text)
+    || /\bestourad[oa]s?\b/.test(text);
 
   if (isOldestOpenIntent) {
     const numeroSolto = text.match(/\b(\d+)\b/);
@@ -471,36 +653,15 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
-  // "ainda não fechado"/"não encerrado" significam aberto, mas contêm as
-  // palavras que indicariam fechado — por isso são tratadas à parte, negando
-  // isFechadoIntent e alimentando isAbertoIntent.
-  const NEGATED_CLOSED_SOURCE =
-    "nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?(?:fechad[oa]s?|encerrad[oa]s?|concluid[oa]s?|finalizad[oa]s?)";
-  const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
+  const operadorCarga = extractOperatorWorkloadName(pergunta);
 
-  const isAbertoIntent =
-    /\babert[oa]s?\b/.test(text)
-    || /\bpendente/.test(text)
-    || isNegatedClosed;
-
-  const isFechadoIntent =
-    (
-      /\bfechad[oa]s?\b/.test(text)
-      || /\bencerrad[oa]s?\b/.test(text)
-      || /\bconcluid[oa]s?\b/.test(text)
-      || /\bfinalizad[oa]s?\b/.test(text)
-    )
-    && !isNegatedClosed;
-
-  // Situação (aberto/fechado) só é definida quando a frase menciona uma das
-  // duas de forma inequívoca — se mencionar as duas, "mais recentes" segue
-  // sem filtro de situação, e a frase cai no fallback de qualquer forma.
-  const situacaoParaMaisRecentes =
-    isFechadoIntent && !isAbertoIntent
-      ? "fechado"
-      : isAbertoIntent && !isFechadoIntent
-        ? "aberto"
-        : undefined;
+  if (operadorCarga !== undefined) {
+    return createTicketDecision(
+      "analisar_carga_operador",
+      "analisar_carga_operador",
+      { operador: operadorCarga },
+    );
+  }
 
   // "primeiros N tickets" não tem ordenação garantida no restante do
   // sistema (listar_tickets usa a paginação bruta da API); tratamos como
@@ -523,7 +684,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
-        situacao: situacaoParaMaisRecentes,
+        situacao: situacaoInequivoca,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
       }),
     );
@@ -537,6 +698,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        prioridade,
         dataInicio,
         dataFim,
         limite,
@@ -552,6 +714,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        prioridade,
         dataInicio,
         dataFim,
         limite,
@@ -561,8 +724,9 @@ export function routeTicketQuestion(pergunta) {
 
   const isSemOperadorIntent =
     /\bsem\s+(?:operador|responsavel|atendente)\b/.test(text)
+    || /\bsem\s+ninguem\b/.test(text)
     || /\bnao\s+(?:foi\s+|foram\s+|esta\s+|estao\s+)?atribuid/.test(text)
-    || /\bninguem\s+(?:e\s+)?responsavel\b/.test(text)
+    || /\bninguem\s+(?:e\s+)?(?:responsavel|pegando|atendendo|cuidando|resolvendo)\b/.test(text)
     || /\baguardando\s+atribuicao\b/.test(text);
 
   if (isSemOperadorIntent) {

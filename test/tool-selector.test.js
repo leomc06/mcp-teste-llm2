@@ -22,6 +22,8 @@ const ticketToolNames = [
   "listar_tickets_mais_recentes",
   "listar_areas_tickets",
   "listar_status_tickets",
+  "resumo_operacional_tickets",
+  "analisar_carga_operador",
 ];
 
 const availableTools = ticketToolNames.map((name) => ({
@@ -44,6 +46,8 @@ const toolCases = [
   ["Quantos tickets por departamento?", "resumo_tickets_por_departamento"],
   ["Quais tickets estão congelados?", "listar_tickets_congelados"],
   ["Quais áreas de ticket existem?", "listar_areas_tickets"],
+  ["Me dá uma visão geral dos tickets.", "resumo_operacional_tickets"],
+  ["O Fábio está com muito ticket na mão?", "analisar_carga_operador"],
 ];
 
 for (const [pergunta, expectedTool] of toolCases) {

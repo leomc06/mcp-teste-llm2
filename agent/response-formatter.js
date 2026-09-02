@@ -414,6 +414,55 @@ function formatMostRecentTickets(data) {
   ].join("\n");
 }
 
+function formatOperationalSummary(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  const linhas = [
+    `Visão geral de ${data.total} ticket(s)${truncadoAviso}:`,
+    `- Abertos: ${data.abertos}; fechados: ${data.fechados}`,
+    `- Sem operador atribuído: ${data.sem_operador}`,
+    `- Com SLA congelado: ${data.congelados}`,
+    `- Abertos há mais de 7 dias: ${data.abertos_com_mais_de_7_dias}`,
+  ];
+
+  if (data.por_prioridade?.length > 0) {
+    linhas.push(
+      "Por prioridade:",
+      ...data.por_prioridade.map((row) => `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade}`),
+    );
+  }
+
+  return linhas.join("\n");
+}
+
+function formatOperatorWorkload(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const linhas = [
+    `Carga de trabalho de ${decodeHtmlEntities(data.operador)}: ${data.total} ticket(s) no total ` +
+      `(${data.abertos} aberto(s), ${data.fechados} fechado(s)).`,
+    `- Com SLA congelado: ${data.congelados}`,
+    `- Prioridade alta ou urgente (entre os abertos): ${data.prioridade_alta_ou_urgente}`,
+  ];
+
+  linhas.push(
+    data.mais_antigo_aberto
+      ? `- Ticket aberto mais antigo: #${data.mais_antigo_aberto.numero}, há ${data.mais_antigo_aberto.dias_em_aberto} dia(s) `
+        + `(desde ${formatDate(data.mais_antigo_aberto.opening_date)})`
+      : "- Nenhum ticket em aberto no momento.",
+  );
+
+  return linhas.join("\n");
+}
+
 function formatOne(toolResult) {
   const { tool, dados } = toolResult;
 
@@ -475,6 +524,12 @@ function formatOne(toolResult) {
 
     case "listar_tickets_mais_recentes":
       return formatMostRecentTickets(dados);
+
+    case "resumo_operacional_tickets":
+      return formatOperationalSummary(dados);
+
+    case "analisar_carga_operador":
+      return formatOperatorWorkload(dados);
 
     default:
       throw new Error(

@@ -7,8 +7,11 @@ import {
   extractDateRange,
   extractDepartmentName,
   extractOperatorName,
+  extractOperatorWorkloadName,
   extractPage,
+  extractPriorityIntent,
   extractPriorityName,
+  extractRelativeDateRange,
   extractTicketNumber,
   extractTicketStatusName,
   extractUserName,
@@ -598,5 +601,129 @@ test("'recém-abertos' e 'tickets recentes' são sinônimos de mais recentes", (
   assert.deepEqual(
     routeTicketQuestion("Mostre os tickets recentes.").toolNames,
     ["listar_tickets_mais_recentes"],
+  );
+});
+
+// --- Correções reportadas pelo usuário (7 perguntas gerenciais) ---
+
+test("datas relativas: essa semana, semana passada, hoje, ontem, esse mês, mês passado", () => {
+  const agora = new Date(2026, 8, 2); // quarta-feira, 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("essa semana", agora), {
+    dataInicio: "2026-08-31",
+    dataFim: "2026-09-04",
+  });
+  assert.deepEqual(extractRelativeDateRange("semana passada", agora), {
+    dataInicio: "2026-08-24",
+    dataFim: "2026-08-28",
+  });
+  assert.deepEqual(extractRelativeDateRange("hoje", agora), {
+    dataInicio: "2026-09-02",
+    dataFim: "2026-09-02",
+  });
+  assert.deepEqual(extractRelativeDateRange("ontem", agora), {
+    dataInicio: "2026-09-01",
+    dataFim: "2026-09-01",
+  });
+  assert.deepEqual(extractRelativeDateRange("esse mes", agora), {
+    dataInicio: "2026-09-01",
+    dataFim: "2026-09-30",
+  });
+  assert.deepEqual(extractRelativeDateRange("mes passado", agora), {
+    dataInicio: "2026-08-01",
+    dataFim: "2026-08-31",
+  });
+  assert.equal(extractRelativeDateRange("nenhuma data aqui", agora), undefined);
+});
+
+test("bug 1: 'quantos chamados abrimos essa semana?' aplica filtro de data (não cai sem filtro)", () => {
+  const decisao = routeTicketQuestion("Quantos chamados abrimos essa semana?");
+  assert.deepEqual(decisao.toolNames, ["listar_tickets"]);
+  assert.equal(decisao.entities.dataInicio !== undefined, true);
+  assert.equal(decisao.entities.dataFim !== undefined, true);
+});
+
+test("bug 2: 'sem ninguém pegando' é reconhecido como sinônimo de sem operador", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Tem ticket parado sem ninguém pegando?").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+});
+
+test("bug 3: 'atrasados'/'vencidos'/'estourados' usam o proxy de mais antigos em aberto", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais tickets estão atrasados?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tem ticket com o prazo vencido?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+});
+
+test("bug 4: 'urgente' sozinho vira filtro de prioridade, combinado com aberto", () => {
+  const decisao = routeTicketQuestion("Me mostra os tickets mais urgentes em aberto.");
+  assert.deepEqual(decisao.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(decisao.entities.prioridade, "Urgente");
+});
+
+test("extractPriorityIntent: 'urgente' solto vira prioridade, mas 'alta'/'baixa' soltas não", () => {
+  assert.equal(extractPriorityIntent("tickets urgentes"), "Urgente");
+  assert.equal(extractPriorityIntent("prioridade alta"), "alta");
+  assert.equal(extractPriorityIntent("tickets de alta relevância"), undefined);
+});
+
+test("bug 5: 'quem tem mais chamados em aberto no time?' vai pra resumo por operador com situação=aberto", () => {
+  const decisao = routeTicketQuestion("Quem tem mais chamados em aberto no time?");
+  assert.deepEqual(decisao.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(decisao.entities.situacao, "aberto");
+});
+
+test("bug 6: '‹Nome› está com muito ticket na mão' vai pra análise de carga do operador", () => {
+  const decisao = routeTicketQuestion("O Fábio está com muito ticket na mão?");
+  assert.deepEqual(decisao.toolNames, ["analisar_carga_operador"]);
+  assert.equal(decisao.entities.operador, "Fábio");
+
+  assert.deepEqual(
+    routeTicketQuestion("A Maria tem muitos chamados?").toolNames,
+    ["analisar_carga_operador"],
+  );
+});
+
+test("bug 7: 'pessoal da área X' e 'resolveu' (sinônimo de fechado) combinados", () => {
+  const decisao = routeTicketQuestion(
+    "Quantos tickets o pessoal da Infraestrutura Científica resolveu esse mês?",
+  );
+  assert.deepEqual(decisao.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(decisao.entities.area, "Infraestrutura Científica");
+  assert.equal(decisao.entities.dataInicio !== undefined, true);
+});
+
+test("dashboard: perguntas de visão geral vão pra resumo_operacional_tickets", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Me dá uma visão geral dos tickets.").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Como está a operação hoje?").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tem alguma coisa preocupante?").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+});
+
+test("extractOperatorWorkloadName reconhece as três frases de carga de trabalho", () => {
+  assert.equal(extractOperatorWorkloadName("O Fábio está com muito ticket na mão?"), "Fábio");
+  assert.equal(extractOperatorWorkloadName("A Maria está sobrecarregada?"), "Maria");
+  assert.equal(extractOperatorWorkloadName("O João tem muitos chamados?"), "João");
+  assert.equal(extractOperatorWorkloadName("Liste os tickets abertos."), undefined);
+});
+
+test("extractOperatorWorkloadName remove a palavra 'operador' antes do nome", () => {
+  assert.equal(
+    extractOperatorWorkloadName("O operador Fábio Moreira está sobrecarregado?"),
+    "Fábio Moreira",
   );
 });
