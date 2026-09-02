@@ -271,6 +271,37 @@ test("'no máximo N' aplica limite em tickets abertos", () => {
   assert.equal(route.entities.limite, 3);
 });
 
+test("filtro de período chega em tickets fechados", () => {
+  const route = routeTicketQuestion(
+    "Liste os tickets fechados do departamento COIDS desde dia 1 de fevereiro de 2026.",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.departamento, "COIDS");
+  assert.equal(route.entities.dataInicio, "2026-02-01");
+});
+
+test("filtro de período chega em tickets abertos, congelados e sem operador", () => {
+  const abertos = routeTicketQuestion(
+    "Liste os tickets abertos entre 2026-01-01 e 2026-06-30.",
+  );
+  assert.deepEqual(abertos.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(abertos.entities.dataInicio, "2026-01-01");
+  assert.equal(abertos.entities.dataFim, "2026-06-30");
+
+  const congelados = routeTicketQuestion(
+    "Quais tickets estão congelados desde 2026-01-01?",
+  );
+  assert.deepEqual(congelados.toolNames, ["listar_tickets_congelados"]);
+  assert.equal(congelados.entities.dataInicio, "2026-01-01");
+
+  const semOperador = routeTicketQuestion(
+    "Tickets sem operador atribuído até 2026-06-30.",
+  );
+  assert.deepEqual(semOperador.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(semOperador.entities.dataFim, "2026-06-30");
+});
+
 test("'por <nome>' não captura operador quando seguido de uma dimensão conhecida", () => {
   const route = routeTicketQuestion("Liste os tickets abertos por área de Redes.");
 
@@ -284,6 +315,24 @@ test("frase com 'operador' explícito continua tendo prioridade sobre 'por <nome
 
   assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
   assert.equal(route.entities.operador, "Ana");
+});
+
+test("'operador X tem no departamento Y' não vaza o verbo/preposição para o nome do operador", () => {
+  const route = routeTicketQuestion(
+    "Quantos chamados fechados o operador cesar tem no departamento coids desde dia 1 de fevereiro de 2026?",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.operador, "cesar");
+  assert.equal(route.entities.departamento, "coids");
+});
+
+test("'operador X possui/está na área Y' também não vaza o verbo/preposição para o nome", () => {
+  const route = routeTicketQuestion("Quantos tickets abertos o operador cesar possui na área de suporte?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.operador, "cesar");
+  assert.equal(route.entities.area, "suporte");
 });
 
 test("extrai período de datas em diferentes frases", () => {
@@ -375,4 +424,179 @@ test("cliente combinado com outros filtros na listagem genérica", () => {
   assert.deepEqual(route.toolNames, ["listar_tickets"]);
   assert.equal(route.entities.cliente, "Diego Mota");
   assert.equal(route.entities.area, "Suporte");
+});
+
+// --- Variações de linguagem natural (sinônimos, singular/plural, negação) ---
+
+test("extrai número de ticket com sinônimos de 'ticket' (chamado/atendimento/solicitação/ocorrência)", () => {
+  assert.equal(extractTicketNumber("Busque o chamado 123."), 123);
+  assert.equal(extractTicketNumber("Quero ver o atendimento 456."), 456);
+  assert.equal(
+    extractTicketNumber("Me dê os detalhes da solicitação número 789."),
+    789,
+  );
+  assert.equal(extractTicketNumber("O que aconteceu com a ocorrência 42?"), 42);
+});
+
+test("busca por número tem prioridade mesmo com outros filtros na frase", () => {
+  const route = routeTicketQuestion("Como está o chamado 123 da área de Suporte?");
+
+  assert.deepEqual(route.toolNames, ["buscar_ticket_por_numero"]);
+  assert.equal(route.entities.numero, 123);
+});
+
+test("'em cada X' e 'quais X têm/possuem mais' também acionam resumo por dimensão", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quantos tickets existem em cada departamento?").toolNames,
+    ["resumo_tickets_por_departamento"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais operadores possuem mais tickets?").toolNames,
+    ["resumo_tickets_por_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais operadores têm mais chamados?").toolNames,
+    ["resumo_tickets_por_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quantos tickets cada área tem?").toolNames,
+    ["resumo_tickets_por_area"],
+  );
+});
+
+test("perguntas de contagem simples (sem dimensão) continuam indo para listar_tickets_fechados/abertos, não resumo", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quantos tickets estão fechados?").toolNames,
+    ["listar_tickets_fechados"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Mostrar os tickets da área de TI.").toolNames,
+    ["listar_tickets"],
+  );
+});
+
+test("sinônimos de 'aberto': pendente e negação de fechado/encerrado", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais solicitações continuam pendentes?").toolNames,
+    ["listar_tickets_abertos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Mostre os chamados que ainda não foram fechados.").toolNames,
+    ["listar_tickets_abertos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quero ver os tickets que ainda não foram encerrados.").toolNames,
+    ["listar_tickets_abertos"],
+  );
+});
+
+test("sinônimos de 'fechado': encerrado, concluído, finalizado", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Liste os chamados encerrados.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Mostre os atendimentos concluídos.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste os chamados finalizados.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+});
+
+test("'recentemente fechados/encerrados' vai para mais_recentes com situação=fechado (não lista tudo sem ordem)", () => {
+  const primeira = routeTicketQuestion("Liste os tickets recentemente encerrados.");
+  assert.deepEqual(primeira.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(primeira.entities.situacao, "fechado");
+
+  const segunda = routeTicketQuestion("Quais tickets foram fechados recentemente?");
+  assert.deepEqual(segunda.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(segunda.entities.situacao, "fechado");
+});
+
+test("'primeiros N tickets' é tratado como 'mais recentes N' (ordem garantida)", () => {
+  const route = routeTicketQuestion("Liste os primeiros 5 tickets da área de Suporte.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.limite, 5);
+  assert.equal(route.entities.situacao, undefined);
+});
+
+test("'primeiros N tickets fechados' combina com situação=fechado", () => {
+  const route = routeTicketQuestion("Liste os primeiros 5 tickets fechados.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.limite, 5);
+  assert.equal(route.entities.situacao, "fechado");
+});
+
+test("'em andamento' mapeia para o status real EM ATENDIMENTO, não para aberto genérico", () => {
+  const route = routeTicketQuestion("Quais tickets estão em andamento?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.equal(route.entities.status, "Em atendimento");
+});
+
+test("sinônimos de 'sem operador': responsável, atendente, ninguém responsável, aguardando atribuição, não foram atribuídos", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Mostre os chamados sem responsável.").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tem ticket que ninguém é responsável?").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais chamados estão aguardando atribuição?").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais solicitações ainda não foram atribuídas?").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+});
+
+test("sinônimos de SLA congelado: SLA pausado, relógio parado, tempo suspenso", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais tickets estão com o SLA pausado?").toolNames,
+    ["listar_tickets_congelados"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tem algum ticket com o relógio parado?").toolNames,
+    ["listar_tickets_congelados"],
+  );
+});
+
+test("'estão' (plural, com til) no fim da captura não vaza pro nome extraído", () => {
+  const congelados = routeTicketQuestion(
+    "Quais tickets do departamento COIDS estão com o SLA pausado?",
+  );
+  assert.deepEqual(congelados.toolNames, ["listar_tickets_congelados"]);
+  assert.equal(congelados.entities.departamento, "COIDS");
+
+  const maisAntigos = routeTicketQuestion(
+    "Quais chamados do departamento COIDS estão abertos há mais tempo?",
+  );
+  assert.deepEqual(maisAntigos.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.equal(maisAntigos.entities.departamento, "COIDS");
+});
+
+test("'há mais tempo' é sinônimo de 'mais antigos' (tickets abertos há mais tempo)", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais chamados estão abertos há mais tempo?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+});
+
+test("'recém-abertos' e 'tickets recentes' são sinônimos de mais recentes", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Mostre os tickets recém-abertos.").toolNames,
+    ["listar_tickets_mais_recentes"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Mostre os tickets recentes.").toolNames,
+    ["listar_tickets_mais_recentes"],
+  );
 });

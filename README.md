@@ -134,9 +134,14 @@ npm run test:integration
 
 ## Tools disponíveis
 
-O servidor MCP expõe 12 tools de consulta sobre **tickets** (chamados): busca
-por número, listagem com filtros por status/área/departamento/operador (com
-paginação), resumos por status/prioridade/área, tickets com SLA congelado, e
-listagem das tabelas de apoio (áreas, prioridades, canais, status,
-departamentos, usuários). A lista completa e atualizada das tools liberadas
-para o agente está em `allowedToolNames`, no início de `agent/mcp-client.js`.
+O servidor MCP expõe 20 tools de consulta sobre **tickets** (chamados): busca
+por número (com comentários e anexos), listagem com filtros por
+status/área/departamento/operador/cliente/prioridade/período (ISO ou por
+extenso, com paginação), resumos por status/prioridade/área/operador/
+departamento (com totais de abertos/fechados), tickets abertos, fechados,
+sem operador atribuído, com SLA congelado, mais antigos ainda abertos, mais
+recentes, e listagem das tabelas de apoio (áreas, prioridades, canais,
+status, departamentos, usuários). A lista completa e atualizada das tools
+liberadas para o agente está em `allowedToolNames`, no início de
+`agent/mcp-client.js`, e a descrição de cada uma em `tools`, na raiz do
+projeto.

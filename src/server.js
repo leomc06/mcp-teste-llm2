@@ -104,6 +104,24 @@ async function listTicketsSafe(filtros) {
     throw error;
   }
 }
+
+// A API não filtra tickets por período de abertura, então filtramos
+// localmente. opening_date é uma string "AAAA-MM-DD HH:MM:SS", comparável
+// lexicograficamente com as datas AAAA-MM-DD informadas.
+function filtrarPorPeriodo(tickets, dataInicio, dataFim) {
+  if (dataInicio === undefined && dataFim === undefined) {
+    return tickets;
+  }
+
+  const limiteFim = dataFim === undefined ? undefined : `${dataFim} 23:59:59`;
+
+  return tickets.filter(
+    (ticket) =>
+      (dataInicio === undefined || ticket.opening_date >= dataInicio)
+      && (limiteFim === undefined || ticket.opening_date <= limiteFim),
+  );
+}
+
 server.registerTool(
   "listar_areas_tickets",
   {
@@ -235,7 +253,7 @@ server.registerTool(
   "buscar_ticket_por_numero",
   {
     title: "Buscar ticket por número",
-    description: "Busca o detalhe completo de um ticket (chamado) pelo número, incluindo SLA, comentários e anexos.",
+    description: "Busca o detalhe completo de um ticket (chamado) pelo número, incluindo SLA, comentários e anexos. Use sempre que a pergunta citar um número de ticket específico, mesmo que outros filtros também apareçam na frase.",
     inputSchema: { numero: z.number().int().positive().max(2147483647) },
   },
   async ({ numero }) => {
@@ -256,7 +274,7 @@ server.registerTool(
   "listar_tickets",
   {
     title: "Listar tickets",
-    description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, cliente (nome do solicitante), prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD). Não filtra por coluna do Kanban.",
+    description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, cliente (nome do solicitante), prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD ou por extenso). Não filtra por coluna do Kanban. Use para listar registros individuais; para perguntas de contagem/agrupamento (\"quantos\", \"por status\", \"por área\" etc.) prefira as tools resumo_tickets_por_*.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -571,7 +589,7 @@ server.registerTool(
   "resumo_tickets_por_operador",
   {
     title: "Resumo de tickets por operador",
-    description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade em cada um, com filtros opcionais por status, área e departamento.",
+    description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade em cada um, com filtros opcionais por status, área e departamento. Use para perguntas como \"quais operadores têm mais tickets?\" ou \"quantos tickets cada operador possui?\".",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -628,7 +646,7 @@ server.registerTool(
   "resumo_tickets_por_departamento",
   {
     title: "Resumo de tickets por departamento",
-    description: "Conta os tickets (chamados) de cada departamento cadastrado, com filtros opcionais por status, área e operador.",
+    description: "Conta os tickets (chamados) de cada departamento cadastrado, com filtros opcionais por status, área e operador. Use para perguntas como \"quantos tickets existem em cada departamento?\".",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -710,15 +728,17 @@ server.registerTool(
   "listar_tickets_sem_operador",
   {
     title: "Listar tickets sem operador atribuído",
-    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, período de abertura (dataInicio/dataFim) e limite de resultados.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ status, area, departamento, limite }) => {
+  async ({ status, area, departamento, dataInicio, dataFim, limite }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -745,7 +765,11 @@ server.registerTool(
         department: departamentoResolvido.id,
       });
 
-      const semOperador = tickets.filter((ticket) => !ticket.operator || !ticket.operator.trim());
+      const semOperador = filtrarPorPeriodo(
+        tickets.filter((ticket) => !ticket.operator || !ticket.operator.trim()),
+        dataInicio,
+        dataFim,
+      );
 
       return success({
         quantidade: semOperador.length,
@@ -816,16 +840,17 @@ server.registerTool(
   "listar_tickets_mais_recentes",
   {
     title: "Listar tickets mais recentes",
-    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento e operador.",
+    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador e situação (aberto/fechado).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
       limite: z.number().int().min(1).max(50).default(10),
     },
   },
-  async ({ status, area, departamento, operador, limite }) => {
+  async ({ status, area, departamento, operador, situacao, limite }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -855,7 +880,19 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const recentes = [...tickets].sort(
+      const porSituacao = tickets.filter((ticket) => {
+        if (situacao === "aberto") {
+          return !ticket.closure_date;
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
+
+      const recentes = porSituacao.sort(
         (a, b) => (a.opening_date < b.opening_date ? 1 : a.opening_date > b.opening_date ? -1 : 0),
       );
 
@@ -874,16 +911,18 @@ server.registerTool(
   "listar_tickets_congelados",
   {
     title: "Listar tickets congelados",
-    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador e limite de resultados.",
+    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, período de abertura (dataInicio/dataFim) e limite de resultados.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ status, area, departamento, operador, limite }) => {
+  async ({ status, area, departamento, operador, dataInicio, dataFim, limite }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido] =
         await Promise.all([
@@ -914,7 +953,11 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const congelados = tickets.filter((ticket) => ticket.is_frozen === true);
+      const congelados = filtrarPorPeriodo(
+        tickets.filter((ticket) => ticket.is_frozen === true),
+        dataInicio,
+        dataFim,
+      );
 
       return success({
         quantidade: congelados.length,
@@ -931,15 +974,17 @@ server.registerTool(
   "listar_tickets_abertos",
   {
     title: "Listar tickets abertos",
-    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, período de abertura (dataInicio/dataFim) e limite de resultados.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ area, departamento, operador, limite }) => {
+  async ({ area, departamento, operador, dataInicio, dataFim, limite }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -966,7 +1011,11 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const abertos = tickets.filter((ticket) => !ticket.closure_date);
+      const abertos = filtrarPorPeriodo(
+        tickets.filter((ticket) => !ticket.closure_date),
+        dataInicio,
+        dataFim,
+      );
 
       return success({
         quantidade: abertos.length,
@@ -983,15 +1032,17 @@ server.registerTool(
   "listar_tickets_fechados",
   {
     title: "Listar tickets fechados",
-    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, período de abertura (dataInicio/dataFim) e limite de resultados.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
     },
   },
-  async ({ area, departamento, operador, limite }) => {
+  async ({ area, departamento, operador, dataInicio, dataFim, limite }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1018,7 +1069,11 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
+      const fechados = filtrarPorPeriodo(
+        tickets.filter((ticket) => Boolean(ticket.closure_date)),
+        dataInicio,
+        dataFim,
+      );
 
       return success({
         quantidade: fechados.length,

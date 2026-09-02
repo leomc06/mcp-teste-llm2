@@ -4,11 +4,45 @@ import {
   normalizeText,
 } from "./routing-utils.js";
 
-const TRAILING_FILTER_CLAUSE_PATTERN =
-  /\s+(?:com|e|que\s+(?:tem|est[áa])|d[oa])\s+(?:o\s+|a\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\b.*$/iu;
+// "está"/"esta" (singular) ou "estão"/"estao" (plural) — atenção: o plural
+// usa "ã" (til), não "á" (agudo), são letras diferentes.
+const ESTAR_SOURCE = "est(?:[áa]|[ãa]o)";
+
+const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|e|que\\s+(?:tem|${ESTAR_SOURCE})|d[oa]|n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
+  "iu",
+);
 
 const TRAILING_PAGE_CLAUSE_PATTERN =
   /\s*\(?\s*p[áa]gina\s+\d+\)?\s*$/iu;
+
+// Verbo solto no fim da captura, sem cláusula depois (ex.: "...o operador
+// Cesar tem?" → o "tem" sobra porque não há um "no/na/do/da <dimensão>"
+// depois dele para o corte acima remover junto).
+const TRAILING_BARE_VERB_PATTERN = new RegExp(`\\s+(?:tem|possui|${ESTAR_SOURCE})\\s*$`, "iu");
+
+// "está(m) <situação do ticket>" no fim da frase não faz parte do nome
+// capturado (ex.: "departamento COIDS estão com o SLA pausado", "área X
+// estão abertos há mais tempo") — corta tudo a partir de "está(m)".
+const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${ESTAR_SOURCE}\\s+.+$`, "iu");
+
+// Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
+// de "por X", aceita "em cada X", "por cada X", "de cada X" e "cada X" (ex.:
+// "quantos tickets existem em cada departamento?").
+const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cada)";
+
+// "Quais operadores possuem mais tickets?" / "...têm mais chamados?" também
+// pede um resumo/ranking, mesmo sem a palavra "por" ou "quantos".
+const RANKING_CUE_SOURCE = "(?:possu(?:i|em)|tem)\\s+mais";
+
+// Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
+// pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes).
+function mentionsDimension(text, dimensionSource) {
+  const connector = new RegExp(`\\b${DIMENSION_CONNECTOR_SOURCE}\\s+(?:${dimensionSource})\\b`);
+  const ranking = new RegExp(`\\b(?:${dimensionSource})\\b.*\\b${RANKING_CUE_SOURCE}\\b`);
+
+  return connector.test(text) || ranking.test(text);
+}
 
 const ISO_DATE_SOURCE = "\\d{4}-\\d{2}-\\d{2}";
 
@@ -75,8 +109,10 @@ function cleanFreeText(value) {
     .trim()
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
+    .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_BARE_VERB_PATTERN, "")
     .trim();
 
   return text.length >= 1 && text.length <= 100 ? text : undefined;
@@ -102,12 +138,16 @@ function extractByPatterns(value, patterns) {
   return undefined;
 }
 
+// "ticket" tem sinônimos comuns no vocabulário de helpdesk (o próprio
+// OcoMon vem de "Ocorrência"); todos são aceitos antes do número.
+const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao)";
+
 export function extractTicketNumber(value) {
   const text = normalizeText(value);
 
   const patterns = [
-    /\bticket\s+(?:numero\s+)?(\d+)\b/,
-    /\bnumero\s+(?:do\s+)?(?:ticket\s+)?(\d+)\b/,
+    new RegExp(`\\b${TICKET_NOUN_SOURCE}\\s+(?:numero\\s+)?(\\d+)\\b`),
+    new RegExp(`\\bnumero\\s+(?:do\\s+)?(?:${TICKET_NOUN_SOURCE}\\s+)?(\\d+)\\b`),
     /\bn[°º]\s*(\d+)\b/,
   ];
 
@@ -305,7 +345,13 @@ export function routeTicketQuestion(pergunta) {
   const text = normalizeText(pergunta);
 
   const numero = extractTicketNumber(pergunta);
-  const status = extractTicketStatusName(pergunta);
+
+  // "em andamento" é um status real e específico (EM ATENDIMENTO), não um
+  // sinônimo genérico de "aberto" — um ticket aguardando resposta também
+  // está aberto, mas não está "em andamento".
+  const status =
+    extractTicketStatusName(pergunta)
+    ?? (/\bem\s+andamento\b/.test(text) ? "Em atendimento" : undefined);
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operador = extractOperatorName(pergunta);
@@ -335,13 +381,14 @@ export function routeTicketQuestion(pergunta) {
     || /\bquantidade\b/.test(text)
     || /\bquantos\b/.test(text)
     || /\bquantas\b/.test(text)
-    || /\bcontagem\b/.test(text);
+    || /\bcontagem\b/.test(text)
+    || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text);
 
-  const mentionsStatusDimension = /\bpor\s+status\b/.test(text);
-  const mentionsPriorityDimension = /\bpor\s+prioridades?\b/.test(text);
-  const mentionsAreaDimension = /\bpor\s+areas?\b/.test(text);
-  const mentionsOperatorDimension = /\bpor\s+operador(?:es)?\b/.test(text);
-  const mentionsDepartmentDimension = /\bpor\s+departamentos?\b/.test(text);
+  const mentionsStatusDimension = mentionsDimension(text, "status");
+  const mentionsPriorityDimension = mentionsDimension(text, "prioridades?");
+  const mentionsAreaDimension = mentionsDimension(text, "areas?");
+  const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
+  const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
 
   if (hasResumoIntent && mentionsStatusDimension) {
     return createTicketDecision(
@@ -395,15 +442,19 @@ export function routeTicketQuestion(pergunta) {
     /\bcongelad/.test(text)
     || /\btravad/.test(text)
     || /\bparalisad/.test(text)
+    || /\b(?:sla|relogio|tempo|prazo)\s+(?:parad[oa]|pausad[oa]|suspens[oa])\b/.test(text)
   ) {
     return createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
-      compactEntities({ status, area, departamento, operador, limite }),
+      compactEntities({ status, area, departamento, operador, dataInicio, dataFim, limite }),
     );
   }
 
-  const isOldestOpenIntent = /\bmais\s+antig/.test(text) || /\bmais\s+velh/.test(text);
+  const isOldestOpenIntent =
+    /\bmais\s+antig/.test(text)
+    || /\bmais\s+velh/.test(text)
+    || /\bha\s+mais\s+tempo\b/.test(text);
 
   if (isOldestOpenIntent) {
     const numeroSolto = text.match(/\b(\d+)\b/);
@@ -420,10 +471,46 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
+  // "ainda não fechado"/"não encerrado" significam aberto, mas contêm as
+  // palavras que indicariam fechado — por isso são tratadas à parte, negando
+  // isFechadoIntent e alimentando isAbertoIntent.
+  const NEGATED_CLOSED_SOURCE =
+    "nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?(?:fechad[oa]s?|encerrad[oa]s?|concluid[oa]s?|finalizad[oa]s?)";
+  const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
+
+  const isAbertoIntent =
+    /\babert[oa]s?\b/.test(text)
+    || /\bpendente/.test(text)
+    || isNegatedClosed;
+
+  const isFechadoIntent =
+    (
+      /\bfechad[oa]s?\b/.test(text)
+      || /\bencerrad[oa]s?\b/.test(text)
+      || /\bconcluid[oa]s?\b/.test(text)
+      || /\bfinalizad[oa]s?\b/.test(text)
+    )
+    && !isNegatedClosed;
+
+  // Situação (aberto/fechado) só é definida quando a frase menciona uma das
+  // duas de forma inequívoca — se mencionar as duas, "mais recentes" segue
+  // sem filtro de situação, e a frase cai no fallback de qualquer forma.
+  const situacaoParaMaisRecentes =
+    isFechadoIntent && !isAbertoIntent
+      ? "fechado"
+      : isAbertoIntent && !isFechadoIntent
+        ? "aberto"
+        : undefined;
+
+  // "primeiros N tickets" não tem ordenação garantida no restante do
+  // sistema (listar_tickets usa a paginação bruta da API); tratamos como
+  // sinônimo de "mais recentes N" pra dar uma ordem previsível e explícita.
   const isMostRecentIntent =
-    /\bmais\s+recent/.test(text)
+    /\brecent/.test(text)
     || /\bultimo/.test(text)
-    || /\bmais\s+nov[oa]/.test(text);
+    || /\bmais\s+nov[oa]/.test(text)
+    || /\brecem\b/.test(text)
+    || /\bprimeir[oa]s?\b/.test(text);
 
   if (isMostRecentIntent) {
     const numeroSolto = text.match(/\b(\d+)\b/);
@@ -436,13 +523,11 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        situacao: situacaoParaMaisRecentes,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
       }),
     );
   }
-
-  const isAbertoIntent = /\babert[oa]s?\b/.test(text);
-  const isFechadoIntent = /\bfechad[oa]s?\b/.test(text);
 
   if (isAbertoIntent && !isFechadoIntent) {
     return createTicketDecision(
@@ -452,6 +537,8 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        dataInicio,
+        dataFim,
         limite,
       }),
     );
@@ -465,19 +552,24 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        dataInicio,
+        dataFim,
         limite,
       }),
     );
   }
 
   const isSemOperadorIntent =
-    /\bsem\s+operador\b/.test(text) || /\bnao\s+atribuid/.test(text);
+    /\bsem\s+(?:operador|responsavel|atendente)\b/.test(text)
+    || /\bnao\s+(?:foi\s+|foram\s+|esta\s+|estao\s+)?atribuid/.test(text)
+    || /\bninguem\s+(?:e\s+)?responsavel\b/.test(text)
+    || /\baguardando\s+atribuicao\b/.test(text);
 
   if (isSemOperadorIntent) {
     return createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
-      compactEntities({ status, area, departamento, limite }),
+      compactEntities({ status, area, departamento, dataInicio, dataFim, limite }),
     );
   }
 
