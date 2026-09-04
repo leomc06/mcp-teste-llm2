@@ -834,6 +834,32 @@ export function routeTicketQuestion(pergunta) {
     }
   }
 
+  // "Resumo dos tickets da área X" / "do departamento X" / "de prioridade X"
+  // pede um resumo, mas menciona a dimensão como FILTRO ("da"/"do/de"), não
+  // como conector de agrupamento ("por área") — nenhum dos 6 branches acima
+  // bate. Sem isso, cairia na listagem simples e ignoraria a palavra
+  // "resumo". Já que nenhuma outra intenção mais específica (congelados,
+  // texto, mais antigos/recentes, aberto/fechado, sem operador) bateu antes
+  // de chegar aqui, tratamos como pedido de resumo por status (a quebra
+  // mais informativa por padrão), filtrado pelo que foi extraído — exceto
+  // quando o único filtro extraído já é o próprio status (nesse caso
+  // agrupar por status seria degenerado, então agrupamos por área).
+  if (hasResumoIntent && (area || departamento || prioridade || status)) {
+    if (!area && !departamento && !prioridade && status) {
+      return createTicketDecision(
+        "resumo_por_area",
+        "resumo_tickets_por_area",
+        compactEntities({ status, departamento, operador, prioridade, limite }),
+      );
+    }
+
+    return createTicketDecision(
+      "resumo_por_status",
+      "resumo_tickets_por_status",
+      compactEntities({ area, departamento, operador, prioridade, limite }),
+    );
+  }
+
   return createTicketDecision(
     "listar",
     "listar_tickets",
