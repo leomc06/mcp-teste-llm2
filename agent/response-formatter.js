@@ -162,6 +162,8 @@ function formatTicketDetail(data) {
     `área: ${ticket.area}`,
     `cliente: ${firstNonEmpty([ticket.client, ticket.contact_name], "não informado")}`,
     `operador: ${decodeHtmlEntities(ticket.operator) ?? "não atribuído"}`,
+    `canal: ${ticket.channel || "não informado"}`,
+    `departamento: ${ticket.department || "não informado"}`,
     `aberto em: ${formatNaiveDateTime(ticket.opening_date)}`,
   ];
 
@@ -306,7 +308,11 @@ function formatTicketSummary(data, dimensaoLabel) {
 
   const linhas = [
     `Resumo de ${data.total_tickets ?? 0} ticket(s) por ${dimensaoLabel}${truncadoAviso}:`,
-    ...resumo.map((row) => `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade}`),
+    ...resumo.map((row) =>
+      row.percentual !== undefined
+        ? `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade} (${row.percentual}%)`
+        : `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade}`,
+    ),
   ];
 
   if (data.abertos !== undefined && data.fechados !== undefined) {
@@ -506,6 +512,12 @@ function formatOne(toolResult) {
 
     case "resumo_tickets_por_departamento":
       return formatTicketSummary(dados, "departamento");
+
+    case "resumo_tickets_por_cliente":
+      return formatTicketSummary(dados, "cliente");
+
+    case "buscar_tickets_por_texto":
+      return formatTicketsBySituacao(dados, "encontrado(s) para o texto pesquisado");
 
     case "listar_tickets_congelados":
       return formatFrozenTickets(dados);

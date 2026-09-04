@@ -16,6 +16,8 @@ const allowedToolNames = new Set([
   "resumo_tickets_por_area",
   "resumo_tickets_por_operador",
   "resumo_tickets_por_departamento",
+  "resumo_tickets_por_cliente",
+  "buscar_tickets_por_texto",
   "listar_tickets_congelados",
   "listar_tickets_abertos",
   "listar_tickets_fechados",

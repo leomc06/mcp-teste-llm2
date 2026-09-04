@@ -12,6 +12,7 @@ import {
   extractPriorityIntent,
   extractPriorityName,
   extractRelativeDateRange,
+  extractSearchText,
   extractTicketNumber,
   extractTicketStatusName,
   extractUserName,
@@ -107,6 +108,33 @@ test("roteia listagem de status de ticket", () => {
   const route = routeTicketQuestion("Liste os status de ticket.");
 
   assert.deepEqual(route.toolNames, ["listar_status_tickets"]);
+});
+
+test("bug: 'liste todos os status'/'liste todas as areas' com quantificador não caem no fallback de tickets", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Liste todos os status.").toolNames,
+    ["listar_status_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste todas as areas.").toolNames,
+    ["listar_areas_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste todos os canais.").toolNames,
+    ["listar_canais_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste todas as prioridades.").toolNames,
+    ["listar_prioridades_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste todos os departamentos.").toolNames,
+    ["listar_departamentos_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste todos os usuarios.").toolNames,
+    ["listar_usuarios_tickets"],
+  );
 });
 
 test("'usuário' funciona como sinônimo de operador na listagem genérica", () => {
@@ -542,6 +570,37 @@ test("'em andamento' mapeia para o status real EM ATENDIMENTO, não para aberto 
   assert.equal(route.entities.status, "Em atendimento");
 });
 
+test("bug: 'aguardando atendimento' reconhecido como status literal (não mistura com em atendimento)", () => {
+  const route = routeTicketQuestion("Liste os tickets aguardando atendimento.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.equal(route.entities.status, "Aguardando atendimento");
+});
+
+test("todos os status reais são reconhecidos sem a palavra 'status' na frase", () => {
+  const casos = [
+    ["Tickets em estudo.", "Em estudo"],
+    ["Chamados agendados com o usuário.", "Agendado com o usuário"],
+    ["Quais tickets foram cancelados?", "Cancelado"],
+    ["Tickets aguardando feedback do usuário.", "Aguardando feedback do usuário"],
+    ["Chamados aguardando feedback.", "Aguardando feedback do usuário"],
+    ["Tickets indisponível para atendimento.", "Indisponível para atendimento"],
+    ["Chamados encaminhados para operador.", "Encaminhado para operador"],
+    ["Tickets interrompidos para atender outro chamado.", "Interrompido para atender outro chamado"],
+    ["Chamados aguardando retorno do fornecedor.", "Aguardando retorno do fornecedor"],
+    ["Tickets com backup.", "Com backup"],
+    ["Chamados reservados para operador.", "Reservado para operador"],
+    ["Tickets aguardando aprovação.", "Aguardando aprovação"],
+    ["Chamados aguardando RDM.", "Aguardando RDM"],
+  ];
+
+  for (const [pergunta, statusEsperado] of casos) {
+    const route = routeTicketQuestion(pergunta);
+
+    assert.equal(route.entities.status, statusEsperado, pergunta);
+  }
+});
+
 test("sinônimos de 'sem operador': responsável, atendente, ninguém responsável, aguardando atribuição, não foram atribuídos", () => {
   assert.deepEqual(
     routeTicketQuestion("Mostre os chamados sem responsável.").toolNames,
@@ -726,4 +785,81 @@ test("extractOperatorWorkloadName remove a palavra 'operador' antes do nome", ()
     extractOperatorWorkloadName("O operador Fábio Moreira está sobrecarregado?"),
     "Fábio Moreira",
   );
+});
+
+// --- Fase 2: busca textual, resumo por cliente, ranking/percentual, prioridade extra ---
+
+test("extrai texto de busca de diferentes conectores", () => {
+  assert.equal(extractSearchText("Tickets sobre impressora."), "impressora");
+  assert.equal(
+    extractSearchText("Chamados relacionados a rede."),
+    "rede",
+  );
+  assert.equal(
+    extractSearchText("Chamados que falam de VPN."),
+    "VPN",
+  );
+  assert.equal(extractSearchText("Liste os tickets."), undefined);
+});
+
+test("roteia busca de tickets por texto", () => {
+  const route = routeTicketQuestion("Tickets sobre impressora.");
+
+  assert.deepEqual(route.toolNames, ["buscar_tickets_por_texto"]);
+  assert.equal(route.entities.texto, "impressora");
+});
+
+test("busca por texto combina com situação (abertos sobre X)", () => {
+  const route = routeTicketQuestion("Liste os tickets abertos sobre queda de energia.");
+
+  assert.deepEqual(route.toolNames, ["buscar_tickets_por_texto"]);
+  assert.equal(route.entities.texto, "queda de energia");
+  assert.equal(route.entities.situacao, "aberto");
+});
+
+test("busca por número tem prioridade sobre busca por texto", () => {
+  const route = routeTicketQuestion("Ticket 123 sobre impressora.");
+
+  assert.deepEqual(route.toolNames, ["buscar_ticket_por_numero"]);
+  assert.equal(route.entities.numero, 123);
+});
+
+test("roteia resumo de tickets por cliente", () => {
+  const route = routeTicketQuestion("Quantos tickets por cliente?");
+
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_cliente"]);
+});
+
+test("'X abre mais' também aciona ranking por dimensão (ex.: cliente que mais abre chamados)", () => {
+  const route = routeTicketQuestion("Qual cliente abre mais chamados?");
+
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_cliente"]);
+});
+
+test("'top N' aplica limite nas tools de resumo", () => {
+  const route = routeTicketQuestion("Resumo de tickets por operador, top 5.");
+
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(route.entities.limite, 5);
+});
+
+test("bug: prioridade não se perde em 'tickets urgentes sem operador'", () => {
+  const route = routeTicketQuestion("Tickets urgentes sem operador.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("prioridade chega em tickets congelados, mais antigos e mais recentes", () => {
+  const congelados = routeTicketQuestion("Tickets urgentes congelados.");
+  assert.deepEqual(congelados.toolNames, ["listar_tickets_congelados"]);
+  assert.equal(congelados.entities.prioridade, "Urgente");
+
+  const maisAntigos = routeTicketQuestion("Tickets urgentes mais antigos.");
+  assert.deepEqual(maisAntigos.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.equal(maisAntigos.entities.prioridade, "Urgente");
+
+  const maisRecentes = routeTicketQuestion("Tickets urgentes mais recentes.");
+  assert.deepEqual(maisRecentes.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(maisRecentes.entities.prioridade, "Urgente");
 });

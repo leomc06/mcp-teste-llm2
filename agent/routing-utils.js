@@ -17,6 +17,7 @@ export function extractLimit(value) {
     /\bno maximo(?:\s+de)?\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\bprimeir(?:o|os|a|as)\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\bate\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
+    /\btop\s+(\d+)\b/,
   ];
 
   for (const pattern of patterns) {

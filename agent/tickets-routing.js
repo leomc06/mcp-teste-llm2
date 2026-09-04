@@ -36,9 +36,10 @@ const TRAILING_RESOLVED_CLAUSE_PATTERN = /\s+resolv(?:eu|eram|ido|ida|idos|idas)
 // "quantos tickets existem em cada departamento?").
 const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cada)";
 
-// "Quais operadores possuem mais tickets?" / "...têm mais chamados?" também
-// pede um resumo/ranking, mesmo sem a palavra "por" ou "quantos".
-const RANKING_CUE_SOURCE = "(?:possu(?:i|em)|tem)\\s+mais";
+// "Quais operadores possuem mais tickets?" / "...têm mais chamados?" /
+// "...abre mais chamados?" também pede um resumo/ranking, mesmo sem a
+// palavra "por" ou "quantos".
+const RANKING_CUE_SOURCE = "(?:possu(?:i|em)|tem|abr(?:e|em|iu))\\s+mais";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
 // pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes).
@@ -291,6 +292,53 @@ export function extractTicketStatusName(value) {
   ]);
 }
 
+// Conectores usados pra pedir busca textual (grep no assunto/descrição do
+// ticket): "tickets sobre impressora", "chamados relacionados a rede",
+// "chamados que falam de VPN".
+const SEARCH_TEXT_CONNECTOR_SOURCE =
+  "sobre|relacionad[oa]s?\\s+(?:a|com)|mencionando|contendo|falando\\s+(?:de|sobre)|que\\s+fal(?:a|am|e)\\s+(?:de|sobre)";
+
+export function extractSearchText(value) {
+  return extractByPatterns(value, [
+    new RegExp(`\\b(?:${SEARCH_TEXT_CONNECTOR_SOURCE})\\s+(.+)$`, "iu"),
+  ]);
+}
+
+// Nomes de status reais do sistema (confirmados ao vivo via
+// listar_status_tickets) reconhecidos sem exigir a palavra "status" na
+// frase — é assim que gestores perguntam ("liste os cancelados", "tem
+// ticket aguardando aprovação?"). "Fechado"/"encerrado" ficam de fora
+// deliberadamente: já são tratados à parte via situação (closure_date, mais
+// confiável que confiar no nome do status). "TODOS" é um status-meta da
+// API (não corresponde a tickets reais), por isso também fica de fora.
+const STATUS_LITERAL_PATTERNS = [
+  [/\baguardando\s+atendimento\b/, "Aguardando atendimento"],
+  [/\bem\s+andamento\b/, "Em atendimento"],
+  [/\bem\s+atendimento\b/, "Em atendimento"],
+  [/\bem\s+estudo\b/, "Em estudo"],
+  [/\bagendad[oa]s?\s+com\s+(?:o\s+)?usuario\b/, "Agendado com o usuário"],
+  [/\bcancelad[oa]s?\b/, "Cancelado"],
+  [/\baguardando\s+feedback(?:\s+do\s+usuario)?\b/, "Aguardando feedback do usuário"],
+  [/\bindisponivel\s+para\s+atendimento\b/, "Indisponível para atendimento"],
+  [/\bencaminhad[oa]s?\s+para\s+(?:o\s+)?operador\b/, "Encaminhado para operador"],
+  [/\binterrompid[oa]s?\s+para\s+atender\s+outro\s+chamado\b/, "Interrompido para atender outro chamado"],
+  [/\baguardando\s+retorno\s+do\s+fornecedor\b/, "Aguardando retorno do fornecedor"],
+  [/\bcom\s+backup\b/, "Com backup"],
+  [/\breservad[oa]s?\s+para\s+(?:o\s+)?operador\b/, "Reservado para operador"],
+  [/\baguardando\s+aprovacao\b/, "Aguardando aprovação"],
+  [/\baguardando\s+rdm\b/, "Aguardando RDM"],
+];
+
+export function extractLiteralStatus(text) {
+  for (const [pattern, nome] of STATUS_LITERAL_PATTERNS) {
+    if (pattern.test(text)) {
+      return nome;
+    }
+  }
+
+  return undefined;
+}
+
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
     /\bprioridade\s+(?:de\s+)?(.+)$/iu,
@@ -390,7 +438,7 @@ const META_INTENTS = [
     tool: "listar_areas_tickets",
     patterns: [
       /\bquais\s+areas\b/,
-      /\bliste\s+as\s+areas\b/,
+      /\bliste\s+(?:todas\s+)?as\s+areas\b/,
       /\blistar\s+areas\b/,
       /\bareas\s+existem\b/,
     ],
@@ -399,7 +447,7 @@ const META_INTENTS = [
     tool: "listar_prioridades_tickets",
     patterns: [
       /\bquais\s+prioridades\b/,
-      /\bliste\s+as\s+prioridades\b/,
+      /\bliste\s+(?:todas\s+)?as\s+prioridades\b/,
       /\blistar\s+prioridades\b/,
       /\bprioridades\s+existem\b/,
     ],
@@ -408,7 +456,7 @@ const META_INTENTS = [
     tool: "listar_canais_tickets",
     patterns: [
       /\bquais\s+canais\b/,
-      /\bliste\s+os\s+canais\b/,
+      /\bliste\s+(?:todos\s+)?os\s+canais\b/,
       /\blistar\s+canais\b/,
       /\bcanais\s+existem\b/,
       /\bcanais\s+de\s+entrada\b/,
@@ -418,7 +466,7 @@ const META_INTENTS = [
     tool: "listar_status_tickets",
     patterns: [
       /\bquais\s+status\b/,
-      /\bliste\s+os\s+status\b/,
+      /\bliste\s+(?:todos\s+)?os\s+status\b/,
       /\blistar\s+status\b/,
       /\bstatus\s+existem\b/,
       /\bstatus\s+possiveis\b/,
@@ -428,7 +476,7 @@ const META_INTENTS = [
     tool: "listar_departamentos_tickets",
     patterns: [
       /\bquais\s+departamentos\b/,
-      /\bliste\s+os\s+departamentos\b/,
+      /\bliste\s+(?:todos\s+)?os\s+departamentos\b/,
       /\blistar\s+departamentos\b/,
       /\bdepartamentos\s+existem\b/,
     ],
@@ -437,7 +485,7 @@ const META_INTENTS = [
     tool: "listar_usuarios_tickets",
     patterns: [
       /\bquais\s+usuarios\b/,
-      /\bliste\s+os\s+usuarios\b/,
+      /\bliste\s+(?:todos\s+)?os\s+usuarios\b/,
       /\blistar\s+usuarios\b/,
       /\busuarios\s+existem\b/,
       /\bquais\s+operadores\b/,
@@ -461,12 +509,9 @@ export function routeTicketQuestion(pergunta) {
 
   const numero = extractTicketNumber(pergunta);
 
-  // "em andamento" é um status real e específico (EM ATENDIMENTO), não um
-  // sinônimo genérico de "aberto" — um ticket aguardando resposta também
-  // está aberto, mas não está "em andamento".
   const status =
     extractTicketStatusName(pergunta)
-    ?? (/\bem\s+andamento\b/.test(text) ? "Em atendimento" : undefined);
+    ?? extractLiteralStatus(text);
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operador = extractOperatorName(pergunta);
@@ -538,6 +583,7 @@ export function routeTicketQuestion(pergunta) {
   const mentionsAreaDimension = mentionsDimension(text, "areas?");
   const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
+  const mentionsClienteDimension = mentionsDimension(text, "clientes?|solicitantes?");
 
   // "Quem tem mais chamados...?" já implica ranking por operador nesse
   // domínio, mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
@@ -569,7 +615,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
-      compactEntities({ area, departamento, operador }),
+      compactEntities({ area, departamento, operador, prioridade, limite }),
     );
   }
 
@@ -577,7 +623,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
-      compactEntities({ status, area, departamento, operador }),
+      compactEntities({ status, area, departamento, operador, limite }),
     );
   }
 
@@ -585,7 +631,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
-      compactEntities({ status, departamento, operador }),
+      compactEntities({ status, departamento, operador, prioridade, limite }),
     );
   }
 
@@ -593,7 +639,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
-      compactEntities({ status, area, departamento, situacao: situacaoInequivoca }),
+      compactEntities({ status, area, departamento, prioridade, situacao: situacaoInequivoca, limite }),
     );
   }
 
@@ -601,7 +647,15 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
-      compactEntities({ status, area, operador }),
+      compactEntities({ status, area, operador, limite }),
+    );
+  }
+
+  if (hasResumoIntent && mentionsClienteDimension) {
+    return createTicketDecision(
+      "resumo_por_cliente",
+      "resumo_tickets_por_cliente",
+      compactEntities({ status, area, departamento, operador, prioridade, limite }),
     );
   }
 
@@ -622,7 +676,28 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
-      compactEntities({ status, area, departamento, operador, dataInicio, dataFim, limite }),
+      compactEntities({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite }),
+    );
+  }
+
+  const textoBusca = extractSearchText(pergunta);
+
+  if (textoBusca !== undefined) {
+    return createTicketDecision(
+      "buscar_por_texto",
+      "buscar_tickets_por_texto",
+      compactEntities({
+        texto: textoBusca,
+        status,
+        area,
+        departamento,
+        operador,
+        prioridade,
+        situacao: situacaoInequivoca,
+        dataInicio,
+        dataFim,
+        limite,
+      }),
     );
   }
 
@@ -648,6 +723,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        prioridade,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
       }),
     );
@@ -684,6 +760,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        prioridade,
         situacao: situacaoInequivoca,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
       }),
@@ -733,7 +810,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
-      compactEntities({ status, area, departamento, dataInicio, dataFim, limite }),
+      compactEntities({ status, area, departamento, prioridade, dataInicio, dataFim, limite }),
     );
   }
 
