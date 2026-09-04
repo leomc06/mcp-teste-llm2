@@ -676,7 +676,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
-      compactEntities({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite }),
+      compactEntities({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }),
     );
   }
 
@@ -697,6 +697,7 @@ export function routeTicketQuestion(pergunta) {
         dataInicio,
         dataFim,
         limite,
+        pagina,
       }),
     );
   }
@@ -714,7 +715,10 @@ export function routeTicketQuestion(pergunta) {
     || /\bestourad[oa]s?\b/.test(text);
 
   if (isOldestOpenIntent) {
-    const numeroSolto = text.match(/\b(\d+)\b/);
+    // Ignora o número de "página N" ao procurar um número solto pra usar
+    // como limite (ex.: "10 tickets mais antigos, página 2" não pode virar
+    // limite: 2).
+    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
 
     return createTicketDecision(
       "listar_abertos_mais_antigos",
@@ -725,6 +729,7 @@ export function routeTicketQuestion(pergunta) {
         operador: extractOperatorNameForSituacao(pergunta),
         prioridade,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        pagina,
       }),
     );
   }
@@ -750,7 +755,9 @@ export function routeTicketQuestion(pergunta) {
     || /\bprimeir[oa]s?\b/.test(text);
 
   if (isMostRecentIntent) {
-    const numeroSolto = text.match(/\b(\d+)\b/);
+    // Ignora o número de "página N" ao procurar um número solto pra usar
+    // como limite (mesmo cuidado do branch de mais antigos).
+    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
 
     return createTicketDecision(
       "listar_mais_recentes",
@@ -763,6 +770,7 @@ export function routeTicketQuestion(pergunta) {
         prioridade,
         situacao: situacaoInequivoca,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        pagina,
       }),
     );
   }
@@ -779,6 +787,7 @@ export function routeTicketQuestion(pergunta) {
         dataInicio,
         dataFim,
         limite,
+        pagina,
       }),
     );
   }
@@ -795,6 +804,7 @@ export function routeTicketQuestion(pergunta) {
         dataInicio,
         dataFim,
         limite,
+        pagina,
       }),
     );
   }
@@ -810,7 +820,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
-      compactEntities({ status, area, departamento, prioridade, dataInicio, dataFim, limite }),
+      compactEntities({ status, area, departamento, prioridade, dataInicio, dataFim, limite, pagina }),
     );
   }
 

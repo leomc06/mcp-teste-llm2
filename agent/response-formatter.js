@@ -339,10 +339,15 @@ function formatFrozenTickets(data) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
   const cabecalho =
     tickets.length < quantidade
-      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) com SLA congelado${truncadoAviso}:`
-      : `${quantidade} ticket(s) com SLA congelado${truncadoAviso}:`;
+      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) com SLA congelado${paginacao}${truncadoAviso}:`
+      : `${quantidade} ticket(s) com SLA congelado${paginacao}${truncadoAviso}:`;
 
   return [
     cabecalho,
@@ -367,10 +372,15 @@ function formatTicketsBySituacao(data, situacaoLabel) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
   const cabecalho =
     tickets.length < quantidade
-      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) ${situacaoLabel}${truncadoAviso}:`
-      : `${quantidade} ticket(s) ${situacaoLabel}${truncadoAviso}:`;
+      ? `Exibindo ${tickets.length} de ${quantidade} ticket(s) ${situacaoLabel}${paginacao}${truncadoAviso}:`
+      : `${quantidade} ticket(s) ${situacaoLabel}${paginacao}${truncadoAviso}:`;
 
   return [
     cabecalho,
@@ -393,8 +403,13 @@ function formatOldestOpenTickets(data) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
   return [
-    `${tickets.length} ticket(s) aberto(s) mais antigo(s) de ${data.quantidade_total_abertos ?? tickets.length} no total${truncadoAviso}:`,
+    `${tickets.length} ticket(s) aberto(s) mais antigo(s) de ${data.quantidade_total_abertos ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }
@@ -414,8 +429,13 @@ function formatMostRecentTickets(data) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
   return [
-    `${tickets.length} ticket(s) mais recente(s) de ${data.quantidade_total ?? tickets.length} no total${truncadoAviso}:`,
+    `${tickets.length} ticket(s) mais recente(s) de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
   ].join("\n");
 }

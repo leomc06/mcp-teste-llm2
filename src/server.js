@@ -896,7 +896,7 @@ server.registerTool(
   "listar_tickets_sem_operador",
   {
     title: "Listar tickets sem operador atribuído",
-    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, prioridade, período de abertura (dataInicio/dataFim) e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -905,9 +905,10 @@ server.registerTool(
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, prioridade, dataInicio, dataFim, limite }) => {
+  async ({ status, area, departamento, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -946,10 +947,15 @@ server.registerTool(
         dataFim,
       );
 
+      const totalPaginasSemOperador = limite === undefined ? 1 : Math.max(Math.ceil(semOperador.length / limite), 1);
+      const inicioSemOperador = limite === undefined ? 0 : (pagina - 1) * limite;
+
       return success({
         quantidade: semOperador.length,
         truncado,
-        tickets: limite === undefined ? semOperador : semOperador.slice(0, limite),
+        pagina,
+        paginas: totalPaginasSemOperador,
+        tickets: limite === undefined ? semOperador : semOperador.slice(inicioSemOperador, inicioSemOperador + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -961,16 +967,17 @@ server.registerTool(
   "listar_tickets_abertos_mais_antigos",
   {
     title: "Listar tickets abertos mais antigos",
-    description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador e prioridade.",
+    description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador e prioridade. Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       limite: z.number().int().min(1).max(50).default(10),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, limite }) => {
+  async ({ area, departamento, operador, prioridade, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1007,10 +1014,15 @@ server.registerTool(
         )
         .sort((a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0));
 
+      const inicio = (pagina - 1) * limite;
+      const totalPaginas = Math.max(Math.ceil(abertos.length / limite), 1);
+
       return success({
         quantidade_total_abertos: abertos.length,
         truncado,
-        tickets: abertos.slice(0, limite),
+        pagina,
+        paginas: totalPaginas,
+        tickets: abertos.slice(inicio, inicio + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1022,7 +1034,7 @@ server.registerTool(
   "listar_tickets_mais_recentes",
   {
     title: "Listar tickets mais recentes",
-    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, prioridade e situação (aberto/fechado).",
+    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -1031,9 +1043,10 @@ server.registerTool(
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
       limite: z.number().int().min(1).max(50).default(10),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, situacao, limite }) => {
+  async ({ status, area, departamento, operador, prioridade, situacao, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -1085,10 +1098,15 @@ server.registerTool(
         (a, b) => (a.opening_date < b.opening_date ? 1 : a.opening_date > b.opening_date ? -1 : 0),
       );
 
+      const inicioRecentes = (pagina - 1) * limite;
+      const totalPaginasRecentes = Math.max(Math.ceil(recentes.length / limite), 1);
+
       return success({
         quantidade_total: recentes.length,
         truncado,
-        tickets: recentes.slice(0, limite),
+        pagina,
+        paginas: totalPaginasRecentes,
+        tickets: recentes.slice(inicioRecentes, inicioRecentes + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1100,7 +1118,7 @@ server.registerTool(
   "listar_tickets_congelados",
   {
     title: "Listar tickets congelados",
-    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim) e limite de resultados.",
+    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -1110,9 +1128,10 @@ server.registerTool(
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite }) => {
+  async ({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -1155,10 +1174,15 @@ server.registerTool(
         dataFim,
       );
 
+      const totalPaginasCongelados = limite === undefined ? 1 : Math.max(Math.ceil(congelados.length / limite), 1);
+      const inicioCongelados = limite === undefined ? 0 : (pagina - 1) * limite;
+
       return success({
         quantidade: congelados.length,
         truncado,
-        tickets: limite === undefined ? congelados : congelados.slice(0, limite),
+        pagina,
+        paginas: totalPaginasCongelados,
+        tickets: limite === undefined ? congelados : congelados.slice(inicioCongelados, inicioCongelados + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1170,7 +1194,7 @@ server.registerTool(
   "listar_tickets_abertos",
   {
     title: "Listar tickets abertos",
-    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim) e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
@@ -1179,9 +1203,10 @@ server.registerTool(
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite }) => {
+  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1220,10 +1245,15 @@ server.registerTool(
         dataFim,
       );
 
+      const totalPaginasAbertos = limite === undefined ? 1 : Math.max(Math.ceil(abertos.length / limite), 1);
+      const inicioAbertos = limite === undefined ? 0 : (pagina - 1) * limite;
+
       return success({
         quantidade: abertos.length,
         truncado,
-        tickets: limite === undefined ? abertos : abertos.slice(0, limite),
+        pagina,
+        paginas: totalPaginasAbertos,
+        tickets: limite === undefined ? abertos : abertos.slice(inicioAbertos, inicioAbertos + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1235,7 +1265,7 @@ server.registerTool(
   "listar_tickets_fechados",
   {
     title: "Listar tickets fechados",
-    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de fechamento (dataInicio/dataFim) e limite de resultados.",
+    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
@@ -1244,9 +1274,10 @@ server.registerTool(
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite }) => {
+  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1289,10 +1320,15 @@ server.registerTool(
         dataFim,
       );
 
+      const totalPaginasFechados = limite === undefined ? 1 : Math.max(Math.ceil(fechados.length / limite), 1);
+      const inicioFechados = limite === undefined ? 0 : (pagina - 1) * limite;
+
       return success({
         quantidade: fechados.length,
         truncado,
-        tickets: limite === undefined ? fechados : fechados.slice(0, limite),
+        pagina,
+        paginas: totalPaginasFechados,
+        tickets: limite === undefined ? fechados : fechados.slice(inicioFechados, inicioFechados + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1304,7 +1340,7 @@ server.registerTool(
   "buscar_tickets_por_texto",
   {
     title: "Buscar tickets por texto",
-    description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite de resultados. Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
+    description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim), limite e paginação (pagina). Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
     inputSchema: {
       texto: z.string().trim().min(1).max(200),
       status: z.string().trim().min(1).max(100).optional(),
@@ -1316,9 +1352,10 @@ server.registerTool(
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
+      pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ texto, status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite }) => {
+  async ({ texto, status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -1365,10 +1402,15 @@ server.registerTool(
         dataFim,
       );
 
+      const totalPaginasFiltrados = limite === undefined ? 1 : Math.max(Math.ceil(filtrados.length / limite), 1);
+      const inicioFiltrados = limite === undefined ? 0 : (pagina - 1) * limite;
+
       return success({
         quantidade: filtrados.length,
         truncado,
-        tickets: limite === undefined ? filtrados : filtrados.slice(0, limite),
+        pagina,
+        paginas: totalPaginasFiltrados,
+        tickets: limite === undefined ? filtrados : filtrados.slice(inicioFiltrados, inicioFiltrados + limite),
       });
     } catch (error) {
       return ticketsFailure(error);
