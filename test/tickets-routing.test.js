@@ -6,6 +6,7 @@ import {
   extractClientName,
   extractDateRange,
   extractDepartmentName,
+  extractOperatorComparisonNames,
   extractOperatorName,
   extractOperatorWorkloadName,
   extractPage,
@@ -13,6 +14,7 @@ import {
   extractPriorityName,
   extractRelativeDateRange,
   extractSearchText,
+  extractTicketComparisonNumbers,
   extractTicketNumber,
   extractTicketStatusName,
   extractUserName,
@@ -991,4 +993,59 @@ test("'menos de N dias' e 'pelo menos N' não são lidos como direção de ranki
 
   const peloMenos = routeTicketQuestion("Resumo de tickets por operador, pelo menos 5 tickets cada.");
   assert.equal(peloMenos.entities.ordem, undefined);
+});
+
+// --- G3: comparação entre 2 tickets ou 2 operadores no mesmo turno ---
+
+test("extractTicketComparisonNumbers extrai os 2 números só quando há conector de comparação", () => {
+  assert.deepEqual(
+    extractTicketComparisonNumbers("Compare o ticket 100 com o ticket 200."),
+    [100, 200],
+  );
+  assert.deepEqual(
+    extractTicketComparisonNumbers("Qual a diferença entre os tickets 50 e 75?"),
+    [50, 75],
+  );
+  // sem conector de comparação, não extrai (mesmo com 2 números soltos)
+  assert.equal(extractTicketComparisonNumbers("Atualize o ticket 100 e o ticket 200."), undefined);
+  // só 1 número, mesmo com conector
+  assert.equal(extractTicketComparisonNumbers("Compare o ticket 100 com o estoque."), undefined);
+});
+
+test("extractOperatorComparisonNames extrai os 2 nomes só quando menciona 'carga'", () => {
+  assert.deepEqual(
+    extractOperatorComparisonNames("Compare a carga do Fábio Gali com a do Cesar Augusto de Mello"),
+    ["Fábio Gali", "Cesar Augusto de Mello"],
+  );
+  assert.deepEqual(
+    extractOperatorComparisonNames("Qual a diferença de carga entre Bruno e João Pedro?"),
+    ["Bruno", "João Pedro"],
+  );
+  // sem "carga", não extrai (evita capturar comparação de outra coisa, ex. áreas)
+  assert.equal(extractOperatorComparisonNames("Compare as áreas Suporte e WEB"), undefined);
+});
+
+test("routeTicketQuestion: 'compare os tickets X e Y' vira 2 chamadas de buscar_ticket_por_numero, sem passar pelo caminho de número único", () => {
+  const route = routeTicketQuestion("Compare o ticket 4830 com o ticket 4880.");
+
+  assert.equal(route.compare?.length, 2);
+  assert.deepEqual(route.compare[0], { toolName: "buscar_ticket_por_numero", args: { numero: 4830 } });
+  assert.deepEqual(route.compare[1], { toolName: "buscar_ticket_por_numero", args: { numero: 4880 } });
+  assert.deepEqual(route.toolNames, ["buscar_ticket_por_numero"]);
+});
+
+test("routeTicketQuestion: 'compare a carga de X com a de Y' vira 2 chamadas de analisar_carga_operador", () => {
+  const route = routeTicketQuestion("Compare a carga do Fábio Gali com a do Cesar Augusto de Mello.");
+
+  assert.equal(route.compare?.length, 2);
+  assert.deepEqual(route.compare[0], { toolName: "analisar_carga_operador", args: { operador: "Fábio Gali" } });
+  assert.deepEqual(
+    route.compare[1],
+    { toolName: "analisar_carga_operador", args: { operador: "Cesar Augusto de Mello" } },
+  );
+});
+
+test("perguntas normais (sem comparação) continuam sem o campo 'compare'", () => {
+  assert.equal(routeTicketQuestion("Busque o ticket 4830.").compare, undefined);
+  assert.equal(routeTicketQuestion("O Fábio está com muito ticket na mão?").compare, undefined);
 });

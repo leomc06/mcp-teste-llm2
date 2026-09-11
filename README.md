@@ -95,6 +95,8 @@ Faça perguntas como:
 - "Resumo dos tickets por status."
 - "Quais tickets estão congelados?"
 - "Quais áreas de ticket existem?"
+- "Compare a carga do Fábio Gali com a do Cesar Augusto de Mello."
+- "Compare o ticket 100 com o ticket 200."
 
 ### 5. Encerrar
 
@@ -103,6 +105,36 @@ No terminal do backend, `Ctrl+C` (isso também encerra o servidor MCP filho).
 ```bash
 sudo systemctl stop ollama
 ```
+
+## Rodando via Docker (alternativa ao passo a passo acima)
+
+```bash
+cp .env.example .env   # preencha TICKETS_API_* como no passo 2 acima
+docker compose up -d
+docker compose exec ollama ollama pull qwen2.5:3b   # só na primeira vez
+```
+
+Acesse `http://127.0.0.1:3100`, igual ao modo local. O `docker-compose.yml`
+sobe 2 serviços: `agent` (backend + servidor MCP, builda a partir do
+`Dockerfile` deste repo) e `ollama` (imagem oficial `ollama/ollama`, modelo
+persistido num volume nomeado — não precisa baixar de novo a cada
+`docker compose up`).
+
+Detalhes que importam se for mexer nisso:
+- `.env` **não é copiado pra imagem** (está no `.dockerignore`) — é
+  injetado em runtime via `env_file:` no compose. Nunca rebuilde a imagem
+  com credenciais dentro dela.
+- `OLLAMA_BASE_URL` e `AGENT_HOST` do seu `.env` local são sobrescritos
+  explicitamente no `docker-compose.yml` (o serviço `agent` precisa
+  alcançar `ollama` pelo nome do serviço, não por `127.0.0.1`, e precisa
+  escutar em `0.0.0.0` pra a porta publicada funcionar) — se você adicionar
+  novas variáveis de ambiente no futuro, cheque se alguma delas também
+  precisa desse tipo de override pra container.
+- `run-agent.sh`/`run-mcp.sh` só fazem `source .env` se o arquivo existir
+  fisicamente — em container, sem esse arquivo, contam com as variáveis já
+  injetadas pelo `docker run --env-file`/`env_file:` do compose.
+- Rodar `docker compose down -v` remove também o volume do modelo do Ollama
+  (vai precisar baixar de novo). `docker compose down` (sem `-v`) preserva.
 
 ## Rodando os testes (opcional)
 
@@ -142,10 +174,12 @@ node --env-file=.env integration-agent.mjs 1       # só o caso 1
   (ex.: período antigo sem área/departamento) só varrem os ~1000 tickets
   mais recentes antes de desistir — a resposta avisa quando isso acontece
   ("resultado parcial"), mas o número pode não ser o total exato.
-- **Só uma tool por pergunta.** Perguntas que exigem comparar duas
-  entidades numa única resposta (ex.: "compare a carga do Fábio com a do
-  Cesar") não são suportadas automaticamente — faça duas perguntas
-  separadas.
+- **Só uma tool por pergunta, com uma exceção deliberada: comparação.**
+  "Compare a carga do X com a do Y" e "compare o ticket X com o ticket Y"
+  chamam a mesma tool duas vezes (uma por lado), de forma 100% determinística
+  (o roteador decide os dois lados, sem passar pelo Ollama). Qualquer outra
+  combinação (ex.: comparar duas áreas, ou perguntas que misturam tools
+  diferentes) não é suportada — faça perguntas separadas.
 - **Prioridade e cliente/solicitante não são filtráveis no servidor da API
   de tickets** — só status, área, departamento e operador são. Isso afeta
   o desempenho e a exatidão de consultas amplas por esses dois campos.

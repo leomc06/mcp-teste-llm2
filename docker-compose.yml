@@ -1,0 +1,32 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    # Sem porta publicada no host de propósito — o agent fala com este
+    # serviço pela rede interna do compose (ollama:11434). Se quiser rodar
+    # `ollama` do host contra este container (ex.: pra fazer o pull do
+    # modelo sem usar `docker compose exec`), publique numa porta livre,
+    # ex.: "11435:11434" (o host já pode ter um Ollama próprio na 11434).
+    restart: unless-stopped
+
+  agent:
+    build: .
+    ports:
+      - "3100:3100"
+    env_file:
+      - .env
+    environment:
+      # Sobrescreve o que estiver em .env — dentro da rede do compose o
+      # Ollama é alcançado pelo nome do serviço, não por 127.0.0.1.
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Idem: se o .env local tiver AGENT_HOST=127.0.0.1 (padrão de uso
+      # fora de container), o processo escuta só no loopback interno do
+      # container e fica inacessível de fora, mesmo com a porta publicada.
+      AGENT_HOST: "0.0.0.0"
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_models:

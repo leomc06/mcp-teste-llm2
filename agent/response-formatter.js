@@ -485,9 +485,13 @@ function formatOperatorWorkload(data) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
 
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
   const linhas = [
     `Carga de trabalho de ${decodeHtmlEntities(data.operador)}: ${data.total} ticket(s) no total ` +
-      `(${data.abertos} aberto(s), ${data.fechados} fechado(s)).`,
+      `(${data.abertos} aberto(s), ${data.fechados} fechado(s))${truncadoAviso}.`,
     `- Com SLA congelado: ${data.congelados}`,
     `- Prioridade alta ou urgente (entre os abertos): ${data.prioridade_alta_ou_urgente}`,
   ];
@@ -500,6 +504,28 @@ function formatOperatorWorkload(data) {
   );
 
   return linhas.join("\n");
+}
+
+// "Compare X e Y" chama a MESMA tool duas vezes (uma por lado) — só faz
+// sentido pra tools cujo resultado já é auto-contido (carga de 1 operador,
+// detalhe de 1 ticket); reaproveita o formatter de cada uma individualmente
+// e apresenta lado a lado, SEM calcular quem "venceu" a comparação — isso
+// seria inventar uma análise que os dados não garantem; quem lê decide.
+const COMPARISON_FORMATTERS = {
+  analisar_carga_operador: formatOperatorWorkload,
+  buscar_ticket_por_numero: formatTicketDetail,
+};
+
+export function formatComparison(toolName, dadosArray) {
+  const formatter = COMPARISON_FORMATTERS[toolName];
+
+  if (!formatter) {
+    throw new Error(`Comparação não suportada para a tool "${toolName}".`);
+  }
+
+  return dadosArray
+    .map((dados, index) => `--- ${index + 1} ---\n${formatter(dados)}`)
+    .join("\n\n");
 }
 
 function formatOne(toolResult) {

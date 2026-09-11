@@ -31,6 +31,15 @@ const allowedToolNames = new Set([
 // `createTransport`/`createClient` têm defaults que produzem o cliente MCP
 // real (spawna `run-mcp.sh` via stdio) — parametrizados só pra permitir
 // injetar um client falso em teste, sem precisar de um processo MCP real.
+//
+// `env: process.env` é necessário: o SDK do MCP, por padrão, NÃO repassa o
+// ambiente completo pro processo filho — só uma lista restrita de
+// variáveis "seguras" (inspirada no sudo, tipo PATH/HOME), sem
+// TICKETS_API_*. Localmente isso nunca deu problema porque `run-mcp.sh`
+// recarrega `.env` sozinho — mas quando as credenciais vêm só de variável
+// de ambiente injetada por fora (ex.: `docker run --env-file`, sem o
+// arquivo `.env` físico dentro do container), o processo filho ficava sem
+// elas e falhava com "Variável obrigatória ausente".
 export async function createMcpClient({
   projectDir,
   createTransport = (dir) =>
@@ -38,6 +47,7 @@ export async function createMcpClient({
       command: "bash",
       args: [`${dir}/run-mcp.sh`],
       cwd: dir,
+      env: process.env,
     }),
   createClient = () =>
     new Client({

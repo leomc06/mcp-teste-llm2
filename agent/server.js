@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMcpClient } from "./mcp-client.js";
 import { createOllamaClient } from "./ollama-client.js";
-import { AgentError, runAgent } from "./agent-loop.js";
+import { AgentError, runAgent, runCompare } from "./agent-loop.js";
 import {
   selectToolDecision,
 } from "./tool-selector.js";
@@ -293,6 +293,68 @@ const server = http.createServer(async (request, response) => {
         bodyResult.data.pergunta,
         ollamaTools,
       );
+
+      // "Compare X e Y" — a rota já decidiu as 2 chamadas (mesma tool, dois
+      // conjuntos de argumentos) de forma totalmente determinística; roda
+      // direto via runCompare, sem passar pelo Ollama (não há nada a
+      // escolher) e sem o caminho de 1 tool só logo abaixo.
+      if (toolDecision.route?.compare) {
+        if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
+          const duracaoMs = Date.now() - startedAt;
+
+          audit({
+            requestId,
+            usuario: userResult.data,
+            resultado: "recusado",
+            motivo: "limite_concorrencia",
+            duracaoMs,
+          });
+
+          sendJson(response, 429, {
+            requestId,
+            erro: "agente_ocupado",
+            mensagem:
+              "O agente está processando outra consulta. Tente novamente em instantes.",
+          });
+          return;
+        }
+
+        let compareResult;
+
+        activeAgentRequests += 1;
+
+        try {
+          compareResult = await runCompare({
+            mcp,
+            comparisons: toolDecision.route.compare,
+          });
+        } finally {
+          activeAgentRequests -= 1;
+        }
+
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "sucesso",
+          quantidadeToolsDisponibilizadas: 0,
+          toolsUtilizadas: compareResult.toolsUtilizadas,
+          quantidadeChamadas: compareResult.quantidadeChamadas,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta: compareResult.resposta,
+          fontes: compareResult.fontes,
+          dadosConsultados: compareResult.dadosConsultados,
+          toolsUtilizadas: compareResult.toolsUtilizadas,
+          quantidadeChamadas: compareResult.quantidadeChamadas,
+          duracaoMs,
+        });
+        return;
+      }
 
       let routeToolArguments = null;
 

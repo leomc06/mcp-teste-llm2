@@ -300,6 +300,34 @@ export function extractTicketNumber(value) {
   return undefined;
 }
 
+// "Compare o ticket X com o ticket Y" / "diferença entre os tickets X e Y" —
+// dois números de ticket na mesma pergunta com um conector de comparação.
+// Só ativa quando há de fato um conector de comparação (não é só "atualize
+// o 100 e o 200", por exemplo).
+const COMPARE_CONNECTOR_SOURCE = "compar[ae]|diferen[cç]a\\s+entre";
+
+export function extractTicketComparisonNumbers(value) {
+  const text = normalizeText(value);
+
+  if (!new RegExp(`\\b(?:${COMPARE_CONNECTOR_SOURCE})\\b`).test(text)) {
+    return undefined;
+  }
+
+  // O substantivo (ticket/chamado/...) geralmente aparece uma vez só pra
+  // valer pros dois números ("compare os tickets 50 e 75"), não repetido
+  // antes de cada um — por isso não exige o substantivo colado em cada
+  // número, só que ele apareça em algum lugar da frase.
+  if (!new RegExp(`\\b(?:${TICKET_NOUN_SOURCE}s?|numero)\\b`).test(text)) {
+    return undefined;
+  }
+
+  const numeros = [...text.matchAll(/\b(\d+)\b/g)]
+    .map((match) => Number(match[1]))
+    .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647);
+
+  return numeros.length >= 2 ? [numeros[0], numeros[1]] : undefined;
+}
+
 // "(?!(?:mais|menos)\b)" no início da captura evita que perguntas de ranking
 // com "mais"/"menos" invertido ("qual área MAIS tem tickets", "cliente que
 // MAIS abriu chamados", "operador com MENOS tickets") sejam lidas como um
@@ -433,6 +461,41 @@ export function extractOperatorWorkloadName(value) {
   ]);
 }
 
+// "Compare a carga do X com a do Y" / "diferença de carga entre X e Y" —
+// exige a palavra "carga" explicitamente (não generaliza pra "compare X e
+// Y" solto, que é ambíguo demais e poderia capturar nomes de área/
+// departamento por engano). Cobre só o caso claro de comparação de 2
+// operadores, que é o exemplo de "pergunta composta" mais comum.
+export function extractOperatorComparisonNames(value) {
+  const text = String(value ?? "");
+
+  if (!/\bcarga\b/iu.test(text)) {
+    return undefined;
+  }
+
+  const patterns = [
+    /\bcompar[ae]\s+a\s+carga\s+(?:d[oa]\s+)?(.+?)\s+(?:com|e)\s+(?:a\s+(?:carga\s+)?d[oa]\s+)?(.+)$/iu,
+    /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    const nome1 = cleanFreeText(match[1]);
+    const nome2 = cleanFreeText(match[2]);
+
+    if (nome1 !== undefined && nome2 !== undefined) {
+      return [nome1, nome2];
+    }
+  }
+
+  return undefined;
+}
+
 function extractOperatorNameForSituacao(value) {
   return extractByPatterns(value, [
     /\b(?:operador|respons[áa]vel|atendente)\s+(.+)$/iu,
@@ -563,6 +626,20 @@ function createTicketDecision(intent, toolName, entities) {
   };
 }
 
+// "Compare X e Y" — a MESMA tool roda duas vezes (uma por lado), decidido
+// aqui de forma totalmente determinística (nenhuma escolha do LLM), mesma
+// garantia do caminho de 1 tool só que generalizada pra 2 chamadas fixas.
+function createCompareDecision(intent, comparisons) {
+  return {
+    entity: "ticket",
+    intent,
+    toolNames: [comparisons[0].toolName],
+    entities: {},
+    compare: comparisons,
+    fallback: false,
+  };
+}
+
 export function routeTicketQuestion(pergunta) {
   const text = normalizeText(pergunta);
 
@@ -593,6 +670,27 @@ export function routeTicketQuestion(pergunta) {
     limite,
     pagina,
   });
+
+  // Comparação entre 2 tickets ou 2 operadores — checado antes de qualquer
+  // outra intenção, já que "compare o ticket X com o Y" não deve cair no
+  // caminho de número único (buscaria só o primeiro e ignoraria o segundo).
+  const comparacaoTickets = extractTicketComparisonNumbers(pergunta);
+
+  if (comparacaoTickets !== undefined) {
+    return createCompareDecision("comparar_tickets", [
+      { toolName: "buscar_ticket_por_numero", args: { numero: comparacaoTickets[0] } },
+      { toolName: "buscar_ticket_por_numero", args: { numero: comparacaoTickets[1] } },
+    ]);
+  }
+
+  const comparacaoOperadores = extractOperatorComparisonNames(pergunta);
+
+  if (comparacaoOperadores !== undefined) {
+    return createCompareDecision("comparar_carga_operador", [
+      { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[0] } },
+      { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[1] } },
+    ]);
+  }
 
   // "ainda não fechado"/"não encerrado"/"não resolveu"/"não fechou" (formas
   // adjetiva e verbal) significam aberto, mas contêm palavras que indicariam

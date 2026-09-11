@@ -1,4 +1,4 @@
-import { formatToolResults } from "./response-formatter.js";
+import { formatToolResults, formatComparison } from "./response-formatter.js";
 import {
   normalizeText,
 } from "./routing-utils.js";
@@ -105,6 +105,63 @@ function collectSources(text, toolName, sources) {
   }
 
   visit(data);
+}
+
+// "Compare X e Y" — chama a MESMA tool uma vez por lado (determinado pelo
+// roteador, não pelo LLM: mesma garantia de "zero escolha do modelo" do
+// caminho normal de 1 tool). Deliberadamente NÃO passa pelo Ollama —
+// não há nada pro modelo decidir aqui, os dois lados já são conhecidos.
+export async function runCompare({ mcp, comparisons }) {
+  const toolResults = [];
+  const sources = new Map();
+
+  for (const { toolName, args } of comparisons) {
+    let result;
+
+    try {
+      result = await mcp.callTool(toolName, args);
+    } catch {
+      throw new AgentError(
+        "falha_mcp",
+        "Não foi possível executar a tool MCP.",
+      );
+    }
+
+    const text = mcpContentToText(result);
+
+    if (result.isError === true) {
+      throw new AgentError(
+        "falha_mcp",
+        "Não foi possível concluir a comparação: uma das consultas falhou.",
+      );
+    }
+
+    collectSources(text, toolName, sources);
+
+    let dados;
+
+    try {
+      dados = JSON.parse(text);
+    } catch {
+      throw new AgentError(
+        "resposta_mcp_invalida",
+        "A tool MCP não retornou JSON válido.",
+      );
+    }
+
+    toolResults.push({ tool: toolName, dados });
+  }
+
+  return {
+    resposta: formatComparison(
+      comparisons[0].toolName,
+      toolResults.map((item) => item.dados),
+    ),
+    fontes: [...sources.values()],
+    dadosConsultados: toolResults,
+    toolsUtilizadas: comparisons.map((item) => item.toolName),
+    quantidadeChamadas: comparisons.length,
+  };
 }
 
 
