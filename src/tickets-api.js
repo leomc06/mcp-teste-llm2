@@ -15,6 +15,14 @@ function unwrapList(body, key) {
     return body.results;
   }
 
+  // Nenhum dos formatos conhecidos bateu — não é necessariamente uma lista
+  // vazia real, pode ser a API tendo mudado de formato. Avisa em vez de
+  // devolver [] silenciosamente (uma tool que "some" com um catálogo
+  // inteiro sem explicação é pior que um aviso no log).
+  console.error(
+    `API de tickets: resposta de metadado em formato inesperado (chave "${key}"), tratando como lista vazia.`,
+  );
+
   return [];
 }
 
@@ -30,10 +38,44 @@ function compactHeaders(values) {
   return headers;
 }
 
-export function createTicketsApiClient({ baseUrl, token, login, app, timeoutMs }) {
+// Erros de rede/timeout e HTTP 429/5xx costumam ser transitórios (blip de
+// rede, API momentaneamente sobrecarregada) — vale tentar de novo. 4xx
+// (exceto 429) é erro do próprio pedido (parâmetro inválido, não
+// encontrado, etc.) e "JSON inválido" é a API respondendo algo que não vai
+// mudar numa segunda tentativa — nenhum dos dois é retryable.
+function isRetryable(error) {
+  if (error?.status === 429) {
+    return true;
+  }
+
+  if (typeof error?.status === "number") {
+    return error.status >= 500;
+  }
+
+  // Sem `.status` só acontece nos erros de rede/timeout lançados acima
+  // (JSON inválido tem sua própria mensagem, tratada à parte).
+  return (
+    error?.message === "Timeout ao consultar a API de tickets."
+    || error?.message === "Não foi possível conectar à API de tickets."
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function createTicketsApiClient({
+  baseUrl,
+  token,
+  login,
+  app,
+  timeoutMs,
+  maxRetries = 2,
+  retryDelayMs = 300,
+}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 
-  async function request(path, { headers = {}, ...options } = {}) {
+  async function requestOnce(path, { headers = {}, ...options } = {}) {
     let response;
 
     try {
@@ -60,14 +102,24 @@ export function createTicketsApiClient({ baseUrl, token, login, app, timeoutMs }
     }
 
     let body;
+    let parseError;
 
     try {
       body = await response.json();
-    } catch {
-      throw new Error("API de tickets retornou JSON inválido.");
+    } catch (error) {
+      parseError = error;
     }
 
+    // Checa o status ANTES de decidir o que fazer com uma falha de parse —
+    // um 5xx com corpo HTML/vazio (comum em proxy/gateway) não pode virar
+    // "JSON inválido" genérico, isso mascararia o status HTTP real.
     if (!response.ok) {
+      if (parseError) {
+        const error = new Error(`API de tickets retornou erro: HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
       const errors = body?.errors;
       const errorEntry = Array.isArray(errors) ? errors[0] : errors;
       const message = errorEntry?.message ?? `HTTP ${response.status}`;
@@ -77,7 +129,34 @@ export function createTicketsApiClient({ baseUrl, token, login, app, timeoutMs }
       throw error;
     }
 
+    if (parseError) {
+      throw new Error("API de tickets retornou JSON inválido.");
+    }
+
     return body;
+  }
+
+  // Tenta de novo (com backoff exponencial: retryDelayMs, 2x, 4x, ...) só
+  // pra falhas transitórias (ver isRetryable) — até maxRetries tentativas
+  // extras (padrão: 1 chamada + 2 retries = até 3 tentativas no total).
+  async function request(path, options) {
+    let ultimoErro;
+
+    for (let tentativa = 0; tentativa <= maxRetries; tentativa += 1) {
+      try {
+        return await requestOnce(path, options);
+      } catch (error) {
+        ultimoErro = error;
+
+        if (tentativa >= maxRetries || !isRetryable(error)) {
+          throw error;
+        }
+
+        await sleep(retryDelayMs * 2 ** tentativa);
+      }
+    }
+
+    throw ultimoErro;
   }
 
   return {

@@ -13,6 +13,7 @@ import {
 } from "./routing-utils.js";
 import { isWriteRequest } from "./write-policy.js";
 import { serveStaticFile } from "./static-files.js";
+import { createRateLimiter } from "./rate-limiter.js";
 
 const configSchema = z.object({
   AGENT_HOST: z.string().min(1),
@@ -28,6 +29,21 @@ const configSchema = z.object({
     .int()
     .min(1)
     .max(10),
+  // Limite de taxa por IP (janela deslizante, ver agent/rate-limiter.js) —
+  // independente do limite de concorrência acima, que só olha quantas
+  // requisições estão em andamento ao mesmo tempo, não quantas por minuto.
+  AGENT_RATE_LIMIT_WINDOW_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(3600000)
+    .default(60000),
+  AGENT_RATE_LIMIT_MAX_REQUESTS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .default(30),
   OLLAMA_BASE_URL: z.string().url(),
   OLLAMA_MODEL: z.string().min(1).max(100),
   OLLAMA_NUM_THREAD: z.coerce.number().int().min(1).max(4),
@@ -69,6 +85,16 @@ const requestSchema = z
 
 const userIdSchema = z.string().trim().min(1).max(100);
 let activeAgentRequests = 0;
+
+const rateLimiter = createRateLimiter({
+  windowMs: config.AGENT_RATE_LIMIT_WINDOW_MS,
+  maxRequests: config.AGENT_RATE_LIMIT_MAX_REQUESTS,
+});
+
+const rateLimiterPruneInterval = setInterval(
+  () => rateLimiter.prune(),
+  config.AGENT_RATE_LIMIT_WINDOW_MS,
+).unref();
 
 function sendJson(response, statusCode, data) {
   const body = JSON.stringify(data);
@@ -185,6 +211,30 @@ const server = http.createServer(async (request, response) => {
     request.method === "POST"
     && request.url === "/api/ia/consultar-os"
   ) {
+    // Por IP, não por X-User-Id — esse header não é autenticado (qualquer
+    // valor passa), então limitar por ele seria trivialmente contornável só
+    // trocando o valor a cada requisição.
+    const remoteIp = request.socket.remoteAddress ?? "desconhecido";
+    const limite = rateLimiter.check(remoteIp);
+
+    if (!limite.allowed) {
+      audit({
+        requestId,
+        usuario: null,
+        resultado: "recusado",
+        motivo: "limite_de_requisicoes",
+        duracaoMs: Date.now() - startedAt,
+      });
+
+      response.setHeader("Retry-After", Math.ceil(limite.retryAfterMs / 1000));
+      sendJson(response, 429, {
+        requestId,
+        erro: "limite_de_requisicoes",
+        mensagem: "Muitas requisições em pouco tempo. Tente novamente em instantes.",
+      });
+      return;
+    }
+
     const rawUserId = Array.isArray(request.headers["x-user-id"])
       ? request.headers["x-user-id"][0]
       : request.headers["x-user-id"];
@@ -243,34 +293,6 @@ const server = http.createServer(async (request, response) => {
         bodyResult.data.pergunta,
         ollamaTools,
       );
-
-      if (toolDecision.route?.fallback === true) {
-        const duracaoMs = Date.now() - startedAt;
-
-        audit({
-          requestId,
-          usuario: userResult.data,
-          resultado: "esclarecimento",
-          motivo: "intencao_os_ambigua",
-          quantidadeToolsDisponibilizadas: 0,
-          toolsUtilizadas: [],
-          quantidadeChamadas: 0,
-          duracaoMs,
-        });
-
-        sendJson(response, 200, {
-          requestId,
-          resposta: toolDecision.route.clarification,
-          fontes: [],
-          dadosConsultados: [],
-          toolsUtilizadas: [],
-          quantidadeChamadas: 0,
-          esclarecimento: true,
-          duracaoMs,
-        });
-
-        return;
-      }
 
       let routeToolArguments = null;
 

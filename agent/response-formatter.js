@@ -1,3 +1,16 @@
+// Quando o resultado vem vazio E truncado ao mesmo tempo (ex.: filtro de
+// período antigo combinado com uma busca que já parou nos tickets mais
+// recentes por volume), dizer só "nenhum encontrado" é enganoso — parece
+// confirmar que não existe nenhum, quando na verdade a amostra consultada
+// pode não ter chegado no período pedido.
+function mensagemVazia(data, semResultado) {
+  if (!data.truncado) {
+    return semResultado;
+  }
+
+  return `${semResultado} A consulta foi truncada por volume de tickets — pode haver tickets fora da amostra (ex.: um período mais antigo) que não foram considerados.`;
+}
+
 function formatDate(value) {
   if (!value) {
     return value;
@@ -124,7 +137,7 @@ function formatTicketList(data) {
   const tickets = data.tickets ?? [];
 
   if (tickets.length === 0) {
-    return "Nenhum ticket foi encontrado para os filtros informados.";
+    return mensagemVazia(data, "Nenhum ticket foi encontrado para os filtros informados.");
   }
 
   const total = data.total ?? tickets.length;
@@ -299,7 +312,7 @@ function formatTicketSummary(data, dimensaoLabel) {
   const resumo = data.resumo ?? [];
 
   if (resumo.length === 0) {
-    return `Nenhum ticket foi encontrado para calcular o resumo por ${dimensaoLabel}.`;
+    return mensagemVazia(data, `Nenhum ticket foi encontrado para calcular o resumo por ${dimensaoLabel}.`);
   }
 
   const truncadoAviso = data.truncado
@@ -330,7 +343,7 @@ function formatFrozenTickets(data) {
   const tickets = data.tickets ?? [];
 
   if (tickets.length === 0) {
-    return "Nenhum ticket com SLA congelado foi encontrado.";
+    return mensagemVazia(data, "Nenhum ticket com SLA congelado foi encontrado.");
   }
 
   const quantidade = data.quantidade ?? tickets.length;
@@ -363,7 +376,7 @@ function formatTicketsBySituacao(data, situacaoLabel) {
   const tickets = data.tickets ?? [];
 
   if (tickets.length === 0) {
-    return `Nenhum ticket ${situacaoLabel} foi encontrado.`;
+    return mensagemVazia(data, `Nenhum ticket ${situacaoLabel} foi encontrado.`);
   }
 
   const quantidade = data.quantidade ?? tickets.length;
@@ -396,7 +409,7 @@ function formatOldestOpenTickets(data) {
   const tickets = data.tickets ?? [];
 
   if (tickets.length === 0) {
-    return "Nenhum ticket aberto foi encontrado.";
+    return mensagemVazia(data, "Nenhum ticket aberto foi encontrado.");
   }
 
   const truncadoAviso = data.truncado
@@ -422,7 +435,7 @@ function formatMostRecentTickets(data) {
   const tickets = data.tickets ?? [];
 
   if (tickets.length === 0) {
-    return "Nenhum ticket foi encontrado para os filtros informados.";
+    return mensagemVazia(data, "Nenhum ticket foi encontrado para os filtros informados.");
   }
 
   const truncadoAviso = data.truncado

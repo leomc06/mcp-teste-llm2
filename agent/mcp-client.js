@@ -28,17 +28,25 @@ const allowedToolNames = new Set([
   "analisar_carga_operador",
 ]);
 
-export async function createMcpClient({ projectDir }) {
-  const transport = new StdioClientTransport({
-    command: "bash",
-    args: [`${projectDir}/run-mcp.sh`],
-    cwd: projectDir,
-  });
-
-  const client = new Client({
-    name: "backend-agente-consultas",
-    version: "1.0.0",
-  });
+// `createTransport`/`createClient` têm defaults que produzem o cliente MCP
+// real (spawna `run-mcp.sh` via stdio) — parametrizados só pra permitir
+// injetar um client falso em teste, sem precisar de um processo MCP real.
+export async function createMcpClient({
+  projectDir,
+  createTransport = (dir) =>
+    new StdioClientTransport({
+      command: "bash",
+      args: [`${dir}/run-mcp.sh`],
+      cwd: dir,
+    }),
+  createClient = () =>
+    new Client({
+      name: "backend-agente-consultas",
+      version: "1.0.0",
+    }),
+}) {
+  const transport = createTransport(projectDir);
+  const client = createClient();
 
   await client.connect(transport);
 

@@ -26,10 +26,24 @@ const TRAILING_BARE_VERB_PATTERN = new RegExp(`\\s+(?:tem|possui|${ESTAR_SOURCE}
 // estão abertos há mais tempo") — corta tudo a partir de "está(m)".
 const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${ESTAR_SOURCE}\\s+.+$`, "iu");
 
-// "resolveu/resolveram <período>" no fim da captura não faz parte do nome
-// (ex.: "o pessoal da Infraestrutura Científica resolveu esse mês" → a área
-// é só "Infraestrutura Científica").
-const TRAILING_RESOLVED_CLAUSE_PATTERN = /\s+resolv(?:eu|eram|ido|ida|idos|idas)\b.*$/iu;
+// Vocabulário de "fechado" em toda forma verbal (3ª pessoa do singular/
+// plural no passado) e adjetiva (singular/plural) dos 5 sinônimos aceitos —
+// um único lugar pra declarar isso evita o que já aconteceu duas vezes
+// nesta sessão: um sinônimo ganhar a forma adjetiva ("encerrados") mas não a
+// verbal ("encerrou"), ou vice-versa, em só um dos usos (detecção de
+// intenção, negação, ou corte de cláusula final ao extrair nomes).
+const CLOSURE_VERB_SOURCE =
+  "(?:fech(?:ad[oa]s?|ou|aram)"
+  + "|encerr(?:ad[oa]s?|ou|aram)"
+  + "|conclu(?:[íi]d[oa]s?|iu|[íi]ram)"
+  + "|finaliz(?:ad[oa]s?|ou|aram)"
+  + "|resolv(?:id[oa]s?|eu|eram))";
+
+// "fechou/encerrou/concluiu/finalizou/resolveu <período>" no fim da captura
+// não faz parte do nome (ex.: "o pessoal da Infraestrutura Científica
+// resolveu esse mês" → a área é só "Infraestrutura Científica"; "a área WEB
+// concluiu quantos chamados" → só "WEB").
+const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(`\\s+${CLOSURE_VERB_SOURCE}\\b.*$`, "iu");
 
 // Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
 // de "por X", aceita "em cada X", "por cada X", "de cada X" e "cada X" (ex.:
@@ -37,9 +51,19 @@ const TRAILING_RESOLVED_CLAUSE_PATTERN = /\s+resolv(?:eu|eram|ido|ida|idos|idas)
 const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cada)";
 
 // "Quais operadores possuem mais tickets?" / "...têm mais chamados?" /
-// "...abre mais chamados?" também pede um resumo/ranking, mesmo sem a
-// palavra "por" ou "quantos".
-const RANKING_CUE_SOURCE = "(?:possu(?:i|em)|tem|abr(?:e|em|iu))\\s+mais";
+// "...abre mais chamados?" / "área/operador COM mais tickets" / "qual
+// cliente MAIS abriu chamados" (ordem invertida, comum em português pra dar
+// ênfase) também pedem um resumo/ranking, mesmo sem a palavra "por" ou
+// "quantos". O "(?!\s+de\b)" depois de "mais"/"menos" evita casar "com mais
+// de 30 dias" (limiar de idade, não ranking) com a mesma regra de "com
+// mais". "menos" (o oposto de "mais") também aciona o resumo/ranking — a
+// tool sempre devolve a lista completa ordenada do maior pro menor, então
+// "quem tem menos" é respondido lendo o fim da lista; só não vale combinar
+// isso com um "top N" numérico (nesse caso o corte pegaria os N maiores, não
+// os N menores — limitação conhecida, não implementada).
+const RANKING_CUE_SOURCE =
+  "(?:(?:possu(?:i|em)|tem|abr(?:e|em|iu)|com)\\s+(?:mais|menos)(?!\\s+de\\b)"
+  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|abr(?:e|em|iu)))";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
 // pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes).
@@ -176,6 +200,24 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(primeiroDia), dataFim: formatIsoDate(ultimoDia) };
   }
 
+  if (/\bano\s+passado\b/.test(text)) {
+    const anoPassado = agora.getFullYear() - 1;
+
+    return {
+      dataInicio: formatIsoDate(new Date(anoPassado, 0, 1)),
+      dataFim: formatIsoDate(new Date(anoPassado, 11, 31)),
+    };
+  }
+
+  if (/\b(?:esse|este)\s+ano\b/.test(text)) {
+    const anoAtual = agora.getFullYear();
+
+    return {
+      dataInicio: formatIsoDate(new Date(anoAtual, 0, 1)),
+      dataFim: formatIsoDate(new Date(anoAtual, 11, 31)),
+    };
+  }
+
   return undefined;
 }
 
@@ -258,31 +300,39 @@ export function extractTicketNumber(value) {
   return undefined;
 }
 
+// "(?!(?:mais|menos)\b)" no início da captura evita que perguntas de ranking
+// com "mais"/"menos" invertido ("qual área MAIS tem tickets", "cliente que
+// MAIS abriu chamados", "operador com MENOS tickets") sejam lidas como um
+// nome de filtro literal ("área 'mais tem tickets'") — nenhum nome real de
+// área/departamento/operador/cliente começa com "mais" ou "menos".
 export function extractAreaName(value) {
   return extractByPatterns(value, [
-    /(?<![\p{L}\p{N}])[áa]rea\s+(?:de\s+)?(.+)$/iu,
+    // "categoria" é sinônimo comum de "área" fora do vocabulário interno do
+    // sistema (quem pergunta não necessariamente sabe que a API chama isso
+    // de "área") — resolveMetaId falha graciosamente se não for um nome de
+    // área real, então o risco de falso positivo é baixo.
+    /(?<![\p{L}\p{N}])(?:[áa]rea|categoria)\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
-    // sem usar a palavra "área" — resolveMetaId falha graciosamente se não
-    // for um nome de área real, então o risco de falso positivo é baixo.
-    /\bpessoal\s+d[ao]\s+(.+)$/iu,
+    // sem usar a palavra "área" — mesmo raciocínio acima.
+    /\bpessoal\s+d[ao]\s+(?!(?:mais|menos)\b)(.+)$/iu,
   ]);
 }
 
 export function extractDepartmentName(value) {
   return extractByPatterns(value, [
-    /\bdepartamento\s+(?:de\s+)?(.+)$/iu,
+    /\bdepartamento\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
   ]);
 }
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
-    /\b(?:operador|respons[áa]vel|atendente|usu[áa]rio)\s+(.+)$/iu,
+    /\b(?:operador|respons[áa]vel|atendente|usu[áa]rio)\s+(?!(?:mais|menos)\b)(.+)$/iu,
   ]);
 }
 
 export function extractClientName(value) {
   return extractByPatterns(value, [
-    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(.+)$/iu,
+    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
   ]);
 }
 
@@ -347,10 +397,19 @@ export function extractPriorityName(value) {
 
 // "Urgente" é uma prioridade real do sistema (distinta de "Alta"), então a
 // palavra solta já é um sinal inequívoco, mesmo sem a palavra "prioridade"
-// do lado. Não generalizamos para "alta/média/baixa" soltas: são adjetivos
-// comuns demais em português e dariam falso positivo fora do contexto.
+// do lado. "Crítico"/"críticos" é tratado como sinônimo de urgente pelo
+// mesmo motivo — "os tickets mais críticos" é um jeito comum de perguntar
+// por prioridade alta sem usar o vocabulário exato do sistema. Não
+// generalizamos para "alta/média/baixa" soltas: são adjetivos comuns demais
+// em português e dariam falso positivo fora do contexto.
 export function extractPriorityIntent(value) {
-  return extractPriorityName(value) ?? (/\burgente/.test(normalizeText(value)) ? "Urgente" : undefined);
+  const text = normalizeText(value);
+
+  return (
+    extractPriorityName(value)
+    ?? (/\burgente/.test(text) ? "Urgente" : undefined)
+    ?? (/\bcritic[oa]s?\b/.test(text) ? "Urgente" : undefined)
+  );
 }
 
 export function extractUserName(value) {
@@ -535,29 +594,29 @@ export function routeTicketQuestion(pergunta) {
     pagina,
   });
 
-  // "ainda não fechado"/"não encerrado"/"não resolveu" significam aberto,
-  // mas contêm palavras que indicariam fechado — tratadas à parte, negando
-  // isFechadoIntent e alimentando isAbertoIntent. Calculado cedo (antes do
-  // bloco de resumos) porque resumo_tickets_por_operador também usa a
-  // situação aberto/fechado.
-  const NEGATED_CLOSED_SOURCE =
-    "nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?(?:fechad[oa]s?|encerrad[oa]s?|concluid[oa]s?|finalizad[oa]s?|resolv(?:eu|ido[as]?))";
+  // "ainda não fechado"/"não encerrado"/"não resolveu"/"não fechou" (formas
+  // adjetiva e verbal) significam aberto, mas contêm palavras que indicariam
+  // fechado — tratadas à parte, negando isFechadoIntent e alimentando
+  // isAbertoIntent. Calculado cedo (antes do bloco de resumos) porque
+  // resumo_tickets_por_operador também usa a situação aberto/fechado.
+  const NEGATED_CLOSED_SOURCE = `nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
 
+  // "foi aberto"/"foram abertos" é voz passiva pra dizer que o ticket foi
+  // CRIADO num período (ex.: "quantos tickets foram abertos ano passado?"),
+  // não que ele está com status em aberto agora — o período já é resolvido
+  // à parte via extractDateRange/extractRelativeDateRange; aqui só evita que
+  // isso vire (erradamente) um filtro de situação=aberto (o que faria
+  // "aberto ano passado" exigir também estar aberto HOJE, quase sempre 0).
+  const isCreationPassive = /\b(?:foi|foram)\s+abert[oa]s?\b/.test(text);
+
   const isAbertoIntent =
-    /\babert[oa]s?\b/.test(text)
+    (/\babert[oa]s?\b/.test(text) && !isCreationPassive)
     || /\bpendente/.test(text)
     || isNegatedClosed;
 
   const isFechadoIntent =
-    (
-      /\bfechad[oa]s?\b/.test(text)
-      || /\bencerrad[oa]s?\b/.test(text)
-      || /\bconcluid[oa]s?\b/.test(text)
-      || /\bfinalizad[oa]s?\b/.test(text)
-      || /\bresolv(?:eu|ido|ida|idos|idas)\b/.test(text)
-    )
-    && !isNegatedClosed;
+    new RegExp(`\\b${CLOSURE_VERB_SOURCE}\\b`).test(text) && !isNegatedClosed;
 
   // Situação só é definida quando a frase menciona aberto/fechado de forma
   // inequívoca — usada tanto no resumo por operador quanto em "mais
@@ -576,18 +635,30 @@ export function routeTicketQuestion(pergunta) {
     || /\bquantos\b/.test(text)
     || /\bquantas\b/.test(text)
     || /\bcontagem\b/.test(text)
+    || /\btop\s+\d+\b/.test(text)
     || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text);
 
   const mentionsStatusDimension = mentionsDimension(text, "status");
   const mentionsPriorityDimension = mentionsDimension(text, "prioridades?");
-  const mentionsAreaDimension = mentionsDimension(text, "areas?");
+  const mentionsAreaDimension = mentionsDimension(text, "areas?|categorias?");
   const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
   const mentionsClienteDimension = mentionsDimension(text, "clientes?|solicitantes?");
 
-  // "Quem tem mais chamados...?" já implica ranking por operador nesse
-  // domínio, mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
-  const isOperatorRankingIntent = /\bquem\s+(?:tem|possui|esta\s+com)\s+mais\b/.test(text);
+  // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
+  // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
+  // mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
+  const isOperatorRankingIntent =
+    /\bquem\s+(?:tem|possui|esta\s+com)\s+(?:mais|menos)\b/.test(text)
+    || /\bquem\s+(?:mais|menos)\s+(?:tem|possui|esta\s+com)\b/.test(text);
+
+  // Direção do ranking pedido: "menos" (ascendente, menor primeiro) vs.
+  // "mais"/nada (descendente, padrão). Exclui "menos de N dias"/"pelo menos
+  // N" — não são ranking, são limiar/quantidade mínima.
+  const ordemRanking =
+    /\bmenos\b(?!\s+de\b)/.test(text) && !/\bpelo\s+menos\b/.test(text)
+      ? "asc"
+      : undefined;
 
   // Perguntas de "visão geral" da operação — não é uma dimensão específica,
   // é um retrato amplo (total, abertos, fechados, sem operador, congelados,
@@ -615,7 +686,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
-      compactEntities({ area, departamento, operador, prioridade, limite }),
+      compactEntities({ area, departamento, operador, prioridade, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
   }
 
@@ -623,7 +694,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
-      compactEntities({ status, area, departamento, operador, limite }),
+      compactEntities({ status, area, departamento, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
   }
 
@@ -631,7 +702,16 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
-      compactEntities({ status, departamento, operador, prioridade, limite }),
+      compactEntities({
+        status,
+        departamento,
+        operador,
+        prioridade,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
   }
 
@@ -639,7 +719,17 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
-      compactEntities({ status, area, departamento, prioridade, situacao: situacaoInequivoca, limite }),
+      compactEntities({
+        status,
+        area,
+        departamento,
+        prioridade,
+        situacao: situacaoInequivoca,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
   }
 
@@ -647,7 +737,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
-      compactEntities({ status, area, operador, limite }),
+      compactEntities({ status, area, operador, limite, ordem: ordemRanking }),
     );
   }
 
@@ -655,7 +745,17 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",
-      compactEntities({ status, area, departamento, operador, prioridade, limite }),
+      compactEntities({
+        status,
+        area,
+        departamento,
+        operador,
+        prioridade,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
   }
 
@@ -810,9 +910,12 @@ export function routeTicketQuestion(pergunta) {
   }
 
   const isSemOperadorIntent =
-    /\bsem\s+(?:operador|responsavel|atendente)\b/.test(text)
+    /\bsem\s+(?:operador|responsavel|atendente|dono)\b/.test(text)
     || /\bsem\s+ninguem\b/.test(text)
     || /\bnao\s+(?:foi\s+|foram\s+|esta\s+|estao\s+)?atribuid/.test(text)
+    // "não tem operador"/"não têm responsável" — negação do verbo "ter", não
+    // só de "atribuído" (ex.: "quantos tickets não têm operador?").
+    || /\bnao\s+tem\s+(?:operador|responsavel|atendente)\b/.test(text)
     || /\bninguem\s+(?:e\s+)?(?:responsavel|pegando|atendendo|cuidando|resolvendo)\b/.test(text)
     || /\baguardando\s+atribuicao\b/.test(text);
 
@@ -859,14 +962,32 @@ export function routeTicketQuestion(pergunta) {
       return createTicketDecision(
         "resumo_por_area",
         "resumo_tickets_por_area",
-        compactEntities({ status, departamento, operador, prioridade, limite }),
+        compactEntities({
+          status,
+          departamento,
+          operador,
+          prioridade,
+          limite,
+          dataInicio,
+          dataFim,
+          ordem: ordemRanking,
+        }),
       );
     }
 
     return createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
-      compactEntities({ area, departamento, operador, prioridade, limite }),
+      compactEntities({
+        area,
+        departamento,
+        operador,
+        prioridade,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
   }
 

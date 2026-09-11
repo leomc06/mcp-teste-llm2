@@ -695,6 +695,103 @@ test("datas relativas: essa semana, semana passada, hoje, ontem, esse mês, mês
   assert.equal(extractRelativeDateRange("nenhuma data aqui", agora), undefined);
 });
 
+test("datas relativas: esse ano, ano passado", () => {
+  const agora = new Date(2026, 8, 2); // 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("esse ano", agora), {
+    dataInicio: "2026-01-01",
+    dataFim: "2026-12-31",
+  });
+  assert.deepEqual(extractRelativeDateRange("este ano", agora), {
+    dataInicio: "2026-01-01",
+    dataFim: "2026-12-31",
+  });
+  assert.deepEqual(extractRelativeDateRange("ano passado", agora), {
+    dataInicio: "2025-01-01",
+    dataFim: "2025-12-31",
+  });
+});
+
+test("bug: 'qual cliente mais abriu chamados este ano' vai pra resumo por cliente com data aplicada (não captura 'mais abriu...' como nome de cliente)", () => {
+  const decisao = routeTicketQuestion("Qual cliente mais abriu chamados este ano?");
+
+  assert.deepEqual(decisao.toolNames, ["resumo_tickets_por_cliente"]);
+  assert.equal(decisao.entities.cliente, undefined);
+  assert.ok(decisao.entities.dataInicio?.endsWith("-01-01"));
+  assert.ok(decisao.entities.dataFim?.endsWith("-12-31"));
+});
+
+test("bug: 'mais' invertido não polui a extração de área/departamento/operador como nome de filtro", () => {
+  assert.equal(
+    routeTicketQuestion("Qual área mais tem tickets?").entities.area,
+    undefined,
+  );
+  assert.equal(
+    routeTicketQuestion("Qual departamento mais abriu chamados?").entities.departamento,
+    undefined,
+  );
+  assert.equal(
+    routeTicketQuestion("Qual operador mais tem tickets?").entities.operador,
+    undefined,
+  );
+});
+
+test("'X com mais Y' aciona ranking, mas 'com mais de N dias' continua sendo limiar de idade", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Top 5 operadores com mais tickets na área Suporte").toolNames,
+    ["resumo_tickets_por_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tickets abertos há mais de 7 dias na área Suporte").toolNames,
+    ["listar_tickets_abertos"],
+  );
+});
+
+test("'menos' (oposto de 'mais') também aciona ranking, sem poluir nome extraído", () => {
+  const semOperador = routeTicketQuestion("Qual operador tem menos tickets?");
+  assert.deepEqual(semOperador.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(semOperador.entities.operador, undefined);
+
+  const semArea = routeTicketQuestion("Qual área tem menos chamados?");
+  assert.deepEqual(semArea.toolNames, ["resumo_tickets_por_area"]);
+  assert.equal(semArea.entities.area, undefined);
+
+  assert.deepEqual(
+    routeTicketQuestion("Quem mais tem tickets abertos?").toolNames,
+    ["resumo_tickets_por_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quem tem menos tickets?").toolNames,
+    ["resumo_tickets_por_operador"],
+  );
+});
+
+test("verbo no passado (fechou/encerrou/concluiu) conta como fechado, tanto pra situação quanto pro corte de nome extraído", () => {
+  const fechouComArea = routeTicketQuestion("Quantos tickets a área Suporte fechou essa semana?");
+  assert.deepEqual(fechouComArea.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(fechouComArea.entities.area, "Suporte");
+
+  const concluiuComArea = routeTicketQuestion("A área WEB concluiu quantos chamados?");
+  assert.deepEqual(concluiuComArea.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(concluiuComArea.entities.area, "WEB");
+
+  assert.deepEqual(
+    routeTicketQuestion("A área X encerrou quantos tickets essa semana?").toolNames,
+    ["listar_tickets_fechados"],
+  );
+});
+
+test("'não tem operador' e 'sem dono' são sinônimos de sem operador (não só 'não atribuído')", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quantos tickets não têm operador?").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tickets sem dono").toolNames,
+    ["listar_tickets_sem_operador"],
+  );
+});
+
 test("bug 1: 'quantos chamados abrimos essa semana?' aplica filtro de data (não cai sem filtro)", () => {
   const decisao = routeTicketQuestion("Quantos chamados abrimos essa semana?");
   assert.deepEqual(decisao.toolNames, ["listar_tickets"]);
@@ -862,4 +959,36 @@ test("prioridade chega em tickets congelados, mais antigos e mais recentes", () 
   const maisRecentes = routeTicketQuestion("Tickets urgentes mais recentes.");
   assert.deepEqual(maisRecentes.toolNames, ["listar_tickets_mais_recentes"]);
   assert.equal(maisRecentes.entities.prioridade, "Urgente");
+});
+
+test("'crítico(s)' é sinônimo de prioridade Urgente (gap G1)", () => {
+  const route = routeTicketQuestion("Quais são os tickets mais críticos?");
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("'categoria' é sinônimo de área (gap G2) — tanto como filtro quanto como dimensão de resumo", () => {
+  const filtro = routeTicketQuestion("Quais tickets são da categoria Suporte?");
+  assert.equal(filtro.entities.area, "Suporte");
+
+  const resumo = routeTicketQuestion("Resumo de tickets por categoria.");
+  assert.deepEqual(resumo.toolNames, ["resumo_tickets_por_area"]);
+});
+
+test("'menos' pede ordem ascendente no resumo (gap P3) — 'mais' e ausência de direção continuam descendente", () => {
+  const menos = routeTicketQuestion("Qual operador tem menos tickets?");
+  assert.equal(menos.entities.ordem, "asc");
+
+  const mais = routeTicketQuestion("Qual operador tem mais tickets?");
+  assert.equal(mais.entities.ordem, undefined);
+
+  const semDirecao = routeTicketQuestion("Resumo de tickets por operador.");
+  assert.equal(semDirecao.entities.ordem, undefined);
+});
+
+test("'menos de N dias' e 'pelo menos N' não são lidos como direção de ranking (só limiar/quantidade)", () => {
+  const menosDeDias = routeTicketQuestion("Tickets abertos há menos de 7 dias na área Suporte");
+  assert.equal(menosDeDias.entities.ordem, undefined);
+
+  const peloMenos = routeTicketQuestion("Resumo de tickets por operador, pelo menos 5 tickets cada.");
+  assert.equal(peloMenos.entities.ordem, undefined);
 });

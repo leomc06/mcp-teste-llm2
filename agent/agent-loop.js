@@ -33,6 +33,41 @@ function mcpContentToText(result) {
   return texts.join("\n");
 }
 
+// Texto de ticket (issue/description/comentários) vem de campos livres
+// preenchidos por usuários do sistema de tickets, e entra sem revisão no
+// histórico de mensagens que — em cenários residuais (erro parcial numa
+// chamada com múltiplas tools na mesma rodada) — pode ser reenviado ao
+// modelo. Isso não é a defesa principal (o system prompt já instrui a
+// tratar resultado de tool como dado, nunca instrução, e o caminho comum de
+// sucesso nem chega a reenviar o histórico), mas reduz a superfície de um
+// ticket malicioso tentando imitar uma instrução de sistema ("ignore as
+// instruções anteriores", "system:", etc.) — defesa em profundidade, não
+// uma garantia absoluta contra prompt injection.
+const INJECTION_PATTERN_SOURCES = [
+  "ignor[ea]\\s+(?:todas?\\s+)?(?:as\\s+)?instru[cç][oõ]es",
+  "ignore\\s+(?:all\\s+)?(?:previous|above)\\s+instructions",
+  "voce\\s+(?:agora\\s+)?[ée]\\s+um",
+  "you\\s+are\\s+now",
+  "aja\\s+como",
+  "act\\s+as",
+  "esque[cç]a\\s+(?:tudo|as\\s+instru[cç][oõ]es)",
+  "forget\\s+(?:everything|previous)",
+  "\\bsystem\\s*:",
+  "\\bassistant\\s*:",
+  "new\\s+instructions?\\s*:",
+  "novas?\\s+instru[cç][oõ]es\\s*:",
+];
+const INJECTION_PATTERN = new RegExp(`(?:${INJECTION_PATTERN_SOURCES.join("|")})`, "giu");
+const MAX_TOOL_TEXT_FOR_MODEL = 6000;
+
+export function sanitizeForModel(text) {
+  const semPadroesSuspeitos = text.replace(INJECTION_PATTERN, "[trecho removido]");
+
+  return semPadroesSuspeitos.length > MAX_TOOL_TEXT_FOR_MODEL
+    ? `${semPadroesSuspeitos.slice(0, MAX_TOOL_TEXT_FOR_MODEL)}... [truncado]`
+    : semPadroesSuspeitos;
+}
+
 function collectSources(text, toolName, sources) {
   let data;
 
@@ -414,10 +449,13 @@ export async function runAgent({
         }
       }
 
+      // Sanitiza só a cópia que entra no histórico enviado ao modelo — `text`
+      // em si (usado por toolResults/collectSources/a resposta real ao
+      // usuário) continua intacto, sem alterar o dado exibido.
       messages.push({
         role: "tool",
         tool_name: name,
-        content: text,
+        content: sanitizeForModel(text),
       });
     }
 
