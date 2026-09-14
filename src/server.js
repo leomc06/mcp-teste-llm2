@@ -900,11 +900,12 @@ server.registerTool(
   "listar_tickets_sem_operador",
   {
     title: "Listar tickets sem operador atribuído",
-    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -912,7 +913,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ status, area, departamento, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -941,11 +942,15 @@ server.registerTool(
         department: departamentoResolvido.id,
       });
 
+      const clienteAlvoSemOperador = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       const semOperador = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             (!ticket.operator || !ticket.operator.trim())
-            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico),
+            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvoSemOperador === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoSemOperador)),
         ),
         dataInicio,
         dataFim,
@@ -971,17 +976,18 @@ server.registerTool(
   "listar_tickets_abertos_mais_antigos",
   {
     title: "Listar tickets abertos mais antigos",
-    description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador e prioridade. Suporta paginação (pagina) quando o total passa do limite.",
+    description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador, cliente (solicitante) e prioridade. Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       limite: z.number().int().min(1).max(50).default(10),
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, limite, pagina }) => {
+  async ({ area, departamento, operador, cliente, prioridade, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1010,11 +1016,15 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
+      const clienteAlvoMaisAntigos = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       const abertos = tickets
         .filter(
           (ticket) =>
             !ticket.closure_date
-            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico),
+            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvoMaisAntigos === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoMaisAntigos)),
         )
         .sort((a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0));
 
@@ -1038,19 +1048,20 @@ server.registerTool(
   "listar_tickets_mais_recentes",
   {
     title: "Listar tickets mais recentes",
-    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
+    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
       limite: z.number().int().min(1).max(50).default(10),
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, situacao, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, situacao, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -1082,8 +1093,14 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
+      const clienteAlvoRecentes = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       const porSituacao = tickets.filter((ticket) => {
         if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
+          return false;
+        }
+
+        if (clienteAlvoRecentes !== undefined && !normalizeForMatch(ticket.contact_name).includes(clienteAlvoRecentes)) {
           return false;
         }
 
@@ -1122,12 +1139,13 @@ server.registerTool(
   "listar_tickets_congelados",
   {
     title: "Listar tickets congelados",
-    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -1135,7 +1153,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -1168,11 +1186,15 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
+      const clienteAlvoCongelados = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       const congelados = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             ticket.is_frozen === true
-            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico),
+            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvoCongelados === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoCongelados)),
         ),
         dataInicio,
         dataFim,
@@ -1198,11 +1220,12 @@ server.registerTool(
   "listar_tickets_abertos",
   {
     title: "Listar tickets abertos",
-    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -1210,7 +1233,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1239,11 +1262,14 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
+      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       const abertos = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             !ticket.closure_date
-            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico),
+            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo)),
         ),
         dataInicio,
         dataFim,
@@ -1269,11 +1295,12 @@ server.registerTool(
   "listar_tickets_fechados",
   {
     title: "Listar tickets fechados",
-    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, cliente (solicitante), prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -1281,7 +1308,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listAreas(), area),
@@ -1310,6 +1337,8 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
+      const clienteAlvoFechados = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
       // Diferente de listar_tickets_abertos/congelados/sem_operador, aqui o
       // período filtra por data de FECHAMENTO, não de abertura — "fechados
       // essa semana" precisa achar o que foi encerrado nessa semana, mesmo
@@ -1318,7 +1347,9 @@ server.registerTool(
         tickets.filter(
           (ticket) =>
             Boolean(ticket.closure_date)
-            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico),
+            && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvoFechados === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoFechados)),
         ),
         dataInicio,
         dataFim,
@@ -1344,13 +1375,14 @@ server.registerTool(
   "buscar_tickets_por_texto",
   {
     title: "Buscar tickets por texto",
-    description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim), limite e paginação (pagina). Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
+    description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim), limite e paginação (pagina). Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
     inputSchema: {
       texto: z.string().trim().min(1).max(200),
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -1359,7 +1391,7 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ texto, status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
+  async ({ texto, status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -1393,12 +1425,14 @@ server.registerTool(
       });
 
       const alvo = normalizeForMatch(texto);
+      const clienteAlvoTexto = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
       const filtrados = filtrarPorPeriodo(
         todos.filter(
           (ticket) =>
             (normalizeForMatch(ticket.issue).includes(alvo) || normalizeForMatch(ticket.description).includes(alvo))
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvoTexto === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvoTexto))
             && (situacao === undefined
               || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
         ),

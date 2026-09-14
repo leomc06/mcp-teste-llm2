@@ -916,6 +916,29 @@ test("busca por texto combina com situação (abertos sobre X)", () => {
   assert.equal(route.entities.situacao, "aberto");
 });
 
+// item 2 do plano de correção: busca de usuário tem prioridade sobre busca
+// textual quando ambas competem pela palavra "sobre" — antes disso,
+// "informações sobre o usuário X" caía sempre em busca textual.
+test("busca de usuário tem prioridade sobre busca textual no conflito de 'sobre'", () => {
+  const route = routeTicketQuestion("Me dê informações sobre o usuário Carlos.");
+
+  assert.deepEqual(route.toolNames, ["buscar_usuarios_por_nome"]);
+  assert.equal(route.entities.nome, "Carlos");
+  assert.equal(route.entities.texto, undefined);
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("busca textual genuína continua funcionando quando não há padrão de usuário", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Tickets sobre impressora.").toolNames,
+    ["buscar_tickets_por_texto"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Chamados relacionados a rede.").toolNames,
+    ["buscar_tickets_por_texto"],
+  );
+});
+
 test("busca por número tem prioridade sobre busca por texto", () => {
   const route = routeTicketQuestion("Ticket 123 sobre impressora.");
 
@@ -1048,4 +1071,366 @@ test("routeTicketQuestion: 'compare a carga de X com a de Y' vira 2 chamadas de 
 test("perguntas normais (sem comparação) continuam sem o campo 'compare'", () => {
   assert.equal(routeTicketQuestion("Busque o ticket 4830.").compare, undefined);
   assert.equal(routeTicketQuestion("O Fábio está com muito ticket na mão?").compare, undefined);
+});
+
+// --- item 1 do plano de correção (auditoria da camada de interpretação):
+// fronteira de captura de texto livre — "sem X" como conector, e cláusulas
+// de data relativa/criação no fim da captura não vazam pro nome ---
+
+test("'sem operador' como cláusula final não vaza pro nome capturado (área/departamento/etc.)", () => {
+  const route = routeTicketQuestion("Tickets urgentes da área Suporte sem operador.");
+
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.prioridade, "Urgente");
+  assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
+});
+
+test("data relativa ('essa semana'/'esse mês'/etc.) no fim da captura não vaza pro nome", () => {
+  const semana = routeTicketQuestion("Resumo por prioridade do departamento Governança essa semana.");
+  assert.equal(semana.entities.departamento, "Governança");
+  assert.ok(semana.entities.dataInicio !== undefined);
+
+  const semanaComPrioridade = routeTicketQuestion(
+    "Tickets fechados da área Suporte com prioridade alta essa semana.",
+  );
+  assert.equal(semanaComPrioridade.entities.area, "Suporte");
+  assert.equal(semanaComPrioridade.entities.prioridade, "alta");
+  assert.ok(semanaComPrioridade.entities.dataInicio !== undefined);
+});
+
+test("'foram abertos <período>' (voz passiva de criação) no fim da captura não vaza pro nome", () => {
+  const route = routeTicketQuestion("Quantos tickets urgentes da categoria Suporte foram abertos este mês?");
+
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.prioridade, "Urgente");
+  assert.ok(route.entities.dataInicio?.endsWith("-01"));
+});
+
+// --- Item 6 do plano de correção da auditoria: 'cliente' não pode mais ser
+// descartado silenciosamente nos branches específicos de listagem (antes só
+// sobrevivia no fallback genérico e no resumo por cliente). ---
+
+test("'cliente' chega em listar_tickets_abertos", () => {
+  const route = routeTicketQuestion("Tickets abertos do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em listar_tickets_fechados", () => {
+  const route = routeTicketQuestion("Tickets fechados do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em listar_tickets_congelados", () => {
+  const route = routeTicketQuestion("Tickets congelados do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_congelados"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em listar_tickets_sem_operador", () => {
+  const route = routeTicketQuestion("Tickets sem operador do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em listar_tickets_abertos_mais_antigos", () => {
+  const route = routeTicketQuestion("Tickets mais antigos do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em listar_tickets_mais_recentes", () => {
+  const route = routeTicketQuestion("Tickets mais recentes do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("'cliente' chega em buscar_tickets_por_texto", () => {
+  const route = routeTicketQuestion("Tickets sobre impressora do cliente Acme");
+
+  assert.deepEqual(route.toolNames, ["buscar_tickets_por_texto"]);
+  assert.equal(route.entities.texto, "impressora");
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+// --- Item 3 do plano de correção da auditoria: negação que nenhuma tool
+// sustenta vira esclarecimento honesto, não um filtro invertido/ignorado. ---
+
+test("negação de prioridade ('que não seja urgente') pede esclarecimento, não filtra pelo valor citado", () => {
+  const route = routeTicketQuestion("Existe algum ticket que não seja urgente?");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("negação do proxy de atrasado ('não estão atrasados') pede esclarecimento mesmo com prioridade válida junto", () => {
+  const route = routeTicketQuestion("Quantos tickets urgentes não estão atrasados?");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("'diferente de'/'exceto' aplicado a status literal pede esclarecimento (não inverte pro status citado)", () => {
+  const route = routeTicketQuestion("Tickets diferentes de cancelados.");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("'sem prioridade X' é negação de valor (pede esclarecimento), diferente de 'sem operador' (estado)", () => {
+  const route = routeTicketQuestion("Tickets sem prioridade urgente.");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("negação de área/departamento com 'que não sejam'/'não pertencentes' pede esclarecimento", () => {
+  const areaNegada = routeTicketQuestion("Tickets que não sejam da área WEB.");
+  assert.deepEqual(areaNegada.toolNames, []);
+  assert.equal(typeof areaNegada.clarification, "string");
+
+  const departamentoNegado = routeTicketQuestion("Não pertencentes ao departamento Suporte.");
+  assert.deepEqual(departamentoNegado.toolNames, []);
+  assert.equal(typeof departamentoNegado.clarification, "string");
+});
+
+test("'diferente de <nome>' pro operador (captura poluída pelo marcador) pede esclarecimento", () => {
+  const route = routeTicketQuestion("Operador diferente de João.");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("'diferente de encerrado'/'exceto encerrado' é resolvido pro mesmo caminho de 'não encerrado' (dimensão de 2 valores, sem ambiguidade)", () => {
+  const route = routeTicketQuestion("Status diferente de encerrado.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.clarification, undefined);
+});
+
+test("negação já tratada como intenção própria continua funcionando sem virar esclarecimento (não encerrado -> aberto, não atribuído -> sem operador)", () => {
+  const naoEncerrado = routeTicketQuestion("Quais tickets não estão encerrados?");
+  assert.deepEqual(naoEncerrado.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(naoEncerrado.clarification, undefined);
+
+  const naoAtribuido = routeTicketQuestion("Liste os tickets não atribuídos na área de Suporte.");
+  assert.deepEqual(naoAtribuido.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(naoAtribuido.entities.area, "Suporte");
+  assert.equal(naoAtribuido.clarification, undefined);
+});
+
+// --- Item 4 do plano de correção: "parado" sozinho, sem qualificador, pede
+// esclarecimento em vez de cair em listar_tickets sem filtro em silêncio. ---
+
+test("'parado' sozinho, sem qualificador, pede esclarecimento", () => {
+  const route = routeTicketQuestion("Quais tickets estão parados?");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("'parado' com qualificador (SLA/ninguém pegando) continua resolvendo normalmente, sem esclarecimento", () => {
+  const congelado = routeTicketQuestion("Quais tickets estão com o SLA parado?");
+  assert.deepEqual(congelado.toolNames, ["listar_tickets_congelados"]);
+  assert.equal(congelado.clarification, undefined);
+
+  const semOperador = routeTicketQuestion("Tem ticket parado sem ninguém pegando?");
+  assert.deepEqual(semOperador.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(semOperador.clarification, undefined);
+});
+
+// --- Item 5 do plano de correção: sinônimos pontuais de baixo risco. ---
+
+test("'solucionado'/'solucionou' é sinônimo de fechado (mesma forma adjetiva e verbal das demais)", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Chamados solucionados.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("O operador solucionou os chamados dessa semana.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+});
+
+test("'fora do prazo'/'passou do prazo'/'venceu' são sinônimos do proxy de mais-antigo, citados pelo usuário no pedido original", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Tickets fora do prazo.").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tickets que passaram do prazo.").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quando esse ticket venceu?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+});
+
+test("negação do proxy de mais-antigo também reconhece os sinônimos novos ('não passou do prazo')", () => {
+  const route = routeTicketQuestion("Esse ticket não passou do prazo?");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+});
+
+test("'pelo'/'pela' é equivalente a 'por' na extração de operador por situação", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Tickets abertos pelo João.").toolNames,
+    ["listar_tickets_abertos"],
+  );
+  assert.equal(
+    routeTicketQuestion("Tickets abertos pelo João.").entities.operador,
+    "João",
+  );
+  assert.equal(
+    routeTicketQuestion("Tickets fechados pela Ana Costa.").entities.operador,
+    "Ana Costa",
+  );
+});
+
+// --- Item 7 do plano de correção: verbo genérico de fechamento ("resolveu"/
+// "concluiu"/"finalizou") só conta como intenção de fechado quando a frase
+// também dá alguma pista de que é sobre tickets (achado B10 da auditoria). ---
+
+test("verbo de fechamento sem nenhum contexto de ticket não vira falso positivo de listar_tickets_fechados", () => {
+  assert.deepEqual(
+    routeTicketQuestion("A diretoria resolveu trocar de fornecedor").toolNames,
+    ["listar_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("A empresa concluiu o projeto novo").toolNames,
+    ["listar_tickets"],
+  );
+});
+
+test("verbo de fechamento com palavra do domínio (ticket/chamado/...) continua funcionando", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Chamados solucionados.").toolNames,
+    ["listar_tickets_fechados"],
+  );
+});
+
+test("verbo de fechamento sem a palavra 'ticket', mas com outro filtro já extraído (área), continua funcionando", () => {
+  const route = routeTicketQuestion("A área WEB concluiu quantos chamados?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.area, "WEB");
+});
+
+// --- Item 8 do plano de correção (achado B11): fórmulas de cortesia/discurso
+// depois de "por" não viram um nome de operador inventado. ---
+
+test("'por favor'/'por gentileza' não viram operador inventado", () => {
+  const porFavor = routeTicketQuestion("Liste os tickets abertos por favor");
+  assert.deepEqual(porFavor.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(porFavor.entities.operador, undefined);
+
+  const porGentileza = routeTicketQuestion("Quais tickets estão fechados por gentileza?");
+  assert.deepEqual(porGentileza.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(porGentileza.entities.operador, undefined);
+});
+
+test("'por enquanto'/'por exemplo' (conectivos de discurso) também não viram operador inventado", () => {
+  assert.equal(
+    routeTicketQuestion("Tickets abertos por enquanto").entities.operador,
+    undefined,
+  );
+  assert.equal(
+    routeTicketQuestion("Tickets fechados por exemplo").entities.operador,
+    undefined,
+  );
+});
+
+test("nome de operador de verdade depois de 'por'/'pelo' continua funcionando", () => {
+  assert.equal(
+    routeTicketQuestion("Tickets abertos por Ana Costa").entities.operador,
+    "Ana Costa",
+  );
+  assert.equal(
+    routeTicketQuestion("Tickets abertos pelo João.").entities.operador,
+    "João",
+  );
+});
+
+// --- Item 9 do plano de correção (achado B12): "primeiro" sozinho (sem
+// número) não é sinônimo automático de "mais recente" — no domínio de
+// tickets é mais comum significar o oposto (o mais antigo/o 1º
+// cronológico). "ultimo" ganhou o \b de fechamento que faltava. ---
+
+test("'primeiro' sozinho (sem número) não força listar_tickets_mais_recentes", () => {
+  const route = routeTicketQuestion("Qual foi o primeiro ticket aberto?");
+
+  assert.notDeepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+});
+
+test("'primeiros N tickets' (com número) continua sendo tratado como 'mais recentes N' (ordem garantida)", () => {
+  const route = routeTicketQuestion("Liste os primeiros 5 tickets da área de Suporte.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.limite, 5);
+});
+
+test("'os últimos tickets' continua funcionando (com \\b de fechamento adicionado)", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Liste os últimos tickets.").toolNames,
+    ["listar_tickets_mais_recentes"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Liste os últimos tickets da área de Suporte.").toolNames,
+    ["listar_tickets_mais_recentes"],
+  );
+});
+
+// --- Item 10 do plano de correção: "do/da <nome>" também captura operador,
+// com uma lista de exclusão mais generosa que "por/pelo" (confirmado com o
+// usuário que é um jeito comum de perguntar na organização dele). ---
+
+test("'do/da <nome>' captura operador (mesmo padrão de 'por/pelo')", () => {
+  assert.equal(
+    routeTicketQuestion("Tickets abertos do João.").entities.operador,
+    "João",
+  );
+  assert.equal(
+    routeTicketQuestion("Tickets fechados da Ana Costa.").entities.operador,
+    "Ana Costa",
+  );
+});
+
+test("'do/da' não captura operador quando seguido de outra dimensão conhecida (sistema/cliente/mês/ano/semana/período)", () => {
+  assert.equal(routeTicketQuestion("Tickets do sistema estão abertos?").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets do departamento Governança fechados").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets abertos do mês passado").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets fechados do ano passado").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets abertos da semana passada").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets abertos da prioridade urgente").entities.operador, undefined);
+});
+
+// --- Achado extra (descoberto testando o item 10, mesma causa raiz do item
+// 1): adjetivo de situação solto ("abertos"/"pendentes"/"congelados"/
+// "travados", sem verbo "está"/"estão" antes) no fim da captura vazava pro
+// nome — o equivalente pra "fechado" já funcionava (via
+// TRAILING_RESOLVED_CLAUSE_PATTERN), mas faltava o irmão pro vocabulário de
+// "aberto". ---
+
+test("adjetivo de situação solto ('abertos'/'pendentes'/'congelados'/'travados') no fim da captura não vaza pro nome", () => {
+  assert.equal(extractAreaName("Tickets da área Suporte abertos"), "Suporte");
+  assert.equal(extractClientName("Tickets do cliente Acme abertos"), "Acme");
+  assert.equal(extractAreaName("Tickets da área Suporte pendentes"), "Suporte");
+  assert.equal(extractAreaName("Tickets da área Suporte congelados"), "Suporte");
+  assert.equal(extractAreaName("Tickets da área Suporte travados"), "Suporte");
+});
+
+test("'foram abertos <período>' continua sendo podado inteiro (não deixa 'foram' órfão)", () => {
+  const route = routeTicketQuestion("Quantos tickets urgentes da categoria Suporte foram abertos este mês?");
+
+  assert.equal(route.entities.area, "Suporte");
+  assert.ok(!route.entities.area?.includes("foram"));
 });

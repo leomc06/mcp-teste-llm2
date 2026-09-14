@@ -8,8 +8,12 @@ import {
 // usa "ã" (til), não "á" (agudo), são letras diferentes.
 const ESTAR_SOURCE = "est(?:[áa]|[ãa]o)";
 
+// "sem" entra na lista de conectores (junto de com/e/que/do/da/no/na) pra
+// cobrir "área Suporte SEM operador" — antes só "com/tem/está X" era podado,
+// então "sem X" vazava inteiro pro nome capturado (ex.: area: "Suporte sem
+// operador").
 const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|e|que\\s+(?:tem|${ESTAR_SOURCE})|d[oa]|n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
+  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|sem|e|que\\s+(?:tem|${ESTAR_SOURCE})|d[oa]|n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
   "iu",
 );
 
@@ -26,24 +30,62 @@ const TRAILING_BARE_VERB_PATTERN = new RegExp(`\\s+(?:tem|possui|${ESTAR_SOURCE}
 // estão abertos há mais tempo") — corta tudo a partir de "está(m)".
 const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${ESTAR_SOURCE}\\s+.+$`, "iu");
 
+// Achado extra descoberto testando o item 10 (mesma causa raiz do item 1):
+// o adjetivo de situação "aberto"/"pendente"/"congelado"/"travado"/
+// "paralisado" SOLTO no fim (sem verbo "está"/"estão" antes, ex.: "área
+// Suporte abertos", "cliente Acme congelados") não era removido — o
+// equivalente pra "fechado" já funcionava (TRAILING_RESOLVED_CLAUSE_PATTERN
+// reaproveita CLOSURE_VERB_SOURCE, que já cobre a forma adjetiva "fechados"
+// etc.), mas não havia um pattern irmão pra esse vocabulário.
+const OPEN_STATE_ADJECTIVE_SOURCE =
+  "(?:abert[oa]s?|pendentes?|congelad[oa]s?|travad[oa]s?|paralisad[oa]s?)";
+const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${OPEN_STATE_ADJECTIVE_SOURCE}\\b.*$`, "iu");
+
 // Vocabulário de "fechado" em toda forma verbal (3ª pessoa do singular/
-// plural no passado) e adjetiva (singular/plural) dos 5 sinônimos aceitos —
+// plural no passado) e adjetiva (singular/plural) dos 6 sinônimos aceitos —
 // um único lugar pra declarar isso evita o que já aconteceu duas vezes
 // nesta sessão: um sinônimo ganhar a forma adjetiva ("encerrados") mas não a
 // verbal ("encerrou"), ou vice-versa, em só um dos usos (detecção de
 // intenção, negação, ou corte de cláusula final ao extrair nomes).
+// "solucionado/solucionou" (item 5 do plano de correção) é sinônimo comum de
+// "resolvido" que faltava.
 const CLOSURE_VERB_SOURCE =
   "(?:fech(?:ad[oa]s?|ou|aram)"
   + "|encerr(?:ad[oa]s?|ou|aram)"
   + "|conclu(?:[íi]d[oa]s?|iu|[íi]ram)"
   + "|finaliz(?:ad[oa]s?|ou|aram)"
-  + "|resolv(?:id[oa]s?|eu|eram))";
+  + "|resolv(?:id[oa]s?|eu|eram)"
+  + "|solucion(?:ad[oa]s?|ou|aram))";
 
 // "fechou/encerrou/concluiu/finalizou/resolveu <período>" no fim da captura
 // não faz parte do nome (ex.: "o pessoal da Infraestrutura Científica
 // resolveu esse mês" → a área é só "Infraestrutura Científica"; "a área WEB
 // concluiu quantos chamados" → só "WEB").
 const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(`\\s+${CLOSURE_VERB_SOURCE}\\b.*$`, "iu");
+
+// Mesma ideia do padrão acima, mas pro verbo de CRIAÇÃO (voz passiva "foi/
+// foram aberto(s)"), não de fechamento — reaproveitado também por
+// isCreationPassive mais abaixo, pra não duplicar o vocabulário em 2
+// lugares. Ex.: "tickets urgentes da categoria Suporte foram abertos este
+// mês" → a área é só "Suporte".
+const CREATION_VERB_SOURCE = "(?:foi|foram)\\s+abert[oa]s?";
+const TRAILING_CREATION_CLAUSE_PATTERN = new RegExp(`\\s+${CREATION_VERB_SOURCE}\\b.*$`, "iu");
+
+// Vocabulário de "atrasado" (proxy de mais-antigo — a API não tem dado real
+// de prazo de SLA em lote, ver isOldestOpenIntent mais abaixo) em forma
+// adjetiva e verbal — mesmo cuidado do CLOSURE_VERB_SOURCE acima, 1 lugar só
+// pra não repetir o bug de um sinônimo ganhar só 1 das 2 formas. Também
+// reaproveitado pelo detector de negação (item 3) pra reconhecer "não estão
+// atrasados"/"não passou do prazo" como negação de um estado, não só de uma
+// palavra solta. "fora do prazo"/"passou do prazo"/"venceu" (item 5) eram os
+// sinônimos que o próprio usuário citou no pedido original e que faltavam.
+const OLDEST_PROXY_STATE_SOURCE =
+  "(?:atrasad[oa]s?"
+  + "|vencid[oa]s?"
+  + "|estourad[oa]s?"
+  + "|venc(?:eu|eram)"
+  + "|fora\\s+do\\s+prazo"
+  + "|pass(?:ou|aram)\\s+do\\s+prazo)";
 
 // Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
 // de "por X", aceita "em cada X", "por cada X", "de cada X" e "cada X" (ex.:
@@ -229,6 +271,20 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
   "iu",
 );
 
+// Mesmos períodos relativos que extractRelativeDateRange reconhece (hoje/
+// ontem/essa semana/semana passada/esse mês/mês passado/esse ano/ano
+// passado) — sem isso, "departamento Governança ESSA SEMANA" vazava a
+// cláusula de data inteira pro nome capturado (departamento: "Governança
+// essa semana"). TRAILING_DATE_CLAUSE_PATTERN acima só cobre data ABSOLUTA
+// ("entre X e Y"/"desde X"/"até X"), por isso é um padrão à parte.
+const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
+  "\\s+(?:hoje|ontem"
+    + "|(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
+    + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado"
+    + "|(?:esse|este)\\s+ano|ano\\s+passado)\\b.*$",
+  "iu",
+);
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -238,7 +294,14 @@ function cleanFreeText(value) {
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_RESOLVED_CLAUSE_PATTERN, "")
+    .replace(TRAILING_CREATION_CLAUSE_PATTERN, "")
+    // Depois de TRAILING_CREATION_CLAUSE_PATTERN de propósito: "foram
+    // abertos" precisa ser podado inteiro primeiro (pattern mais
+    // específico), senão esse pattern (mais genérico, "abertos" solto)
+    // comeria só o "abertos" e deixaria o "foram" órfão pra trás.
+    .replace(TRAILING_OPEN_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .trim();
@@ -269,6 +332,13 @@ function extractByPatterns(value, patterns) {
 // "ticket" tem sinônimos comuns no vocabulário de helpdesk (o próprio
 // OcoMon vem de "Ocorrência"); todos são aceitos antes do número.
 const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao)";
+
+// Mesmo vocabulário acima, mas aceitando plural — "solicitação" tem plural
+// irregular ("solicitações" normaliza pra "solicitacoes", não
+// "solicitacaos"), por isso entra como alternativa própria em vez de só
+// anexar "s?" no grupo inteiro. Usado pelo guard de contexto de
+// isFechadoIntent (item 7 do plano de correção) — ver mais abaixo.
+const TICKET_CONTEXT_SOURCE = `(?:${TICKET_NOUN_SOURCE}s?|solicitacoes)`;
 
 export function extractTicketNumber(value) {
   const text = normalizeText(value);
@@ -496,10 +566,42 @@ export function extractOperatorComparisonNames(value) {
   return undefined;
 }
 
+// Item 8 do plano de correção (achado B11): "por" também introduz fórmulas
+// de cortesia/discurso em português ("por favor", "por gentileza") e
+// conectivos que não têm nada a ver com "feito por alguém" ("por último",
+// "por enquanto", "por exemplo") — confirmado ao vivo: "Liste os tickets
+// abertos por favor" produzia operador: "favor", e "tickets fechados por
+// gentileza?" produzia operador: "gentileza". Mesma lista de exclusão que
+// já existia pras palavras de domínio (status/prioridade/área/...), só
+// estendida — não é uma solução nova, é o mesmo padrão.
+// Item 10 do plano de correção: "do/da <nome>" ("tickets do João") é
+// bem mais arriscado que "por/pelo" — "do"/"da" também é o conector
+// possessivo comum de área/departamento/cliente/sistema/período, então a
+// lista de exclusão de palavras de domínio precisa ser mais generosa aqui
+// (cliente/sistema/mês/ano/semana/período/total, além das já usadas pra
+// "por/pelo") — confirmado com o usuário que "tickets do <operador>" é um
+// jeito comum de perguntar antes de habilitar isso. resolveMetaId continua
+// sendo a rede de segurança final: um valor capturado errado (ex.: "do
+// sistema" se "sistema" escapar da lista) só falha como "não encontrado",
+// não aplica um filtro errado silenciosamente.
+const OPERATOR_BY_EXCLUSION_SOURCE =
+  "status\\b|prioridade\\b|[áa]rea\\b|departamento\\b|operador\\b|p[áa]gina\\b"
+  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b";
+
+const OPERATOR_DO_DA_EXCLUSION_SOURCE =
+  `${OPERATOR_BY_EXCLUSION_SOURCE}`
+  + "|cliente\\b|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b";
+
 function extractOperatorNameForSituacao(value) {
   return extractByPatterns(value, [
     /\b(?:operador|respons[áa]vel|atendente)\s+(.+)$/iu,
-    /\bpor\s+(?!status\b|prioridade\b|[áa]rea\b|departamento\b|operador\b|p[áa]gina\b)(.+)$/iu,
+    // "pelo/pela" (item 5 do plano de correção) é a mesma preposição de
+    // agente que "por", só contraída com o artigo — mesma lista de exclusão
+    // já usada pra "por", já que o risco de falso positivo é idêntico.
+    new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    // "do/da <nome>" (item 10) — ver comentário acima sobre a lista de
+    // exclusão mais generosa.
+    new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
   ]);
 }
 
@@ -626,6 +728,21 @@ function createTicketDecision(intent, toolName, entities) {
   };
 }
 
+// Nenhuma tool é chamada — a pergunta é honestamente ambígua ou pede algo
+// que as tools disponíveis não sustentam (negação/exclusão), então a
+// resposta certa é pedir esclarecimento, não adivinhar ou ignorar em
+// silêncio (itens 3 e 4 do plano de correção da auditoria).
+function createClarificationDecision(intent, mensagem) {
+  return {
+    entity: "ticket",
+    intent,
+    toolNames: [],
+    entities: {},
+    fallback: false,
+    clarification: mensagem,
+  };
+}
+
 // "Compare X e Y" — a MESMA tool roda duas vezes (uma por lado), decidido
 // aqui de forma totalmente determinística (nenhuma escolha do LLM), mesma
 // garantia do caminho de 1 tool só que generalizada pra 2 chamadas fixas.
@@ -697,7 +814,18 @@ export function routeTicketQuestion(pergunta) {
   // fechado — tratadas à parte, negando isFechadoIntent e alimentando
   // isAbertoIntent. Calculado cedo (antes do bloco de resumos) porque
   // resumo_tickets_por_operador também usa a situação aberto/fechado.
-  const NEGATED_CLOSED_SOURCE = `nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?${CLOSURE_VERB_SOURCE}`;
+  // Além de "não" (com estar/foi/foram opcional), "diferente de"/"exceto"
+  // antes do verbo de fechamento significam exatamente a mesma coisa
+  // ("status diferente de encerrado" = "não encerrado") — fechado/aberto é
+  // uma dimensão de 2 valores só, então negar um dos dois SEMPRE resolve
+  // pro outro sem ambiguidade (diferente de área/prioridade/operador/status
+  // literal, que têm N valores possíveis — ver detectaNegacaoNaoSuportada
+  // abaixo, que trata esses casos como "não suportado" em vez de inverter).
+  const NEGATION_PREFIX_SOURCE =
+    "(?:nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?"
+    + "|diferentes?\\s+de\\s+"
+    + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?)";
+  const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
 
   // "foi aberto"/"foram abertos" é voz passiva pra dizer que o ticket foi
@@ -706,15 +834,161 @@ export function routeTicketQuestion(pergunta) {
   // à parte via extractDateRange/extractRelativeDateRange; aqui só evita que
   // isso vire (erradamente) um filtro de situação=aberto (o que faria
   // "aberto ano passado" exigir também estar aberto HOJE, quase sempre 0).
-  const isCreationPassive = /\b(?:foi|foram)\s+abert[oa]s?\b/.test(text);
+  const isCreationPassive = new RegExp(`\\b${CREATION_VERB_SOURCE}\\b`).test(text);
 
   const isAbertoIntent =
     (/\babert[oa]s?\b/.test(text) && !isCreationPassive)
     || /\bpendente/.test(text)
     || isNegatedClosed;
 
+  // Item 7 do plano de correção da auditoria (achado B10): "resolveu"/
+  // "concluiu"/"finalizou" são verbos genéricos do dia a dia, não exclusivos
+  // do domínio de tickets — confirmado ao vivo: "A diretoria resolveu
+  // trocar de fornecedor" (frase sem nenhuma relação com tickets) roteava
+  // pra listar_tickets_fechados. Só conta como intenção de fechado quando a
+  // frase também tem uma pista de que é sobre TICKETS: a palavra
+  // ticket/chamado/atendimento/ocorrência/solicitação em qualquer forma, OU
+  // outro filtro de ticket já extraído (área/departamento/operador/
+  // prioridade/status/cliente/número) — como em "a área Suporte resolveu
+  // essa semana" (sem a palavra "chamado", mas com "área" como pista clara).
+  const hasTicketDomainContext =
+    new RegExp(`\\b${TICKET_CONTEXT_SOURCE}\\b`, "u").test(text)
+    || area !== undefined
+    || departamento !== undefined
+    || operador !== undefined
+    || prioridade !== undefined
+    || status !== undefined
+    || cliente !== undefined
+    || numero !== undefined;
+
   const isFechadoIntent =
-    new RegExp(`\\b${CLOSURE_VERB_SOURCE}\\b`).test(text) && !isNegatedClosed;
+    new RegExp(`\\b${CLOSURE_VERB_SOURCE}\\b`).test(text)
+    && !isNegatedClosed
+    && hasTicketDomainContext;
+
+  // Hoisted pra cima do que era a posição original (mais abaixo, cada um no
+  // próprio bloco `if`) porque o detector de negação (mais abaixo) e o de
+  // termo ambíguo "parado" (item 4 do plano de correção) precisam saber se
+  // uma intenção mais específica já resolveu a palavra antes de decidir se
+  // vale a pena pedir esclarecimento.
+  const isCongeladoIntent =
+    /\bcongelad/.test(text)
+    || /\btravad/.test(text)
+    || /\bparalisad/.test(text)
+    || /\b(?:sla|relogio|tempo|prazo)\s+(?:parad[oa]|pausad[oa]|suspens[oa])\b/.test(text);
+
+  const isSemOperadorIntent =
+    /\bsem\s+(?:operador|responsavel|atendente|dono)\b/.test(text)
+    || /\bsem\s+ninguem\b/.test(text)
+    || /\bnao\s+(?:foi\s+|foram\s+|esta\s+|estao\s+)?atribuid/.test(text)
+    // "não tem operador"/"não têm responsável" — negação do verbo "ter", não
+    // só de "atribuído" (ex.: "quantos tickets não têm operador?").
+    || /\bnao\s+tem\s+(?:operador|responsavel|atendente)\b/.test(text)
+    || /\bninguem\s+(?:e\s+)?(?:responsavel|pegando|atendendo|cuidando|resolvendo)\b/.test(text)
+    || /\baguardando\s+atribuicao\b/.test(text);
+
+  // "Atrasado"/"vencido"/"estourado" não têm dado real de prazo de SLA em
+  // lote disponível na API (só por ticket individual, caro demais pra
+  // listar todos) — o melhor proxy honesto é o ticket aberto há mais tempo;
+  // a resposta mostra "mais antigos", não afirma "atrasado".
+  const isOldestOpenIntent =
+    /\bmais\s+antig/.test(text)
+    || /\bmais\s+velh/.test(text)
+    || /\bha\s+mais\s+tempo\b/.test(text)
+    || new RegExp(`\\b${OLDEST_PROXY_STATE_SOURCE}\\b`, "u").test(text);
+
+  // Item 3 do plano de correção da auditoria: nenhuma tool MCP (nem a API
+  // por trás delas) sustenta "excluir X" — hoje "sem prioridade urgente" /
+  // "exceto os cancelados" / "diferente de X" filtram pelo valor CITADO,
+  // exatamente o oposto do pedido (achado B3/F, confirmado ao vivo). Em vez
+  // de inverter o filtro (impossível de fazer com segurança — negar
+  // "urgente" não diz se o usuário quer alta+média+baixa, ou só uma delas)
+  // ou de ignorar a negação em silêncio, o sistema avisa honestamente que
+  // não sustenta isso. NÃO reage aos 2 idiomas que já são tratados como
+  // intenção própria e correta: negação de fechado (vira aberto, acima) e
+  // "sem operador"/"não atribuído" (vira isSemOperadorIntent).
+  const NEGATION_MARKER_SOURCE = "(?:nao|excet[oa]|diferentes?\\s+de)";
+  const NEGATION_MARKER_PATTERN = new RegExp(`\\b${NEGATION_MARKER_SOURCE}\\b`, "u");
+  const LEADING_NEGATION_PATTERN = new RegExp(`^${NEGATION_MARKER_SOURCE}\\b`, "iu");
+
+  // true quando existe um marcador de negação nas ~5 palavras ANTES do
+  // trecho (needle) dentro do texto normalizado — cobre "que NÃO seja
+  // urgente", "NÃO pertencentes ao departamento X", "tickets urgentes NÃO
+  // estão atrasados".
+  function hasNegationBefore(haystack, needle) {
+    if (!needle) {
+      return false;
+    }
+
+    const index = haystack.indexOf(needle);
+
+    if (index === -1) {
+      return false;
+    }
+
+    const janela = haystack.slice(0, index).trim().split(/\s+/u).slice(-5).join(" ");
+
+    return NEGATION_MARKER_PATTERN.test(janela);
+  }
+
+  function detectaNegacaoNaoSuportada() {
+    for (const valor of [area, departamento, operador, prioridade, status]) {
+      if (valor === undefined) {
+        continue;
+      }
+
+      const valorNormalizado = normalizeText(valor);
+
+      // B1: "diferente de X"/"exceto X" às vezes vaza inteiro pro valor
+      // capturado (ex.: operador: "diferente de João") — se o próprio valor
+      // COMEÇA com o marcador, já é negação, sem precisar procurar antes.
+      if (LEADING_NEGATION_PATTERN.test(valorNormalizado) || hasNegationBefore(text, valorNormalizado)) {
+        return true;
+      }
+    }
+
+    // "sem prioridade X" é negação (excluir X), diferente de "sem operador"
+    // (estado — ninguém atribuído). Só conta quando um valor real foi
+    // capturado depois de "prioridade" — não é a mesma pergunta que "sem
+    // prioridade definida" (sem valor nenhum).
+    if (prioridade !== undefined && /\bsem\s+prioridade\b/.test(text)) {
+      return true;
+    }
+
+    if (isOldestOpenIntent) {
+      const match = new RegExp(`\\b${OLDEST_PROXY_STATE_SOURCE}\\b`, "u").exec(text);
+
+      if (match && hasNegationBefore(text, match[0])) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  if (!isNegatedClosed && !isSemOperadorIntent && detectaNegacaoNaoSuportada()) {
+    return createClarificationDecision(
+      "esclarecimento_negacao",
+      "Não consigo filtrar excluindo um valor (\"diferente de\"/\"exceto\"/\"não\" aplicado a status, área, departamento, operador, prioridade ou prazo) — as consultas disponíveis só filtram por um valor específico citado, não por exclusão. Pode reformular dizendo exatamente qual valor você quer ver?",
+    );
+  }
+
+  // Item 4 do plano de correção: "parado" sozinho, sem nenhum qualificador
+  // por perto, é ambíguo no domínio (pode ser SLA congelado, sem operador,
+  // ou só "ticket antigo") — hoje era ignorado em silêncio (virava
+  // listar_tickets sem filtro nenhum, sem avisar que a palavra não foi
+  // interpretada). Só dispara quando NENHUMA intenção mais específica já
+  // resolveu a palavra (SLA parado → congelado; "ninguém... parado" → sem
+  // operador).
+  const hasAmbiguousParado =
+    /\bparad[oa]s?\b/.test(text) && !isCongeladoIntent && !isSemOperadorIntent;
+
+  if (hasAmbiguousParado) {
+    return createClarificationDecision(
+      "esclarecimento_termo_ambiguo",
+      "\"Parado\" pode significar SLA congelado, sem operador atribuído ou só o ticket mais antigo em aberto — pode dizer qual dessas situações você quer ver?",
+    );
+  }
 
   // Situação só é definida quando a frase menciona aberto/fechado de forma
   // inequívoca — usada tanto no resumo por operador quanto em "mais
@@ -865,16 +1139,27 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
-  if (
-    /\bcongelad/.test(text)
-    || /\btravad/.test(text)
-    || /\bparalisad/.test(text)
-    || /\b(?:sla|relogio|tempo|prazo)\s+(?:parad[oa]|pausad[oa]|suspens[oa])\b/.test(text)
-  ) {
+  if (isCongeladoIntent) {
     return createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
-      compactEntities({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite, pagina }),
+      compactEntities({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }),
+    );
+  }
+
+  // Checado ANTES da busca textual de propósito (item 2 do plano de
+  // correção da auditoria de interpretação): "informações sobre o usuário
+  // X" / "quem é o usuário X" e "tickets sobre impressora" competem pela
+  // mesma palavra "sobre", mas extractUserName tem padrões mais
+  // específicos — se ele bater, é sempre a intenção certa (busca de
+  // usuário), não busca textual genérica.
+  const nomeUsuario = extractUserName(pergunta);
+
+  if (nomeUsuario !== undefined) {
+    return createTicketDecision(
+      "buscar_usuario_por_nome",
+      "buscar_usuarios_por_nome",
+      { nome: nomeUsuario },
     );
   }
 
@@ -890,6 +1175,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador,
+        cliente,
         prioridade,
         situacao: situacaoInequivoca,
         dataInicio,
@@ -899,18 +1185,6 @@ export function routeTicketQuestion(pergunta) {
       }),
     );
   }
-
-  // "Atrasado"/"vencido"/"estourado" não têm dado real de prazo de SLA em
-  // lote disponível na API (só por ticket individual, caro demais pra
-  // listar todos) — o melhor proxy honesto é o ticket aberto há mais tempo;
-  // a resposta mostra "mais antigos", não afirma "atrasado".
-  const isOldestOpenIntent =
-    /\bmais\s+antig/.test(text)
-    || /\bmais\s+velh/.test(text)
-    || /\bha\s+mais\s+tempo\b/.test(text)
-    || /\batrasad[oa]s?\b/.test(text)
-    || /\bvencid[oa]s?\b/.test(text)
-    || /\bestourad[oa]s?\b/.test(text);
 
   if (isOldestOpenIntent) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
@@ -925,6 +1199,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        cliente,
         prioridade,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
         pagina,
@@ -945,12 +1220,20 @@ export function routeTicketQuestion(pergunta) {
   // "primeiros N tickets" não tem ordenação garantida no restante do
   // sistema (listar_tickets usa a paginação bruta da API); tratamos como
   // sinônimo de "mais recentes N" pra dar uma ordem previsível e explícita.
+  // Item 9 do plano de correção (achado B12): SÓ quando vem acompanhado de
+  // um número — "primeiro"/"primeira" sozinho, no domínio de tickets, é
+  // mais comumente o CONTRÁRIO de "mais recente" (o mais antigo/o 1º
+  // cronológico), não um sinônimo automático — confirmado ao vivo: "Qual
+  // foi o primeiro ticket aberto?" (pergunta pelo mais antigo) roteava pra
+  // mais_recentes, sentido invertido. "ultimo" também ganhou o \b de
+  // fechamento que faltava (bug de regex simples, evita casar como prefixo
+  // de outra palavra).
   const isMostRecentIntent =
     /\brecent/.test(text)
-    || /\bultimo/.test(text)
+    || /\bultimos?\b/.test(text)
     || /\bmais\s+nov[oa]/.test(text)
     || /\brecem\b/.test(text)
-    || /\bprimeir[oa]s?\b/.test(text);
+    || /\bprimeir[oa]s?\s+\d+\b/.test(text);
 
   if (isMostRecentIntent) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
@@ -965,6 +1248,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        cliente,
         prioridade,
         situacao: situacaoInequivoca,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
@@ -981,6 +1265,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        cliente,
         prioridade,
         dataInicio,
         dataFim,
@@ -998,6 +1283,7 @@ export function routeTicketQuestion(pergunta) {
         area,
         departamento,
         operador: extractOperatorNameForSituacao(pergunta),
+        cliente,
         prioridade,
         dataInicio,
         dataFim,
@@ -1007,33 +1293,14 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
-  const isSemOperadorIntent =
-    /\bsem\s+(?:operador|responsavel|atendente|dono)\b/.test(text)
-    || /\bsem\s+ninguem\b/.test(text)
-    || /\bnao\s+(?:foi\s+|foram\s+|esta\s+|estao\s+)?atribuid/.test(text)
-    // "não tem operador"/"não têm responsável" — negação do verbo "ter", não
-    // só de "atribuído" (ex.: "quantos tickets não têm operador?").
-    || /\bnao\s+tem\s+(?:operador|responsavel|atendente)\b/.test(text)
-    || /\bninguem\s+(?:e\s+)?(?:responsavel|pegando|atendendo|cuidando|resolvendo)\b/.test(text)
-    || /\baguardando\s+atribuicao\b/.test(text);
-
   if (isSemOperadorIntent) {
     return createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
-      compactEntities({ status, area, departamento, prioridade, dataInicio, dataFim, limite, pagina }),
+      compactEntities({ status, area, departamento, cliente, prioridade, dataInicio, dataFim, limite, pagina }),
     );
   }
 
-  const nomeUsuario = extractUserName(pergunta);
-
-  if (nomeUsuario !== undefined) {
-    return createTicketDecision(
-      "buscar_usuario_por_nome",
-      "buscar_usuarios_por_nome",
-      { nome: nomeUsuario },
-    );
-  }
 
   for (const metaIntent of META_INTENTS) {
     if (metaIntent.patterns.some((pattern) => pattern.test(text))) {

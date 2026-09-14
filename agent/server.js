@@ -294,6 +294,38 @@ const server = http.createServer(async (request, response) => {
         ollamaTools,
       );
 
+      // Itens 3 e 4 do plano de correção da auditoria de interpretação: a
+      // rota determinística detectou uma negação que nenhuma tool sustenta
+      // (ex.: "tickets diferentes de cancelados") ou um termo ambíguo sem
+      // contexto suficiente (ex.: "parado" sozinho) — responde pedindo
+      // esclarecimento direto, sem chamar tool nem o Ollama.
+      if (toolDecision.route?.clarification) {
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "esclarecimento",
+          motivo: toolDecision.route.intent,
+          quantidadeToolsDisponibilizadas: 0,
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta: toolDecision.route.clarification,
+          fontes: [],
+          dadosConsultados: [],
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          esclarecimento: true,
+          duracaoMs,
+        });
+        return;
+      }
+
       // "Compare X e Y" — a rota já decidiu as 2 chamadas (mesma tool, dois
       // conjuntos de argumentos) de forma totalmente determinística; roda
       // direto via runCompare, sem passar pelo Ollama (não há nada a
