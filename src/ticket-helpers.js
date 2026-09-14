@@ -90,6 +90,22 @@ export async function resolveMetaId(listFn, nome) {
     : { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
 }
 
+// Corte antecipado seguro pra fetchAllTickets (ver comentário lá): só faz
+// sentido continuar paginando enquanto a página ainda tiver ticket dentro
+// do período pedido — como a API devolve em ordem decrescente de abertura,
+// assim que o mais antigo da página já ficar anterior a dataInicio, o
+// resto só vai ficar mais velho ainda. undefined quando não há dataInicio
+// (não dá pra cortar sem saber até onde ir). Só serve pra filtro de
+// ABERTURA — não usar em listar_tickets_fechados (filtra por closure_date,
+// sem relação com essa ordem).
+export function criarParaQuandoAbertura(dataInicio) {
+  if (dataInicio === undefined) {
+    return undefined;
+  }
+
+  return (ticket) => ticket.opening_date < dataInicio;
+}
+
 // A API não filtra tickets por período de abertura, então filtramos
 // localmente. opening_date é uma string "AAAA-MM-DD HH:MM:SS", comparável
 // lexicograficamente com as datas AAAA-MM-DD informadas.

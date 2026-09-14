@@ -111,7 +111,67 @@ function firstNonEmpty(values, fallback) {
   return found === undefined ? fallback : decodeHtmlEntities(found);
 }
 
-function formatTicket(ticket) {
+// A descrição de abertura do OcoMon vem com HTML cru (<br />, etc.) — tira
+// as tags pra não jogar markup bruto na resposta em texto.
+function stripHtmlTags(value) {
+  return typeof value === "string"
+    ? value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    : value;
+}
+
+function truncateText(value, maxLength) {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  return value.length > maxLength ? `${value.slice(0, maxLength).trim()}…` : value;
+}
+
+// Mesma normalização usada na busca em si (normalizeForMatch em
+// src/ticket-helpers.js — remove acento, minúsculo), reimplementada aqui
+// (o agente não importa código do servidor MCP) só pra achar a posição do
+// termo dentro do texto já limpo.
+function normalizeForSnippetMatch(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+// Corta a descrição CENTRADA no trecho onde o termo pesquisado apareceu, em
+// vez de sempre pegar o início — o início costuma ser só o cabeçalho
+// padrão de abertura ("Prezado GRS,..."), e o termo pode estar bem mais
+// adiante (ex.: dentro de um campo de formulário no meio do texto). Sem
+// isso, o corte simples de início poderia nem mostrar onde o termo bateu.
+function buildSnippet(text, termoBusca, maxLength) {
+  if (!termoBusca) {
+    return truncateText(text, maxLength);
+  }
+
+  const index = normalizeForSnippetMatch(text).indexOf(normalizeForSnippetMatch(termoBusca));
+
+  if (index === -1) {
+    return truncateText(text, maxLength);
+  }
+
+  const contextoAntes = 80;
+  const inicio = Math.max(0, index - contextoAntes);
+  const fim = Math.min(text.length, index + termoBusca.length + (maxLength - contextoAntes));
+  const prefixo = inicio > 0 ? "…" : "";
+  const sufixo = fim < text.length ? "…" : "";
+
+  return `${prefixo}${text.slice(inicio, fim).trim()}${sufixo}`;
+}
+
+// `incluirDescricao` mostra o comentário de quem abriu o ticket (a
+// descrição de abertura) — só ligado na busca por texto, onde o usuário
+// precisa ver ONDE o termo pesquisado apareceu pra julgar se o resultado é
+// relevante de verdade (ex.: "impressora" pode bater num campo de
+// formulário padrão sem o chamado ser sobre impressora). `termoBusca`
+// centra o trecho mostrado no ponto do match, em vez de sempre cortar do
+// início. Nos outros tipos de listagem fica desligado por padrão pra não
+// inflar a resposta.
+function formatTicket(ticket, { incluirDescricao = false, termoBusca } = {}) {
   const parts = [
     `Ticket ${ticket.number}: ${firstNonEmpty([ticket.issue, ticket.description], "sem título")}`,
     `status: ${ticket.status}`,
@@ -124,6 +184,14 @@ function formatTicket(ticket) {
 
   if (ticket.is_frozen) {
     parts.push("SLA congelado: sim");
+  }
+
+  if (incluirDescricao && ticket.description) {
+    const descricaoLimpa = stripHtmlTags(decodeHtmlEntities(ticket.description));
+
+    if (descricaoLimpa.length > 0) {
+      parts.push(`comentário de abertura: ${buildSnippet(descricaoLimpa, termoBusca, 300)}`);
+    }
   }
 
   return parts.join("; ");
@@ -368,7 +436,7 @@ function formatFrozenTickets(data) {
   ].join("\n");
 }
 
-function formatTicketsBySituacao(data, situacaoLabel) {
+function formatTicketsBySituacao(data, situacaoLabel, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -397,7 +465,7 @@ function formatTicketsBySituacao(data, situacaoLabel) {
 
   return [
     cabecalho,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
@@ -576,7 +644,10 @@ function formatOne(toolResult) {
       return formatTicketSummary(dados, "cliente");
 
     case "buscar_tickets_por_texto":
-      return formatTicketsBySituacao(dados, "encontrado(s) para o texto pesquisado");
+      return formatTicketsBySituacao(dados, "encontrado(s) para o texto pesquisado", {
+        incluirDescricao: true,
+        termoBusca: dados.texto,
+      });
 
     case "listar_tickets_congelados":
       return formatFrozenTickets(dados);

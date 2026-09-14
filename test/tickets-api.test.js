@@ -224,6 +224,93 @@ test("fetchAllTickets trunca ao atingir maxPages, mesmo com mais páginas dispon
   assert.equal(truncado, true);
 });
 
+test("fetchAllTickets para cedo via 'paraQuando' (sem marcar truncado, é uma parada completa e correta)", async () => {
+  let calls = 0;
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    // Cada página só tem 1 ticket, com data decrescente por página (simula
+    // a ordem real confirmada na API: mais novo primeiro).
+    const datas = ["2026-09-10", "2026-09-05", "2026-07-20", "2026-01-15"];
+    return jsonResponse({ tickets: [{ number: calls, opening_date: `${datas[calls - 1]} 10:00:00` }], pages: 999 });
+  });
+
+  const { tickets, truncado } = await client().fetchAllTickets(
+    {},
+    { paraQuando: (ticket) => ticket.opening_date < "2026-08-01" },
+  );
+
+  // Para na 3ª página (a 1ª cujo ticket já ficou antes do limite), não
+  // chega a bater no teto de segurança nem a 4ª página.
+  assert.equal(calls, 3);
+  assert.equal(tickets.length, 3);
+  assert.equal(truncado, false);
+});
+
+test("fetchAllTickets sem 'paraQuando' continua se comportando exatamente como antes (opcional, não quebra chamadas existentes)", async () => {
+  let calls = 0;
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    return jsonResponse({ tickets: [{ number: calls }], pages: 2 });
+  });
+
+  const { tickets, truncado } = await client().fetchAllTickets({});
+
+  assert.equal(calls, 2);
+  assert.equal(tickets.length, 2);
+  assert.equal(truncado, false);
+});
+
+test("teto de segurança sem 'paraQuando' continua em 20 páginas (não muda o comportamento pra busca sem data-limite)", async () => {
+  let calls = 0;
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    return jsonResponse({ tickets: [{ number: calls }], pages: 999 });
+  });
+
+  const { truncado } = await client().fetchAllTickets({});
+
+  assert.equal(calls, 20);
+  assert.equal(truncado, true);
+});
+
+test("com 'paraQuando' o teto de segurança sobe (400 páginas) — período antigo não trunca só por causa do limite baixo de antes", async () => {
+  let calls = 0;
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    // Nunca satisfaz paraQuando (data sempre recente) — só existe pra
+    // provar que o loop vai além de 20 páginas antes de desistir.
+    return jsonResponse({ tickets: [{ number: calls, opening_date: "2026-09-01 00:00:00" }], pages: 50 });
+  });
+
+  const { tickets, truncado } = await client().fetchAllTickets(
+    {},
+    { paraQuando: (ticket) => ticket.opening_date < "2000-01-01" },
+  );
+
+  // Esgota as 50 páginas disponíveis (bem além do antigo teto fixo de 20)
+  // sem nunca satisfazer paraQuando — para porque acabaram as páginas, não
+  // porque bateu num teto baixo demais.
+  assert.equal(calls, 50);
+  assert.equal(tickets.length, 50);
+  assert.equal(truncado, false);
+});
+
+test("'maxPages' explícito continua tendo prioridade sobre o default automático (com ou sem 'paraQuando')", async () => {
+  let calls = 0;
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+    return jsonResponse({ tickets: [{ number: calls, opening_date: "2026-09-01 00:00:00" }], pages: 999 });
+  });
+
+  const { truncado } = await client().fetchAllTickets(
+    {},
+    { maxPages: 5, paraQuando: (ticket) => ticket.opening_date < "2000-01-01" },
+  );
+
+  assert.equal(calls, 5);
+  assert.equal(truncado, true);
+});
+
 test("unwrapList aceita array puro, body[key], body.items e body.results", async () => {
   const casos = [
     { body: [{ id: 1 }], esperado: [{ id: 1 }] },

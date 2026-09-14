@@ -10,6 +10,7 @@ import {
   resolveMetaId,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
+  criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
   rankearResumo,
   diasEmAberto,
@@ -280,7 +281,9 @@ server.registerTool(
       // paginamos localmente. opening_date é uma string "AAAA-MM-DD HH:MM:SS",
       // então dá pra comparar lexicograficamente com as datas AAAA-MM-DD
       // informadas.
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase);
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
+        paraQuando: criarParaQuandoAbertura(dataInicio),
+      });
 
       const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
       const limiteFim = dataFim === undefined ? undefined : `${dataFim} 23:59:59`;
@@ -389,7 +392,9 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase);
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
+        paraQuando: criarParaQuandoAbertura(dataInicio),
+      });
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
         (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
       );
@@ -468,12 +473,15 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim);
 
@@ -592,7 +600,9 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase);
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
+        paraQuando: criarParaQuandoAbertura(dataInicio),
+      });
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
         (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
       );
@@ -706,7 +716,9 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase);
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
+        paraQuando: criarParaQuandoAbertura(dataInicio),
+      });
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
         if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
@@ -861,12 +873,15 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
         (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
@@ -936,11 +951,14 @@ server.registerTool(
         });
       }
 
-      const { tickets, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-      });
+      const { tickets, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const clienteAlvoSemOperador = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
@@ -1179,12 +1197,15 @@ server.registerTool(
         });
       }
 
-      const { tickets, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const clienteAlvoCongelados = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
@@ -1256,11 +1277,14 @@ server.registerTool(
         });
       }
 
-      const { tickets, truncado } = await fetchAllTicketsSafe({
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets, truncado } = await fetchAllTicketsSafe(
+        {
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
@@ -1417,12 +1441,15 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const alvo = normalizeForMatch(texto);
       const clienteAlvoTexto = cliente === undefined ? undefined : normalizeForMatch(cliente);
@@ -1444,6 +1471,7 @@ server.registerTool(
       const inicioFiltrados = limite === undefined ? 0 : (pagina - 1) * limite;
 
       return success({
+        texto,
         quantidade: filtrados.length,
         truncado,
         pagina,
@@ -1487,10 +1515,13 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe({
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-      });
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim);
       const abertos = tickets.filter((ticket) => !ticket.closure_date);

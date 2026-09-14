@@ -8,6 +8,7 @@ import {
   resolveMetaId,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
+  criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
   rankearResumo,
   diasEmAberto,
@@ -85,6 +86,18 @@ test("resolveMetaId: retorna naoEncontrado true quando nada casa", async () => {
   const listFn = async () => [{ id: 1, name: "Suporte" }];
   const result = await resolveMetaId(listFn, "financeiro");
   assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: true });
+});
+
+test("criarParaQuandoAbertura: undefined sem dataInicio (nada pra cortar)", () => {
+  assert.equal(criarParaQuandoAbertura(undefined), undefined);
+});
+
+test("criarParaQuandoAbertura: retorna true só quando o ticket já ficou antes do dataInicio", () => {
+  const paraQuando = criarParaQuandoAbertura("2026-08-01");
+
+  assert.equal(paraQuando({ opening_date: "2026-07-31 23:59:59" }), true);
+  assert.equal(paraQuando({ opening_date: "2026-08-01 00:00:00" }), false);
+  assert.equal(paraQuando({ opening_date: "2026-09-01 00:00:00" }), false);
 });
 
 test("filtrarPorPeriodo: sem datas, retorna a lista intacta", () => {

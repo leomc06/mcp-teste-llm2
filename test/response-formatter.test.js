@@ -295,3 +295,80 @@ test("formata lista de tickets mais recentes", () => {
   assert.match(resposta, /1 ticket\(s\) mais recente\(s\) de 42 no total:/);
   assert.match(resposta, /Ticket 4850: Rede/);
 });
+
+test("busca por texto inclui o comentário de abertura (sem tags HTML), pra dar contexto de onde o termo bateu", () => {
+  const resposta = format("buscar_tickets_por_texto", {
+    quantidade: 1,
+    truncado: false,
+    pagina: 1,
+    paginas: 1,
+    tickets: [
+      {
+        number: 4831,
+        opening_date: "2026-08-28 14:25:00",
+        priority: "Baixa",
+        area: "Redes e Segurança",
+        issue: "Ativação de ponto de rede",
+        description: "5- Endereço IP (em caso de VOIP/IMPRESSORAS): <br />\r\n6- MAC Address: 88:AE:DD:39:C2:84",
+        contact_name: "Daniel Guimarães do Lago",
+        operator: "Helpdesk",
+        status: "ENCERRADA",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /comentário de abertura: 5- Endereço IP \(em caso de VOIP\/IMPRESSORAS\): 6- MAC Address/);
+  assert.doesNotMatch(resposta, /<br \/>/);
+});
+
+test("outros tipos de listagem (ex.: tickets abertos) não incluem o comentário de abertura, pra não inflar a resposta", () => {
+  const resposta = format("listar_tickets_abertos", {
+    quantidade: 1,
+    truncado: false,
+    pagina: 1,
+    paginas: 1,
+    tickets: [
+      {
+        number: 4900,
+        opening_date: "2026-09-01 07:47:00",
+        priority: "Baixa",
+        area: "Suporte",
+        issue: "Rede",
+        description: "Descrição bem detalhada que não deveria aparecer aqui.",
+        operator: "admin",
+        status: "AGUARDANDO ATENDIMENTO",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.doesNotMatch(resposta, /comentário de abertura/);
+  assert.doesNotMatch(resposta, /Descrição bem detalhada/);
+});
+
+test("o trecho do comentário de abertura fica CENTRADO no termo pesquisado, não sempre a partir do início", () => {
+  const preambulo = "Prezado GRS, ".repeat(30); // empurra o termo bem além dos primeiros 300 caracteres
+  const resposta = format("buscar_tickets_por_texto", {
+    texto: "impressora",
+    quantidade: 1,
+    truncado: false,
+    pagina: 1,
+    paginas: 1,
+    tickets: [
+      {
+        number: 4831,
+        opening_date: "2026-08-28 14:25:00",
+        priority: "Baixa",
+        area: "Redes e Segurança",
+        issue: "Ativação de ponto de rede",
+        description: `${preambulo}5- Endereço IP (em caso de VOIP/IMPRESSORAS): valor`,
+        operator: "Helpdesk",
+        status: "ENCERRADA",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /IMPRESSORAS/);
+});

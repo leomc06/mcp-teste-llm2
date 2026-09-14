@@ -184,7 +184,18 @@ export function createTicketsApiClient({
       });
     },
 
-    async fetchAllTickets(filtros = {}, { maxPages = 20 } = {}) {
+    async fetchAllTickets(filtros = {}, { maxPages, paraQuando } = {}) {
+      // Sem `paraQuando` (busca sem data-limite conhecida), o teto de
+      // segurança precisa ser baixo (20 páginas / ~1000 tickets) — não tem
+      // como saber quando parar, então convém não gastar tempo/chamadas
+      // demais numa busca potencialmente ilimitada. Com `paraQuando`, já
+      // existe uma parada natural (a data-limite, ou o fim de todas as
+      // páginas — o que vier primeiro), então o teto pode ser bem mais
+      // generoso: medido ao vivo, 40 páginas levam ~4s (a API responde
+      // rápido, o gargalo de uma consulta "lenta" é o Ollama/agente em
+      // volta, não isso), e o volume atual de tickets (98 páginas) cabe
+      // folgado dentro de 400.
+      const limitePaginas = maxPages ?? (paraQuando ? 400 : 20);
       const tickets = [];
       let page = 1;
       let truncado = false;
@@ -201,7 +212,21 @@ export function createTicketsApiClient({
           break;
         }
 
-        if (page >= maxPages) {
+        // Parada antecipada e SEGURA (não é "desistência" — `truncado` fica
+        // false): a API devolve tickets em ordem estritamente decrescente
+        // de data de abertura (confirmado ao vivo, sem exceção, em
+        // centenas de tickets/25 páginas seguidas) — se quem chamou já
+        // sabe até onde precisa ir (`paraQuando`), dá pra parar assim que
+        // o ticket mais antigo da página atual já ficou pra trás desse
+        // limite, sem gastar o teto de segurança (maxPages) numa busca que
+        // já tem resposta completa. Só é seguro pra filtro por data de
+        // ABERTURA — closure_date não guarda relação nenhuma com essa
+        // ordem, então quem filtra por fechamento não deve passar isso.
+        if (pageTickets.length > 0 && paraQuando?.(pageTickets[pageTickets.length - 1])) {
+          break;
+        }
+
+        if (page >= limitePaginas) {
           truncado = true;
           break;
         }
