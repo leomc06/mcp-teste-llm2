@@ -260,7 +260,7 @@ test("fetchAllTickets sem 'paraQuando' continua se comportando exatamente como a
   assert.equal(truncado, false);
 });
 
-test("teto de segurança sem 'paraQuando' continua em 20 páginas (não muda o comportamento pra busca sem data-limite)", async () => {
+test("teto de segurança sem 'paraQuando' agora é 400 páginas (busca sem data-limite não trunca cedo demais)", async () => {
   let calls = 0;
   mock.method(globalThis, "fetch", async () => {
     calls += 1;
@@ -269,7 +269,7 @@ test("teto de segurança sem 'paraQuando' continua em 20 páginas (não muda o c
 
   const { truncado } = await client().fetchAllTickets({});
 
-  assert.equal(calls, 20);
+  assert.equal(calls, 400);
   assert.equal(truncado, true);
 });
 

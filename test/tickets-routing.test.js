@@ -221,6 +221,20 @@ test("extrai nome de usuário de diferentes frases de busca", () => {
   );
 });
 
+test("extractUserName também reconhece 'operador/responsável/atendente' como sinônimo de 'usuário'", () => {
+  assert.equal(extractUserName("Quem é o operador Helpdesk?"), "Helpdesk");
+  assert.equal(extractUserName("Quem é o responsável Fábio Gali?"), "Fábio Gali");
+  assert.equal(extractUserName("Busque o operador João."), "João");
+  assert.equal(extractUserName("Informações sobre o operador Helpdesk."), "Helpdesk");
+});
+
+test("'quem é o operador X' vai pra buscar_usuarios_por_nome, não pra listagem de tickets", () => {
+  const route = routeTicketQuestion("Quem é o operador Helpdesk?");
+
+  assert.deepEqual(route.toolNames, ["buscar_usuarios_por_nome"]);
+  assert.equal(route.entities.nome, "Helpdesk");
+});
+
 test("roteia busca de usuário por nome", () => {
   const route = routeTicketQuestion("Busque o usuário João Silva.");
 
@@ -366,6 +380,25 @@ test("'operador X possui/está na área Y' também não vaza o verbo/preposiçã
   assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
   assert.equal(route.entities.operador, "cesar");
   assert.equal(route.entities.area, "suporte");
+});
+
+test("'no total'/'ao todo' depois do verbo não vaza pro nome do filtro", () => {
+  const porArea = routeTicketQuestion("Quantos tickets a área de Suporte tem no total?");
+  assert.equal(porArea.entities.area, "Suporte");
+
+  const porDepartamento = routeTicketQuestion("Quantos tickets o departamento Governança tem ao todo?");
+  assert.equal(porDepartamento.entities.departamento, "Governança");
+});
+
+test("verbo 'ter'/'possuir' no passado ('teve'/'tiveram'/'possuiu'/'possuíram') também não vaza pro nome do filtro", () => {
+  const teveComMes = routeTicketQuestion("Quantos tickets a área WEB teve no mês de agosto?");
+  assert.equal(teveComMes.entities.area, "WEB");
+
+  const teveSimples = routeTicketQuestion("Quantos tickets o departamento Coids teve?");
+  assert.equal(teveSimples.entities.departamento, "Coids");
+
+  const possuiu = routeTicketQuestion("Quantos tickets o operador Cesar possuiu?");
+  assert.equal(possuiu.entities.operador, "Cesar");
 });
 
 test("extrai período de datas em diferentes frases", () => {
@@ -548,10 +581,10 @@ test("'recentemente fechados/encerrados' vai para mais_recentes com situação=f
   assert.equal(segunda.entities.situacao, "fechado");
 });
 
-test("'primeiros N tickets' é tratado como 'mais recentes N' (ordem garantida)", () => {
+test("'primeiros N tickets' é tratado como 'mais antigos N, entre todos' (ordem garantida)", () => {
   const route = routeTicketQuestion("Liste os primeiros 5 tickets da área de Suporte.");
 
-  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
   assert.equal(route.entities.area, "Suporte");
   assert.equal(route.entities.limite, 5);
   assert.equal(route.entities.situacao, undefined);
@@ -560,7 +593,16 @@ test("'primeiros N tickets' é tratado como 'mais recentes N' (ordem garantida)"
 test("'primeiros N tickets fechados' combina com situação=fechado", () => {
   const route = routeTicketQuestion("Liste os primeiros 5 tickets fechados.");
 
-  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
+  assert.equal(route.entities.limite, 5);
+  assert.equal(route.entities.situacao, "fechado");
+});
+
+test("'N primeiros' (número antes de 'primeiros') funciona igual a 'primeiros N'", () => {
+  const route = routeTicketQuestion("Liste os 5 primeiros tickets fechados da área de Governança.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
+  assert.equal(route.entities.area, "Governança");
   assert.equal(route.entities.limite, 5);
   assert.equal(route.entities.situacao, "fechado");
 });
@@ -714,6 +756,50 @@ test("datas relativas: esse ano, ano passado", () => {
   });
 });
 
+test("nome de mês solto ('mês de agosto'/'em agosto', sem dia nem ano) assume o ano corrente", () => {
+  const agora = new Date(2026, 8, 2); // 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("no mes de agosto", agora), {
+    dataInicio: "2026-08-01",
+    dataFim: "2026-08-31",
+  });
+  assert.deepEqual(extractRelativeDateRange("em marco", agora), {
+    dataInicio: "2026-03-01",
+    dataFim: "2026-03-31",
+  });
+});
+
+test("'no mês de <nome>' não vaza pro nome do filtro capturado (área/departamento)", () => {
+  const porArea = routeTicketQuestion("Quantos tickets urgentes foram abertos no mês de agosto na área WEB?");
+  assert.equal(porArea.entities.area, "WEB");
+  assert.ok(porArea.entities.dataInicio?.endsWith("-08-01"));
+  assert.ok(porArea.entities.dataFim?.endsWith("-08-31"));
+
+  const areaAntesDoMes = routeTicketQuestion("Tickets da área WEB em agosto.");
+  assert.equal(areaAntesDoMes.entities.area, "WEB");
+  assert.ok(areaAntesDoMes.entities.dataInicio?.endsWith("-08-01"));
+});
+
+test("'entre <mês1> e <mês2>' (intervalo de 2 meses soltos, sem dia nem ano) assume o ano corrente pros dois", () => {
+  const agora = new Date(2026, 8, 2); // 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("entre agosto e setembro", agora), {
+    dataInicio: "2026-08-01",
+    dataFim: "2026-09-30",
+  });
+});
+
+test("'entre <mês1> e <mês2>' não vaza pro nome do filtro capturado (área)", () => {
+  const porArea = routeTicketQuestion("Quantos tickets a área de Suporte tem entre agosto e setembro");
+  assert.equal(porArea.entities.area, "Suporte");
+  assert.ok(porArea.entities.dataInicio?.endsWith("-08-01"));
+  assert.ok(porArea.entities.dataFim?.endsWith("-09-30"));
+
+  const areaAntesDoIntervalo = routeTicketQuestion("Tickets da área WEB entre agosto e setembro.");
+  assert.equal(areaAntesDoIntervalo.entities.area, "WEB");
+  assert.ok(areaAntesDoIntervalo.entities.dataInicio?.endsWith("-08-01"));
+});
+
 test("bug: 'qual cliente mais abriu chamados este ano' vai pra resumo por cliente com data aplicada (não captura 'mais abriu...' como nome de cliente)", () => {
   const decisao = routeTicketQuestion("Qual cliente mais abriu chamados este ano?");
 
@@ -808,13 +894,24 @@ test("bug 2: 'sem ninguém pegando' é reconhecido como sinônimo de sem operado
   );
 });
 
-test("bug 3: 'atrasados'/'vencidos'/'estourados' usam o proxy de mais antigos em aberto", () => {
+test("bug 3: 'atrasados'/'vencidos'/'estourados' usam o SLA real (não mais o proxy de mais antigos em aberto)", () => {
   assert.deepEqual(
     routeTicketQuestion("Quais tickets estão atrasados?").toolNames,
-    ["listar_tickets_abertos_mais_antigos"],
+    ["listar_tickets_vencidos"],
   );
   assert.deepEqual(
     routeTicketQuestion("Tem ticket com o prazo vencido?").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+});
+
+test("'mais antigo'/'mais velho'/'há mais tempo' continuam no proxy cronológico, sem checar SLA real", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais os tickets mais antigos ainda abertos?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tickets abertos há mais tempo na área de Suporte.").toolNames,
     ["listar_tickets_abertos_mais_antigos"],
   );
 });
@@ -872,6 +969,26 @@ test("dashboard: perguntas de visão geral vão pra resumo_operacional_tickets",
   );
 });
 
+test("dashboard: 'resumo operacional'/'resumo geral' (o nome da própria intenção) também vai pra resumo_operacional_tickets", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Resumo operacional dos tickets.").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Me dê um resumo operacional.").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Resumo geral dos tickets.").toolNames,
+    ["resumo_operacional_tickets"],
+  );
+  // Não deve atropelar resumo por dimensão específica.
+  assert.deepEqual(
+    routeTicketQuestion("Resumo dos tickets por status.").toolNames,
+    ["resumo_tickets_por_status"],
+  );
+});
+
 test("extractOperatorWorkloadName reconhece as três frases de carga de trabalho", () => {
   assert.equal(extractOperatorWorkloadName("O Fábio está com muito ticket na mão?"), "Fábio");
   assert.equal(extractOperatorWorkloadName("A Maria está sobrecarregada?"), "Maria");
@@ -884,6 +1001,34 @@ test("extractOperatorWorkloadName remove a palavra 'operador' antes do nome", ()
     extractOperatorWorkloadName("O operador Fábio Moreira está sobrecarregado?"),
     "Fábio Moreira",
   );
+});
+
+test("extractOperatorWorkloadName reconhece 'quantos tickets <nome> tem?' (ordem de pergunta)", () => {
+  assert.equal(extractOperatorWorkloadName("Quantos tickets a Ana Costa tem?"), "Ana Costa");
+  assert.equal(extractOperatorWorkloadName("Quantos chamados o Fábio Gali tem?"), "Fábio Gali");
+});
+
+test("'quantos tickets <nome> tem?' não atropela outra dimensão já coberta por marcador próprio", () => {
+  assert.equal(extractOperatorWorkloadName("Quantos tickets a área Suporte tem?"), undefined);
+  assert.equal(extractOperatorWorkloadName("Quantos tickets o departamento Governança tem?"), undefined);
+  assert.equal(extractOperatorWorkloadName("Quantos tickets o cliente Acme tem?"), undefined);
+});
+
+test("'quantos tickets <nome> tem?' exige que 'tem' feche a frase, não atropela pergunta mais complexa com o mesmo verbo no meio", () => {
+  const route = routeTicketQuestion(
+    "Quantos chamados fechados o operador cesar tem no departamento coids desde dia 1 de fevereiro de 2026?",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.operador, "cesar");
+  assert.equal(route.entities.departamento, "coids");
+});
+
+test("routeTicketQuestion: 'Quantos tickets a Ana Costa tem?' vira analisar_carga_operador", () => {
+  const route = routeTicketQuestion("Quantos tickets a Ana Costa tem?");
+
+  assert.deepEqual(route.toolNames, ["analisar_carga_operador"]);
+  assert.equal(route.entities.operador, "Ana Costa");
 });
 
 // --- Fase 2: busca textual, resumo por cliente, ranking/percentual, prioridade extra ---
@@ -1035,7 +1180,7 @@ test("extractTicketComparisonNumbers extrai os 2 números só quando há conecto
   assert.equal(extractTicketComparisonNumbers("Compare o ticket 100 com o estoque."), undefined);
 });
 
-test("extractOperatorComparisonNames extrai os 2 nomes só quando menciona 'carga'", () => {
+test("extractOperatorComparisonNames extrai os 2 nomes com 'carga' ou com 'está/tem mais tickets que'", () => {
   assert.deepEqual(
     extractOperatorComparisonNames("Compare a carga do Fábio Gali com a do Cesar Augusto de Mello"),
     ["Fábio Gali", "Cesar Augusto de Mello"],
@@ -1044,7 +1189,15 @@ test("extractOperatorComparisonNames extrai os 2 nomes só quando menciona 'carg
     extractOperatorComparisonNames("Qual a diferença de carga entre Bruno e João Pedro?"),
     ["Bruno", "João Pedro"],
   );
-  // sem "carga", não extrai (evita capturar comparação de outra coisa, ex. áreas)
+  assert.deepEqual(
+    extractOperatorComparisonNames("O Rodrigo Fernandes está com mais tickets que o Nilson Luis Rodrigues Filho?"),
+    ["Rodrigo Fernandes", "Nilson Luis Rodrigues Filho"],
+  );
+  assert.deepEqual(
+    extractOperatorComparisonNames("O Rodrigo tem mais chamados que o Nilson?"),
+    ["Rodrigo", "Nilson"],
+  );
+  // sem nenhum dos dois vocabulários, não extrai (evita capturar comparação de outra coisa, ex. áreas)
   assert.equal(extractOperatorComparisonNames("Compare as áreas Suporte e WEB"), undefined);
 });
 
@@ -1065,6 +1218,18 @@ test("routeTicketQuestion: 'compare a carga de X com a de Y' vira 2 chamadas de 
   assert.deepEqual(
     route.compare[1],
     { toolName: "analisar_carga_operador", args: { operador: "Cesar Augusto de Mello" } },
+  );
+});
+
+test("routeTicketQuestion: 'X está com mais tickets que Y' (sem a palavra 'carga') vira 2 chamadas de analisar_carga_operador", () => {
+  const route = routeTicketQuestion("O Rodrigo Fernandes está com mais tickets que o Nilson Luis Rodrigues Filho?");
+
+  assert.deepEqual(route.toolNames, ["analisar_carga_operador"]);
+  assert.equal(route.compare?.length, 2);
+  assert.deepEqual(route.compare[0], { toolName: "analisar_carga_operador", args: { operador: "Rodrigo Fernandes" } });
+  assert.deepEqual(
+    route.compare[1],
+    { toolName: "analisar_carga_operador", args: { operador: "Nilson Luis Rodrigues Filho" } },
   );
 });
 
@@ -1096,6 +1261,16 @@ test("data relativa ('essa semana'/'esse mês'/etc.) no fim da captura não vaza
   assert.equal(semanaComPrioridade.entities.area, "Suporte");
   assert.equal(semanaComPrioridade.entities.prioridade, "alta");
   assert.ok(semanaComPrioridade.entities.dataInicio !== undefined);
+});
+
+test("'no'/'na' antes da data relativa ('no mês passado'/'na semana passada') também não vaza pro nome (não deixa o 'no' órfão)", () => {
+  const mesPassado = routeTicketQuestion("Quantos tickets o departamento Coids teve no mês passado?");
+  assert.equal(mesPassado.entities.departamento, "Coids");
+  assert.ok(mesPassado.entities.dataInicio !== undefined);
+
+  const semanaPassada = routeTicketQuestion("Tickets da área WEB na semana passada.");
+  assert.equal(semanaPassada.entities.area, "WEB");
+  assert.ok(semanaPassada.entities.dataInicio !== undefined);
 });
 
 test("'foram abertos <período>' (voz passiva de criação) no fim da captura não vaza pro nome", () => {
@@ -1259,18 +1434,18 @@ test("'solucionado'/'solucionou' é sinônimo de fechado (mesma forma adjetiva e
   );
 });
 
-test("'fora do prazo'/'passou do prazo'/'venceu' são sinônimos do proxy de mais-antigo, citados pelo usuário no pedido original", () => {
+test("'fora do prazo'/'passou do prazo'/'venceu' são sinônimos do SLA vencido, citados pelo usuário no pedido original", () => {
   assert.deepEqual(
     routeTicketQuestion("Tickets fora do prazo.").toolNames,
-    ["listar_tickets_abertos_mais_antigos"],
+    ["listar_tickets_vencidos"],
   );
   assert.deepEqual(
     routeTicketQuestion("Tickets que passaram do prazo.").toolNames,
-    ["listar_tickets_abertos_mais_antigos"],
+    ["listar_tickets_vencidos"],
   );
   assert.deepEqual(
     routeTicketQuestion("Quando esse ticket venceu?").toolNames,
-    ["listar_tickets_abertos_mais_antigos"],
+    ["listar_tickets_vencidos"],
   );
 });
 
@@ -1371,10 +1546,10 @@ test("'primeiro' sozinho (sem número) não força listar_tickets_mais_recentes"
   assert.notDeepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
 });
 
-test("'primeiros N tickets' (com número) continua sendo tratado como 'mais recentes N' (ordem garantida)", () => {
+test("'primeiros N tickets' (com número) é tratado como 'mais antigos N, entre todos' (ordem garantida)", () => {
   const route = routeTicketQuestion("Liste os primeiros 5 tickets da área de Suporte.");
 
-  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
   assert.equal(route.entities.limite, 5);
 });
 

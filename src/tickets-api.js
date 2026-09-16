@@ -185,17 +185,17 @@ export function createTicketsApiClient({
     },
 
     async fetchAllTickets(filtros = {}, { maxPages, paraQuando } = {}) {
-      // Sem `paraQuando` (busca sem data-limite conhecida), o teto de
-      // segurança precisa ser baixo (20 páginas / ~1000 tickets) — não tem
-      // como saber quando parar, então convém não gastar tempo/chamadas
-      // demais numa busca potencialmente ilimitada. Com `paraQuando`, já
-      // existe uma parada natural (a data-limite, ou o fim de todas as
-      // páginas — o que vier primeiro), então o teto pode ser bem mais
-      // generoso: medido ao vivo, 40 páginas levam ~4s (a API responde
-      // rápido, o gargalo de uma consulta "lenta" é o Ollama/agente em
-      // volta, não isso), e o volume atual de tickets (98 páginas) cabe
-      // folgado dentro de 400.
-      const limitePaginas = maxPages ?? (paraQuando ? 400 : 20);
+      // O teto de segurança serve só pra não rodar pra sempre se o
+      // catálogo crescer muito — não é o tamanho normal de uma busca, já
+      // que o loop abaixo sempre para no `pages` real devolvido pela API
+      // assim que chega lá (ou antes, via `paraQuando`, quando há
+      // data-limite conhecida). Medido ao vivo: 87 páginas (uma área
+      // inteira, sem filtro de data) levam ~8s, e o volume atual do
+      // catálogo inteiro é só 98 páginas — por isso 400 cabe folgado tanto
+      // com quanto sem `paraQuando`, sem truncar buscas legítimas que só
+      // não tinham como usar a parada antecipada (ex.: "tickets sem
+      // operador" numa área, sem período informado).
+      const limitePaginas = maxPages ?? 400;
       const tickets = [];
       let page = 1;
       let truncado = false;

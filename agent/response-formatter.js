@@ -171,7 +171,7 @@ function buildSnippet(text, termoBusca, maxLength) {
 // centra o trecho mostrado no ponto do match, em vez de sempre cortar do
 // início. Nos outros tipos de listagem fica desligado por padrão pra não
 // inflar a resposta.
-function formatTicket(ticket, { incluirDescricao = false, termoBusca } = {}) {
+function formatTicket(ticket, { incluirDescricao = false, termoBusca, incluirSla = false } = {}) {
   const parts = [
     `Ticket ${ticket.number}: ${firstNonEmpty([ticket.issue, ticket.description], "sem título")}`,
     `status: ${ticket.status}`,
@@ -184,6 +184,12 @@ function formatTicket(ticket, { incluirDescricao = false, termoBusca } = {}) {
 
   if (ticket.is_frozen) {
     parts.push("SLA congelado: sim");
+  }
+
+  if (incluirSla && ticket.lifetime) {
+    parts.push(
+      `SLA de resposta: ${formatSlaResult(ticket.lifetime.result_sla_response)}; SLA de solução: ${formatSlaResult(ticket.lifetime.result_sla_solution)}`,
+    );
   }
 
   if (incluirDescricao && ticket.description) {
@@ -521,6 +527,66 @@ function formatMostRecentTickets(data) {
   ].join("\n");
 }
 
+function formatOldestTickets(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const tickets = data.tickets ?? [];
+
+  if (tickets.length === 0) {
+    return mensagemVazia(data, "Nenhum ticket foi encontrado para os filtros informados.");
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
+  return [
+    `${tickets.length} ticket(s) mais antigo(s) de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
+    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+  ].join("\n");
+}
+
+function formatOverdueTickets(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  if (data.muitos_para_verificar) {
+    return (
+      `O filtro encontrou ${data.quantidade_candidatos} ticket(s) — verificar o SLA real de cada um `
+      + `exigiria mais chamadas do que o seguro de uma vez (limite: ${data.limite_verificacao}). `
+      + "Tente restringir por área, departamento, operador, cliente ou período pra reduzir o volume."
+    );
+  }
+
+  const tickets = data.tickets ?? [];
+
+  if (tickets.length === 0) {
+    return mensagemVazia(data, "Nenhum ticket com SLA vencido foi encontrado para os filtros informados.");
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  const paginacao =
+    data.paginas !== undefined && data.paginas > 1
+      ? ` (página ${data.pagina} de ${data.paginas})`
+      : "";
+
+  return [
+    `${tickets.length} ticket(s) com SLA vencido de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, { incluirSla: true })}`),
+  ].join("\n");
+}
+
 function formatOperationalSummary(data) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
@@ -664,8 +730,14 @@ function formatOne(toolResult) {
     case "listar_tickets_abertos_mais_antigos":
       return formatOldestOpenTickets(dados);
 
+    case "listar_tickets_vencidos":
+      return formatOverdueTickets(dados);
+
     case "listar_tickets_mais_recentes":
       return formatMostRecentTickets(dados);
+
+    case "listar_tickets_mais_antigos":
+      return formatOldestTickets(dados);
 
     case "resumo_operacional_tickets":
       return formatOperationalSummary(dados);

@@ -296,6 +296,63 @@ test("formata lista de tickets mais recentes", () => {
   assert.match(resposta, /Ticket 4850: Rede/);
 });
 
+test("formata lista de tickets com SLA vencido, incluindo o detalhe do SLA por ticket", () => {
+  const resposta = format("listar_tickets_vencidos", {
+    quantidade_total: 2,
+    truncado: false,
+    tickets: [
+      {
+        number: 100,
+        opening_date: "2026-01-05 08:00:00",
+        priority: "Alta",
+        area: "Suporte",
+        issue: "Rede",
+        operator: "admin",
+        status: "ENCERRADA",
+        is_frozen: false,
+        lifetime: { result_sla_response: 4, result_sla_solution: 2 },
+      },
+    ],
+  });
+
+  assert.match(resposta, /1 ticket\(s\) com SLA vencido de 2 no total:/);
+  assert.match(resposta, /Ticket 100: Rede/);
+  assert.match(resposta, /SLA de resposta: excedeu o SLA; SLA de solução: dentro do SLA/);
+});
+
+test("avisa quando o filtro de tickets vencidos tem candidatos demais pra checar o SLA real", () => {
+  const resposta = format("listar_tickets_vencidos", {
+    muitos_para_verificar: true,
+    quantidade_candidatos: 4320,
+    limite_verificacao: 100,
+  });
+
+  assert.match(resposta, /4320 ticket\(s\)/);
+  assert.match(resposta, /restringir por área, departamento, operador, cliente ou período/);
+});
+
+test("formata lista de tickets mais antigos (entre todos, abertos e fechados)", () => {
+  const resposta = format("listar_tickets_mais_antigos", {
+    quantidade_total: 4899,
+    truncado: false,
+    tickets: [
+      {
+        number: 1,
+        opening_date: "2020-01-05 08:00:00",
+        priority: "Baixa",
+        area: "Suporte",
+        issue: "Rede",
+        operator: "admin",
+        status: "ENCERRADA",
+        is_frozen: false,
+      },
+    ],
+  });
+
+  assert.match(resposta, /1 ticket\(s\) mais antigo\(s\) de 4899 no total:/);
+  assert.match(resposta, /Ticket 1: Rede/);
+});
+
 test("busca por texto inclui o comentário de abertura (sem tags HTML), pra dar contexto de onde o termo bateu", () => {
   const resposta = format("buscar_tickets_por_texto", {
     quantidade: 1,

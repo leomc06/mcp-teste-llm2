@@ -25,6 +25,13 @@ import {
 // sem limite contra a API de tickets.
 const FAN_OUT_CONCURRENCY = Number(process.env.TICKETS_API_FAN_OUT_CONCURRENCY ?? 8);
 
+// O SLA real (lifetime.result_sla_response/result_sla_solution) só vem no
+// detalhe de 1 ticket por vez — não tem no endpoint de listagem em lote. Pra
+// listar_tickets_vencidos não disparar uma rajada de centenas/milhares de
+// chamadas quando o filtro é amplo demais, um teto: acima disso, a tool
+// avisa e pede pra restringir o filtro em vez de tentar verificar tudo.
+const SLA_CHECK_LIMIT = Number(process.env.TICKETS_API_SLA_CHECK_LIMIT ?? 100);
+
 const requiredVariables = [
   "TICKETS_API_BASE_URL",
   "TICKETS_API_TOKEN",
@@ -1063,6 +1070,109 @@ server.registerTool(
 );
 
 server.registerTool(
+  "listar_tickets_vencidos",
+  {
+    title: "Listar tickets com SLA vencido",
+    description:
+      "Lista os tickets (chamados) que realmente estouraram o SLA (de resposta ou de solução), usando o dado de SLA por ticket — ao contrário de listar_tickets_abertos_mais_antigos (que só aproxima \"atrasado\" pelos tickets ainda abertos há mais tempo, sem checar o SLA de verdade), esta tool considera TAMBÉM tickets já encerrados que estouraram o prazo antes de fechar. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Como o SLA só é obtido 1 ticket por vez, se o filtro resultar em mais de 100 candidatos a tool avisa e pede pra restringir o filtro, em vez de fazer uma rajada grande de chamadas.",
+    inputSchema: {
+      status: z.string().trim().min(1).max(100).optional(),
+      area: z.string().trim().min(1).max(100).optional(),
+      departamento: z.string().trim().min(1).max(100).optional(),
+      operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
+      prioridade: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      limite: z.number().int().min(1).max(50).default(10),
+      pagina: z.number().int().min(1).default(1),
+    },
+  },
+  async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
+    try {
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
+        await Promise.all([
+          resolveMetaId(() => ticketsApi.listStatuses(), status),
+          resolveMetaId(() => ticketsApi.listAreas(), area),
+          resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+          resolveMetaId(() => ticketsApi.listUsers(), operador),
+          resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
+        ]);
+
+      const naoEncontrados = [
+        statusResolvido.naoEncontrado ? `status "${status}"` : null,
+        areaResolvida.naoEncontrado ? `área "${area}"` : null,
+        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
+        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
+        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+      ].filter(Boolean);
+
+      if (naoEncontrados.length > 0) {
+        return success({
+          encontrado: false,
+          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+        });
+      }
+
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
+
+      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
+      const candidatos = filtrarPorPeriodo(
+        todos.filter(
+          (ticket) =>
+            (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
+            && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo))
+            && (situacao === undefined
+              || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
+        ),
+        dataInicio,
+        dataFim,
+      );
+
+      if (candidatos.length > SLA_CHECK_LIMIT) {
+        return success({
+          muitos_para_verificar: true,
+          quantidade_candidatos: candidatos.length,
+          limite_verificacao: SLA_CHECK_LIMIT,
+        });
+      }
+
+      const detalhes = await mapWithConcurrency(candidatos, FAN_OUT_CONCURRENCY, (ticket) =>
+        ticketsApi.getTicket(ticket.number));
+
+      const vencidos = candidatos
+        .map((ticket, indice) => ({ ticket, lifetime: detalhes[indice]?.lifetime }))
+        .filter(({ lifetime }) => lifetime?.result_sla_response === 4 || lifetime?.result_sla_solution === 4)
+        .map(({ ticket, lifetime }) => ({ ...ticket, lifetime }))
+        .sort((a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0));
+
+      const inicio = (pagina - 1) * limite;
+      const totalPaginas = Math.max(Math.ceil(vencidos.length / limite), 1);
+
+      return success({
+        quantidade_total: vencidos.length,
+        truncado,
+        pagina,
+        paginas: totalPaginas,
+        tickets: vencidos.slice(inicio, inicio + limite),
+      });
+    } catch (error) {
+      return ticketsFailure(error);
+    }
+  },
+);
+
+server.registerTool(
   "listar_tickets_mais_recentes",
   {
     title: "Listar tickets mais recentes",
@@ -1146,6 +1256,101 @@ server.registerTool(
         pagina,
         paginas: totalPaginasRecentes,
         tickets: recentes.slice(inicioRecentes, inicioRecentes + limite),
+      });
+    } catch (error) {
+      return ticketsFailure(error);
+    }
+  },
+);
+
+server.registerTool(
+  "listar_tickets_mais_antigos",
+  {
+    title: "Listar tickets mais antigos",
+    description: "Lista os tickets (chamados) cronologicamente mais antigos pela data de abertura, entre TODOS os tickets (abertos e fechados) — ao contrário de listar_tickets_abertos_mais_antigos, que é restrita aos ainda não encerrados. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
+    inputSchema: {
+      status: z.string().trim().min(1).max(100).optional(),
+      area: z.string().trim().min(1).max(100).optional(),
+      departamento: z.string().trim().min(1).max(100).optional(),
+      operador: z.string().trim().min(1).max(100).optional(),
+      cliente: z.string().trim().min(1).max(100).optional(),
+      prioridade: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
+      limite: z.number().int().min(1).max(50).default(10),
+      pagina: z.number().int().min(1).default(1),
+    },
+  },
+  async ({ status, area, departamento, operador, cliente, prioridade, situacao, limite, pagina }) => {
+    try {
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
+        resolveMetaId(() => ticketsApi.listStatuses(), status),
+        resolveMetaId(() => ticketsApi.listAreas(), area),
+        resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+        resolveMetaId(() => ticketsApi.listUsers(), operador),
+        resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
+      ]);
+
+      const naoEncontrados = [
+        statusResolvido.naoEncontrado ? `status "${status}"` : null,
+        areaResolvida.naoEncontrado ? `área "${area}"` : null,
+        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
+        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
+        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+      ].filter(Boolean);
+
+      if (naoEncontrados.length > 0) {
+        return success({
+          encontrado: false,
+          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+        });
+      }
+
+      // Sem `paraQuando` (não há data-limite conhecida — o objetivo aqui é
+      // justamente varrer até o fim pra achar os mais antigos de todos),
+      // igual mais_recentes: o teto de segurança de 400 páginas já cobre o
+      // catálogo atual inteiro (~98 páginas) com folga.
+      const { tickets, truncado } = await fetchAllTicketsSafe({
+        status: statusResolvido.id,
+        area: areaResolvida.id,
+        department: departamentoResolvido.id,
+        operator: operadorResolvido.id,
+      });
+
+      const clienteAlvoMaisAntigos = cliente === undefined ? undefined : normalizeForMatch(cliente);
+
+      const porSituacao = tickets.filter((ticket) => {
+        if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
+          return false;
+        }
+
+        if (clienteAlvoMaisAntigos !== undefined && !normalizeForMatch(ticket.contact_name).includes(clienteAlvoMaisAntigos)) {
+          return false;
+        }
+
+        if (situacao === "aberto") {
+          return !ticket.closure_date;
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
+
+      const antigos = porSituacao.sort(
+        (a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0),
+      );
+
+      const inicioAntigos = (pagina - 1) * limite;
+      const totalPaginasAntigos = Math.max(Math.ceil(antigos.length / limite), 1);
+
+      return success({
+        quantidade_total: antigos.length,
+        truncado,
+        pagina,
+        paginas: totalPaginasAntigos,
+        tickets: antigos.slice(inicioAntigos, inicioAntigos + limite),
       });
     } catch (error) {
       return ticketsFailure(error);

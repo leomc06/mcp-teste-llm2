@@ -23,7 +23,9 @@ const allowedToolNames = new Set([
   "listar_tickets_fechados",
   "listar_tickets_sem_operador",
   "listar_tickets_abertos_mais_antigos",
+  "listar_tickets_vencidos",
   "listar_tickets_mais_recentes",
+  "listar_tickets_mais_antigos",
   "resumo_operacional_tickets",
   "analisar_carga_operador",
 ]);
