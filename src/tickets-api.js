@@ -64,6 +64,32 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Achado P10 da auditoria end-to-end: a parada antecipada de fetchAllTickets
+// (ver comentário lá) só é segura enquanto a API devolver os tickets em
+// ordem decrescente de abertura, mas isso é uma suposição empírica, não uma
+// garantia formal do contrato da API — se ela mudar no futuro, a parada
+// antecipada devolveria resultado incompleto marcado como `truncado: false`
+// (pior que truncar de verdade, porque parece completo). Esta checagem usa
+// só os dados que já foram buscados (sem chamada extra): confirma que cada
+// página, e a transição entre páginas, respeitou a ordem esperada.
+function paginaRespeitaOrdemDecrescente(pageTickets, aberturaMaximaAnterior) {
+  if (
+    aberturaMaximaAnterior !== undefined
+    && pageTickets.length > 0
+    && pageTickets[0].opening_date > aberturaMaximaAnterior
+  ) {
+    return false;
+  }
+
+  for (let i = 1; i < pageTickets.length; i += 1) {
+    if (pageTickets[i].opening_date > pageTickets[i - 1].opening_date) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function createTicketsApiClient({
   baseUrl,
   token,
@@ -199,10 +225,30 @@ export function createTicketsApiClient({
       const tickets = [];
       let page = 1;
       let truncado = false;
+      let paraQuandoConfiavel = true;
+      let aberturaMaximaAnterior;
 
       while (true) {
         const data = await this.listTickets({ ...filtros, page });
         const pageTickets = data.tickets ?? [];
+
+        // Checagem de sanidade (achado P10): se a ordenação assumida pela
+        // parada antecipada não bater com os dados reais desta página,
+        // desativa a parada antecipada pro resto desta busca — melhor
+        // continuar paginando até o teto de segurança normal (marcando
+        // `truncado: true` se for o caso) do que devolver um resultado
+        // incompleto disfarçado de completo.
+        if (paraQuandoConfiavel && !paginaRespeitaOrdemDecrescente(pageTickets, aberturaMaximaAnterior)) {
+          paraQuandoConfiavel = false;
+          console.error(
+            "[tickets-api] fetchAllTickets: a página retornada não está em ordem decrescente de "
+              + "abertura como esperado — a parada antecipada foi desativada pro resto desta busca.",
+          );
+        }
+
+        if (pageTickets.length > 0) {
+          aberturaMaximaAnterior = pageTickets[pageTickets.length - 1].opening_date;
+        }
 
         tickets.push(...pageTickets);
 
@@ -215,14 +261,16 @@ export function createTicketsApiClient({
         // Parada antecipada e SEGURA (não é "desistência" — `truncado` fica
         // false): a API devolve tickets em ordem estritamente decrescente
         // de data de abertura (confirmado ao vivo, sem exceção, em
-        // centenas de tickets/25 páginas seguidas) — se quem chamou já
-        // sabe até onde precisa ir (`paraQuando`), dá pra parar assim que
-        // o ticket mais antigo da página atual já ficou pra trás desse
-        // limite, sem gastar o teto de segurança (maxPages) numa busca que
-        // já tem resposta completa. Só é seguro pra filtro por data de
-        // ABERTURA — closure_date não guarda relação nenhuma com essa
-        // ordem, então quem filtra por fechamento não deve passar isso.
-        if (pageTickets.length > 0 && paraQuando?.(pageTickets[pageTickets.length - 1])) {
+        // centenas de tickets/25 páginas seguidas, e agora também
+        // verificado a cada chamada, ver paginaRespeitaOrdemDecrescente) —
+        // se quem chamou já sabe até onde precisa ir (`paraQuando`), dá pra
+        // parar assim que o ticket mais antigo da página atual já ficou
+        // pra trás desse limite, sem gastar o teto de segurança (maxPages)
+        // numa busca que já tem resposta completa. Só é seguro pra filtro
+        // por data de ABERTURA — closure_date não guarda relação nenhuma
+        // com essa ordem, então quem filtra por fechamento não deve passar
+        // isso.
+        if (paraQuandoConfiavel && pageTickets.length > 0 && paraQuando?.(pageTickets[pageTickets.length - 1])) {
           break;
         }
 

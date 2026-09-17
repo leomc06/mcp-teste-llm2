@@ -71,6 +71,55 @@ function stripGenderSuffix(value) {
   return value.replace(/(os|as|o|a)$/u, "");
 }
 
+// Achado P8 da auditoria end-to-end: os caminhos rápidos de contagem
+// (contarAbertosFechados abaixo, e o fast path equivalente de
+// resumo_tickets_por_status em server.js) evitam baixar o corpo dos
+// tickets — em vez disso, identificam QUAL status do catálogo real
+// representa "fechado" pelo NOME, porque só esse status preenche
+// closure_date (verificado empiricamente contra a API: nenhum outro
+// status, incluindo CANCELADO, fecha o ticket). Antes isso só reconhecia o
+// nome exato "encerrada" — se o catálogo renomeasse esse status pra
+// qualquer outra grafia, o caminho rápido reportaria "fechados: 0" em
+// silêncio, mesmo com o resto do sistema (que sempre usa closure_date
+// direto) continuando correto. Reaproveita o mesmo vocabulário de
+// sinônimos de fechamento já usado no roteador de linguagem natural
+// (agent/tickets-routing.js, CLOSURE_VERB_SOURCE), pra não ter 2 listas de
+// sinônimo divergentes no mesmo sistema.
+const CLOSED_STATUS_NAME_SYNONYMS = new Set([
+  "encerrada", "encerrado",
+  "fechada", "fechado",
+  "concluida", "concluido",
+  "finalizada", "finalizado",
+  "resolvida", "resolvido",
+  "solucionada", "solucionado",
+]);
+
+export function findClosedStatus(statuses) {
+  const encontrado = statuses.find((item) => CLOSED_STATUS_NAME_SYNONYMS.has(normalizeForMatch(item.name)));
+
+  if (encontrado === undefined) {
+    // Nenhum sinônimo conhecido bateu — não dá pra saber com segurança qual
+    // status fecha o ticket. Loga pra quem opera o sistema perceber (mesmo
+    // padrão já usado em unwrapList), em vez de assumir "fechados: 0" como
+    // se fosse um fato.
+    console.error(
+      "[ticket-helpers] Nenhum status do catálogo bate com os sinônimos conhecidos de \"fechado\" — "
+        + "a contagem rápida de abertos/fechados não pode ser calculada com segurança.",
+    );
+  }
+
+  return encontrado;
+}
+
+// Achado P9 da auditoria end-to-end: os níveis 2 (substring) e 3 (sem
+// sufixo de gênero) são deliberadamente flexíveis, então mais de um item do
+// catálogo pode bater com o mesmo nome informado (ex.: operador "an" bate
+// com "Ana", "Mariana" e "Anderson" ao mesmo tempo) — escolher o primeiro
+// do array em silêncio arriscaria aplicar o filtro pra pessoa/área errada
+// sem nenhum aviso. Agora, quando mais de 1 candidato bate no mesmo nível,
+// o resultado é tratado como "não encontrado" (mesmo contrato que todo
+// chamador já trata) só que marcado com `ambiguo: true` e a lista de
+// `candidatos`, pra quem quiser expor uma mensagem melhor no futuro.
 export async function resolveMetaId(listFn, nome) {
   if (nome === undefined) {
     return { id: undefined, nomeCanonico: undefined, naoEncontrado: false };
@@ -80,14 +129,34 @@ export async function resolveMetaId(listFn, nome) {
   const itens = await listFn();
   const normalizados = itens.map((candidato) => normalizeForMatch(candidato.name));
 
-  const item =
-    itens.find((candidato, i) => normalizados[i] === alvo)
-    ?? itens.find((candidato, i) => normalizados[i].includes(alvo))
-    ?? itens.find((candidato, i) => stripGenderSuffix(normalizados[i]) === stripGenderSuffix(alvo));
+  const porIgualdade = itens.filter((candidato, i) => normalizados[i] === alvo);
+  const porSubstring = porIgualdade.length > 0
+    ? []
+    : itens.filter((candidato, i) => normalizados[i].includes(alvo));
+  const porSufixo = porIgualdade.length > 0 || porSubstring.length > 0
+    ? []
+    : itens.filter((candidato, i) => stripGenderSuffix(normalizados[i]) === stripGenderSuffix(alvo));
 
-  return item
-    ? { id: item.id, nomeCanonico: item.name, naoEncontrado: false }
-    : { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const candidatos =
+    porIgualdade.length > 0 ? porIgualdade
+      : porSubstring.length > 0 ? porSubstring
+        : porSufixo;
+
+  if (candidatos.length === 0) {
+    return { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  }
+
+  if (candidatos.length > 1) {
+    return {
+      id: undefined,
+      nomeCanonico: undefined,
+      naoEncontrado: true,
+      ambiguo: true,
+      candidatos: candidatos.map((item) => item.name),
+    };
+  }
+
+  return { id: candidatos[0].id, nomeCanonico: candidatos[0].name, naoEncontrado: false };
 }
 
 // Corte antecipado seguro pra fetchAllTickets (ver comentário lá): só faz
@@ -291,7 +360,7 @@ export function createTicketHelpers(ticketsApi) {
   // em vez de baixar o corpo de todos os tickets, sem risco de truncamento
   // mesmo em filtros com milhares de tickets (ex.: área "Suporte").
   async function contarAbertosFechados(filtrosBase, statuses, statusFiltradoId) {
-    const statusEncerrado = statuses.find((item) => normalizeForMatch(item.name) === "encerrada");
+    const statusEncerrado = findClosedStatus(statuses);
 
     if (statusFiltradoId !== undefined) {
       const totalGeral = await contarTicketsExato(filtrosBase);

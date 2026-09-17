@@ -246,6 +246,54 @@ test("fetchAllTickets para cedo via 'paraQuando' (sem marcar truncado, é uma pa
   assert.equal(truncado, false);
 });
 
+// --- Achado P10 da auditoria end-to-end: a parada antecipada via
+// 'paraQuando' só é segura enquanto a API devolver os tickets em ordem
+// decrescente de abertura — essa checagem confirma que, se essa ordem for
+// violada, o sistema não confia mais na parada antecipada, evitando
+// devolver resultado incompleto marcado como `truncado: false`. ---
+
+test("fetchAllTickets desativa a parada antecipada se a página não respeitar a ordem decrescente de abertura esperada", async () => {
+  let calls = 0;
+  const errosLogados = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => errosLogados.push(args.join(" "));
+
+  mock.method(globalThis, "fetch", async () => {
+    calls += 1;
+
+    if (calls === 1) {
+      // Página fora de ordem: o 2º ticket é MAIS NOVO que o 1º — viola a
+      // suposição de ordem decrescente dentro da própria página.
+      return jsonResponse({
+        tickets: [
+          { number: 1, opening_date: "2026-01-01 10:00:00" },
+          { number: 2, opening_date: "2026-09-01 10:00:00" },
+        ],
+        pages: 2,
+      });
+    }
+
+    return jsonResponse({ tickets: [{ number: 3, opening_date: "2026-01-01 09:00:00" }], pages: 2 });
+  });
+
+  try {
+    const { tickets, truncado } = await client().fetchAllTickets(
+      {},
+      // O último ticket da página 1 (2026-01-01) satisfaz paraQuando — se a
+      // parada antecipada não fosse desativada, o loop pararia aqui e
+      // nunca chegaria na página 2 real.
+      { paraQuando: (ticket) => ticket.opening_date < "2026-08-01" },
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(tickets.length, 3);
+    assert.equal(truncado, false);
+    assert.ok(errosLogados.some((msg) => msg.includes("ordem decrescente")));
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 test("fetchAllTickets sem 'paraQuando' continua se comportando exatamente como antes (opcional, não quebra chamadas existentes)", async () => {
   let calls = 0;
   mock.method(globalThis, "fetch", async () => {

@@ -5,6 +5,7 @@ import {
   success,
   ticketsFailure,
   normalizeForMatch,
+  findClosedStatus,
   resolveMetaId,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
@@ -86,6 +87,42 @@ test("resolveMetaId: retorna naoEncontrado true quando nada casa", async () => {
   const listFn = async () => [{ id: 1, name: "Suporte" }];
   const result = await resolveMetaId(listFn, "financeiro");
   assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: true });
+});
+
+// --- Achado P9 da auditoria end-to-end: quando mais de 1 candidato bate
+// por substring/sufixo (busca deliberadamente flexível), o sistema escolhia
+// o primeiro do array em silêncio — risco de aplicar o filtro pra
+// pessoa/área errada sem avisar (ex.: operador "an" batendo em "Ana",
+// "Mariana" e "Anderson" ao mesmo tempo). ---
+
+test("resolveMetaId: mais de 1 candidato por substring é tratado como ambíguo, não resolve pro primeiro em silêncio", async () => {
+  const listFn = async () => [
+    { id: 1, name: "Ana Paula" },
+    { id: 2, name: "Mariana" },
+    { id: 3, name: "Anderson" },
+  ];
+  const result = await resolveMetaId(listFn, "an");
+
+  assert.equal(result.naoEncontrado, true);
+  assert.equal(result.id, undefined);
+  assert.equal(result.ambiguo, true);
+  assert.deepEqual(result.candidatos, ["Ana Paula", "Mariana", "Anderson"]);
+});
+
+test("resolveMetaId: mais de 1 candidato só no nível de sufixo de gênero também é tratado como ambíguo", async () => {
+  const listFn = async () => [{ id: 1, name: "RESOLVIDO" }, { id: 2, name: "RESOLVIDA" }];
+  const result = await resolveMetaId(listFn, "resolvidos");
+
+  assert.equal(result.naoEncontrado, true);
+  assert.equal(result.ambiguo, true);
+  assert.deepEqual(result.candidatos, ["RESOLVIDO", "RESOLVIDA"]);
+});
+
+test("resolveMetaId: igualdade exata continua resolvendo direto, mesmo se outros itens batessem por substring", async () => {
+  const listFn = async () => [{ id: 1, name: "Suporte" }, { id: 2, name: "Suporte Técnico" }];
+  const result = await resolveMetaId(listFn, "suporte");
+
+  assert.deepEqual(result, { id: 1, nomeCanonico: "Suporte", naoEncontrado: false });
 });
 
 test("criarParaQuandoAbertura: undefined sem dataInicio (nada pra cortar)", () => {
@@ -375,6 +412,38 @@ test("contarAbertosFechados: se o catálogo de status não tiver ENCERRADA, fech
   const result = await contarAbertosFechados({}, [{ id: 1, name: "OUTRO" }], undefined);
 
   assert.deepEqual(result, { totalGeral: 30, abertos: 30, fechados: 0 });
+});
+
+// --- Achado P8 da auditoria end-to-end: o nome do status "fechado" era
+// reconhecido só pelo literal exato "encerrada" — se o catálogo renomeasse
+// esse status, o caminho rápido de contagem reportava "fechados: 0" em
+// silêncio, divergindo do resto do sistema (que sempre deriva de
+// ticket.closure_date real, nunca do nome do status). ---
+
+test("findClosedStatus reconhece um vocabulário de sinônimos, não só o literal 'encerrada'", () => {
+  assert.equal(findClosedStatus([{ id: 1, name: "Finalizada" }])?.id, 1);
+  assert.equal(findClosedStatus([{ id: 2, name: "Concluído" }])?.id, 2);
+  assert.equal(findClosedStatus([{ id: 3, name: "Resolvida" }])?.id, 3);
+  assert.equal(findClosedStatus([{ id: 4, name: "Solucionado" }])?.id, 4);
+  assert.equal(findClosedStatus([{ id: 5, name: "Fechado" }])?.id, 5);
+  assert.equal(findClosedStatus([{ id: 6, name: "Aguardando atendimento" }]), undefined);
+});
+
+test("contarAbertosFechados funciona corretamente mesmo se o status fechado do catálogo tiver outro nome (ex.: 'Finalizada' em vez de 'Encerrada')", async () => {
+  const chamadas = [];
+  const ticketsApi = fakeTicketsApi({
+    async listTickets(filtros) {
+      chamadas.push(filtros);
+      return { results: filtros.status === 77 ? 25 : 100 };
+    },
+  });
+
+  const statuses = [{ id: 77, name: "Finalizada" }, { id: 2, name: "EM ATENDIMENTO" }];
+  const { contarAbertosFechados } = createTicketHelpers(ticketsApi);
+
+  const result = await contarAbertosFechados({ area: 10 }, statuses, undefined);
+
+  assert.deepEqual(result, { totalGeral: 100, abertos: 75, fechados: 25 });
 });
 
 // --- mapWithConcurrency ---

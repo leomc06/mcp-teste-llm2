@@ -7,6 +7,7 @@ import {
   success,
   ticketsFailure,
   normalizeForMatch,
+  findClosedStatus,
   resolveMetaId,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
@@ -30,7 +31,14 @@ const FAN_OUT_CONCURRENCY = Number(process.env.TICKETS_API_FAN_OUT_CONCURRENCY ?
 // listar_tickets_vencidos não disparar uma rajada de centenas/milhares de
 // chamadas quando o filtro é amplo demais, um teto: acima disso, a tool
 // avisa e pede pra restringir o filtro em vez de tentar verificar tudo.
-const SLA_CHECK_LIMIT = Number(process.env.TICKETS_API_SLA_CHECK_LIMIT ?? 100);
+// 1000 (não 100) porque, no volume real observado (achado P2 da auditoria
+// end-to-end), a área mais comum do catálogo sozinha já tem milhares de
+// tickets — um teto baixo demais tornava a pergunta mais natural do domínio
+// ("quais tickets estão atrasados?") praticamente sempre recusada, mesmo
+// filtrando por uma única área. 1000 ainda não cobre o catálogo inteiro sem
+// filtro, mas cobre a maioria das combinações reais de filtro (área +
+// departamento/operador/período, por exemplo).
+const SLA_CHECK_LIMIT = Number(process.env.TICKETS_API_SLA_CHECK_LIMIT ?? 1000);
 
 const requiredVariables = [
   "TICKETS_API_BASE_URL",
@@ -387,7 +395,8 @@ server.registerTool(
           resumo.push({ chave: "não informado", quantidade: naoInformado });
         }
 
-        const fechados = porStatus.find((item) => normalizeForMatch(item.chave) === "encerrada")?.quantidade ?? 0;
+        const statusEncerrado = findClosedStatus(statuses);
+        const fechados = porStatus.find((item) => item.chave === statusEncerrado?.name)?.quantidade ?? 0;
 
         return success({
           filtros: { area, departamento, operador, prioridade, dataInicio, dataFim },

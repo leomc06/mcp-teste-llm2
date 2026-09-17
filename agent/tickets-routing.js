@@ -37,8 +37,12 @@ const TRAILING_BARE_VERB_PATTERN = new RegExp(
 
 // "está(m) <situação do ticket>" no fim da frase não faz parte do nome
 // capturado (ex.: "departamento COIDS estão com o SLA pausado", "área X
-// estão abertos há mais tempo") — corta tudo a partir de "está(m)".
-const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${ESTAR_SOURCE}\\s+.+$`, "iu");
+// estão abertos há mais tempo") — corta tudo a partir de "está(m)". "que"
+// opcional antes do verbo (achado ao corrigir o P5 da auditoria end-to-end:
+// "tickets do João QUE ESTÃO aguardando atendimento" capturava operador:
+// "João que", porque o "que" antes de "estão" não era coberto) — mesma
+// ideia do "no/na" opcional já usado antes da data relativa.
+const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+(?:que\\s+)?${ESTAR_SOURCE}\\s+.+$`, "iu");
 
 // Achado extra descoberto testando o item 10 (mesma causa raiz do item 1):
 // o adjetivo de situação "aberto"/"pendente"/"congelado"/"travado"/
@@ -80,6 +84,13 @@ const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(`\\s+${CLOSURE_VERB_SOURCE}\
 // mês" → a área é só "Suporte".
 const CREATION_VERB_SOURCE = "(?:foi|foram)\\s+abert[oa]s?";
 const TRAILING_CREATION_CLAUSE_PATTERN = new RegExp(`\\s+${CREATION_VERB_SOURCE}\\b.*$`, "iu");
+
+// "criado(s)/criada(s) por/pelo/pela <agente>" (voz ativa, identifica QUEM
+// criou, diferente de CREATION_VERB_SOURCE acima que é sobre QUANDO) no fim
+// da captura não faz parte do nome — quem criou já é extraído à parte por
+// extractOperatorName (ex.: "tickets com prioridade alta criados pelo
+// operador Cesar" → a prioridade é só "alta").
+const TRAILING_CREATED_BY_CLAUSE_PATTERN = /\s+criad[oa]s?\s+(?:por|pel[oa])\s+.+$/iu;
 
 // Vocabulário de "atrasado" (proxy de mais-antigo — a API não tem dado real
 // de prazo de SLA em lote, ver isOldestOpenIntent mais abaixo) em forma
@@ -219,6 +230,19 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: isoOntem, dataFim: isoOntem };
   }
 
+  // "amanhã" (achado P4 da auditoria end-to-end): antes não tinha nenhum
+  // padrão pra essa data relativa, então o filtro simplesmente desaparecia
+  // em silêncio ("tickets abertos amanhã" virava "tickets abertos", sem
+  // filtro de data nenhum) — confirmado ao vivo com um resultado
+  // logicamente impossível (tickets "abertos amanhã" sendo uma data futura).
+  if (/\bamanha\b/.test(text)) {
+    const amanha = new Date(agora);
+    amanha.setDate(amanha.getDate() + 1);
+    const isoAmanha = formatIsoDate(amanha);
+
+    return { dataInicio: isoAmanha, dataFim: isoAmanha };
+  }
+
   if (/\bsemana\s+passada\b/.test(text) || /\bultima\s+semana\b/.test(text)) {
     const segundaAtual = startOfWeek(agora);
     const segundaPassada = new Date(segundaAtual);
@@ -338,7 +362,7 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 // NO mês passado") — sem isso, o corte deixava o "no" órfão colado no nome
 // capturado (departamento: "Coids teve no").
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
-  "\\s+(?:n[oa]\\s+)?(?:hoje|ontem"
+  "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
     + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado"
     + "|(?:esse|este)\\s+ano|ano\\s+passado)\\b.*$",
@@ -375,6 +399,7 @@ function cleanFreeText(value) {
     // específico), senão esse pattern (mais genérico, "abertos" solto)
     // comeria só o "abertos" e deixaria o "foram" órfão pra trás.
     .replace(TRAILING_OPEN_STATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_CREATED_BY_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
@@ -417,6 +442,20 @@ const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao
 // isFechadoIntent (item 7 do plano de correção) — ver mais abaixo.
 const TICKET_CONTEXT_SOURCE = `(?:${TICKET_NOUN_SOURCE}s?|solicitacoes)`;
 
+// Vocabulário mínimo que indica que a pergunta é sobre o domínio de tickets,
+// mesmo quando nenhuma entidade foi extraída com sucesso — usado só no
+// catch-all final de routeTicketQuestion (achado P1 da auditoria end-to-end:
+// "qual é a previsão do tempo?" e outras perguntas sem relação nenhuma com
+// tickets caíam silenciosamente em listar_tickets sem filtro, devolvendo uma
+// listagem como se fosse resposta válida). Reaproveita os vocabulários já
+// declarados acima (fechado/aberto/vencido) em vez de duplicar sinônimos.
+const TICKET_DOMAIN_VOCABULARY_PATTERN = new RegExp(
+  `\\b(?:${TICKET_CONTEXT_SOURCE}|resumo|historico|status|prioridade|urgente`
+    + `|critic[oa]s?|area|departamento|operador|responsavel|atendente|cliente`
+    + `|pendente|${CLOSURE_VERB_SOURCE}|${OPEN_STATE_ADJECTIVE_SOURCE}|${OLDEST_PROXY_STATE_SOURCE})\\b`,
+  "u",
+);
+
 export function extractTicketNumber(value) {
   const text = normalizeText(value);
 
@@ -424,6 +463,13 @@ export function extractTicketNumber(value) {
     new RegExp(`\\b${TICKET_NOUN_SOURCE}\\s+(?:numero\\s+)?(\\d+)\\b`),
     new RegExp(`\\bnumero\\s+(?:do\\s+)?(?:${TICKET_NOUN_SOURCE}\\s+)?(\\d+)\\b`),
     /\bn[°º]\s*(\d+)\b/,
+    // Número sozinho, sem nenhuma outra palavra (ex.: "1002") — jeito comum
+    // de perguntar por um ticket específico sem dizer "ticket"/"número"
+    // (achado P3 da auditoria end-to-end: antes caía no fallback
+    // listar_tickets, ignorando o número). Só bate quando o texto INTEIRO é
+    // o número, pra não confundir com um número solto dentro de uma frase
+    // maior sobre outra coisa (ex.: "limite 5", "página 2").
+    /^(\d+)$/,
   ];
 
   for (const pattern of patterns) {
@@ -499,9 +545,70 @@ export function extractDepartmentName(value) {
   ]);
 }
 
+// "por" também introduz fórmulas de cortesia/discurso em português ("por
+// favor", "por gentileza") e conectivos que não têm nada a ver com "feito
+// por alguém" ("por último", "por enquanto", "por exemplo") — confirmado ao
+// vivo: "Liste os tickets abertos por favor" produzia operador: "favor".
+// "usuário" (regressão achada testando o fix do item P5 da auditoria
+// end-to-end): "aguardando feedback DO USUÁRIO" é parte do nome literal de
+// um status, não uma referência a um operador chamado "usuário" — sem essa
+// exclusão, "Quantos tickets estão aguardando feedback do usuário?"
+// capturava operador: "usuário" (inexistente), fazendo a consulta não
+// encontrar nada. Não afeta "tickets do usuário Carlos" (aí quem casa
+// primeiro é o padrão explícito "usuário <nome>", não este).
+// "fornecedor" (de "aguardando retorno DO FORNECEDOR", outro nome literal de
+// status) e "prazo" (de "fora DO PRAZO"/"passou DO PRAZO", vocabulário de
+// SLA vencido) são a mesma regressão do "usuário" acima — varredura
+// completa do arquivo por "do/da <palavra>" feita depois de achar o bug do
+// "usuário" pra não deixar mais casos iguais escondidos.
+const OPERATOR_BY_EXCLUSION_SOURCE =
+  "status\\b|prioridade\\b|[áa]rea\\b|departamento\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
+  + "|fornecedor\\b|prazo\\b"
+  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b";
+
+// "do/da <nome>" ("tickets do João") é bem mais arriscado que "por/pelo" —
+// "do"/"da" também é o conector possessivo comum de área/departamento/
+// cliente/sistema/período, então a lista de exclusão de palavras de domínio
+// precisa ser mais generosa aqui. resolveMetaId continua sendo a rede de
+// segurança final: um valor capturado errado só falha como "não
+// encontrado", não aplica um filtro errado silenciosamente.
+const OPERATOR_DO_DA_EXCLUSION_SOURCE =
+  `${OPERATOR_BY_EXCLUSION_SOURCE}`
+  + "|cliente\\b|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b";
+
+// Achado P5 da auditoria end-to-end: as variantes "por/pelo X" e "do/da X"
+// (antes só na extração usada pelas tools de situação — aberto/fechado/
+// congelado/vencido/mais-antigos/mais-recentes) não estavam ligadas a esta
+// extração genérica, usada por listar_tickets e por qualquer pergunta de
+// status arbitrário sem branch dedicado — confirmado ao vivo: "Mostre os
+// tickets do João que estão aguardando atendimento" perdia o "João" por
+// completo. Unificado aqui numa função só, em vez de manter 2 versões da
+// mesma extração em paralelo (era exatamente esse tipo de duplicação que
+// deixou o fix anterior — "do/da X" — cobrindo só uma das duas).
+// Exclusão usada tanto aqui (padrão "quantos tickets <nome> tem", achado do
+// bug de "Quantos tickets o Fábio Gali tem em aberto?" perder o operador)
+// quanto em extractOperatorWorkloadName mais abaixo (mesma ideia, pra
+// "carga do operador") — evita capturar "a área Suporte"/"o departamento
+// Governança"/etc. como se fosse nome de operador.
+const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
+  "[áa]rea\\b|categoria\\b|departamento\\b|operador\\b|respons[áa]vel\\b|atendente\\b|cliente\\b|status\\b|prioridade\\b";
+
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
     /\b(?:operador|respons[áa]vel|atendente|usu[áa]rio)\s+(?!(?:mais|menos)\b)(.+)$/iu,
+    new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    // "Quantos tickets o Fábio Gali tem em aberto?" (achado testando o
+    // lote de perguntas ao vivo): mesmo padrão de extractOperatorWorkloadName
+    // ("quantos tickets <nome> tem"), mas SEM exigir que "tem" feche a
+    // frase — aqui o resultado só alimenta o filtro genérico de operador
+    // (combinado com o resto da pergunta já resolvido, ex. "em aberto"),
+    // não força a rota de carga (que perderia os outros filtros) como
+    // extractOperatorWorkloadName faz.
+    new RegExp(
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\b.*$`,
+      "iu",
+    ),
   ]);
 }
 
@@ -564,6 +671,18 @@ export function extractLiteralStatus(text) {
   return undefined;
 }
 
+// "baixa/média/alta prioridade" (forma "adjetivo antes do substantivo") —
+// só usado pra detectar CONTRADIÇÃO (achado P6 da auditoria end-to-end, ex.:
+// "tickets urgentes de baixa prioridade"), nunca pra definir o filtro de
+// prioridade sozinho: "baixa"/"média"/"alta" soltas continuam de propósito
+// fora de extractPriorityIntent (adjetivos comuns demais, ver comentário
+// abaixo) — aqui só entram quando acompanhadas da palavra "prioridade".
+const PRIORITY_LEVEL_LITERAL_PATTERNS = [
+  [/\bbaixa\s+prioridade\b/, "Baixa"],
+  [/\bmedia\s+prioridade\b/, "Media"],
+  [/\balta\s+prioridade\b/, "Alta"],
+];
+
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
     /\bprioridade\s+(?:de\s+)?(.+)$/iu,
@@ -612,17 +731,15 @@ export function extractUserName(value) {
 // trabalho, sem palavra-marcador como "operador". Alimenta a análise de
 // carga por operador (analisar_carga_operador), não um filtro de listagem.
 //
-// O lookahead abaixo (usado só no padrão "quantos tickets <nome> tem")
-// evita que outra dimensão já coberta por marcador próprio ("quantos
-// tickets a área Suporte tem", "quantos tickets o departamento Governança
-// tem") seja capturada como se fosse um nome de operador — essas frases já
-// são resolvidas certo mais adiante, na rota de resumo por filtro citado;
-// sem essa exclusão, o padrão de carga (que roda antes na cascata)
-// venceria primeiro e tentaria (e falharia) resolver "área Suporte" como
-// operador.
-const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
-  "[áa]rea\\b|categoria\\b|departamento\\b|operador\\b|respons[áa]vel\\b|atendente\\b|cliente\\b|status\\b|prioridade\\b";
-
+// O lookahead (OPERATOR_WORKLOAD_EXCLUSION_SOURCE, declarado mais acima,
+// perto de extractOperatorName, que também reaproveita) usado só no padrão
+// "quantos tickets <nome> tem" evita que outra dimensão já coberta por
+// marcador próprio ("quantos tickets a área Suporte tem", "quantos tickets
+// o departamento Governança tem") seja capturada como se fosse um nome de
+// operador — essas frases já são resolvidas certo mais adiante, na rota de
+// resumo por filtro citado; sem essa exclusão, o padrão de carga (que roda
+// antes na cascata) venceria primeiro e tentaria (e falharia) resolver
+// "área Suporte" como operador.
 export function extractOperatorWorkloadName(value) {
   return extractByPatterns(value, [
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
@@ -678,45 +795,6 @@ export function extractOperatorComparisonNames(value) {
   }
 
   return undefined;
-}
-
-// Item 8 do plano de correção (achado B11): "por" também introduz fórmulas
-// de cortesia/discurso em português ("por favor", "por gentileza") e
-// conectivos que não têm nada a ver com "feito por alguém" ("por último",
-// "por enquanto", "por exemplo") — confirmado ao vivo: "Liste os tickets
-// abertos por favor" produzia operador: "favor", e "tickets fechados por
-// gentileza?" produzia operador: "gentileza". Mesma lista de exclusão que
-// já existia pras palavras de domínio (status/prioridade/área/...), só
-// estendida — não é uma solução nova, é o mesmo padrão.
-// Item 10 do plano de correção: "do/da <nome>" ("tickets do João") é
-// bem mais arriscado que "por/pelo" — "do"/"da" também é o conector
-// possessivo comum de área/departamento/cliente/sistema/período, então a
-// lista de exclusão de palavras de domínio precisa ser mais generosa aqui
-// (cliente/sistema/mês/ano/semana/período/total, além das já usadas pra
-// "por/pelo") — confirmado com o usuário que "tickets do <operador>" é um
-// jeito comum de perguntar antes de habilitar isso. resolveMetaId continua
-// sendo a rede de segurança final: um valor capturado errado (ex.: "do
-// sistema" se "sistema" escapar da lista) só falha como "não encontrado",
-// não aplica um filtro errado silenciosamente.
-const OPERATOR_BY_EXCLUSION_SOURCE =
-  "status\\b|prioridade\\b|[áa]rea\\b|departamento\\b|operador\\b|p[áa]gina\\b"
-  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b";
-
-const OPERATOR_DO_DA_EXCLUSION_SOURCE =
-  `${OPERATOR_BY_EXCLUSION_SOURCE}`
-  + "|cliente\\b|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b";
-
-function extractOperatorNameForSituacao(value) {
-  return extractByPatterns(value, [
-    /\b(?:operador|respons[áa]vel|atendente)\s+(.+)$/iu,
-    // "pelo/pela" (item 5 do plano de correção) é a mesma preposição de
-    // agente que "por", só contraída com o artigo — mesma lista de exclusão
-    // já usada pra "por", já que o risco de falso positivo é idêntico.
-    new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
-    // "do/da <nome>" (item 10) — ver comentário acima sobre a lista de
-    // exclusão mais generosa.
-    new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
-  ]);
 }
 
 export function extractDateRange(value) {
@@ -1093,6 +1171,42 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
+  // Achado P6 da auditoria end-to-end: perguntas com 2 valores mutuamente
+  // exclusivos da mesma dimensão (ex.: "tickets urgentes de baixa
+  // prioridade", "tickets encerrados que estão em atendimento") eram
+  // resolvidas silenciosamente pra um dos dois lados, sem avisar da
+  // contradição — confirmado ao vivo nos dois casos.
+  function detectaContradicao() {
+    // Prioridade: o valor já resolvido (via "urgente"/"crítico" solto ou
+    // "prioridade X" direto) conflita com uma menção explícita "<nível>
+    // prioridade" de nível diferente na mesma frase.
+    if (prioridade !== undefined) {
+      for (const [pattern, nivel] of PRIORITY_LEVEL_LITERAL_PATTERNS) {
+        if (pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade)) {
+          return true;
+        }
+      }
+    }
+
+    // Situação: todo status literal reconhecido (STATUS_LITERAL_PATTERNS)
+    // representa um estado NÃO fechado (fechado/encerrado é tratado à parte
+    // via closure_date, nunca entra nessa lista, ver comentário na
+    // declaração) — se a frase também pede "fechado"/"encerrado", as duas
+    // coisas nunca podem ser verdade ao mesmo tempo.
+    if (isFechadoIntent && status !== undefined) {
+      return true;
+    }
+
+    return false;
+  }
+
+  if (detectaContradicao()) {
+    return createClarificationDecision(
+      "esclarecimento_contradicao",
+      "Essa pergunta parece pedir duas coisas que não podem ser verdade ao mesmo tempo (por exemplo, duas prioridades diferentes, ou um status que não combina com \"fechado\"/\"encerrado\"). Pode reformular dizendo só o que você quer ver?",
+    );
+  }
+
   // Item 4 do plano de correção: "parado" sozinho, sem nenhum qualificador
   // por perto, é ambíguo no domínio (pode ser SLA congelado, sem operador,
   // ou só "ticket antigo") — hoje era ignorado em silêncio (virava
@@ -1323,7 +1437,7 @@ export function routeTicketQuestion(pergunta) {
       compactEntities({
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
@@ -1342,7 +1456,7 @@ export function routeTicketQuestion(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
@@ -1400,7 +1514,7 @@ export function routeTicketQuestion(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
@@ -1422,7 +1536,7 @@ export function routeTicketQuestion(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
@@ -1439,7 +1553,7 @@ export function routeTicketQuestion(pergunta) {
       compactEntities({
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         dataInicio,
@@ -1457,7 +1571,7 @@ export function routeTicketQuestion(pergunta) {
       compactEntities({
         area,
         departamento,
-        operador: extractOperatorNameForSituacao(pergunta),
+        operador: extractOperatorName(pergunta),
         cliente,
         prioridade,
         dataInicio,
@@ -1528,6 +1642,32 @@ export function routeTicketQuestion(pergunta) {
         dataFim,
         ordem: ordemRanking,
       }),
+    );
+  }
+
+  // Chegou até aqui sem nenhuma entidade "forte" extraída e sem nenhuma
+  // palavra do vocabulário de tickets no texto — provavelmente a pergunta
+  // não é sobre tickets (achado P1 da auditoria end-to-end). "operador"
+  // sozinho não conta como entidade forte aqui: desde a unificação com
+  // extractOperatorName (achado P5), esse campo pode vir de um "do/da"/
+  // "por/pelo" bem genérico (ex.: "previsão DO TEMPO" capturava operador:
+  // "tempo") — sem outro sinal de domínio, isso não é evidência confiável
+  // de que a pergunta é sobre tickets. Número solto (ex.: "1002") fica de
+  // fora de propósito: é ambíguo, mas plausivelmente uma referência a um
+  // ticket, não claramente fora do domínio.
+  const isBareNumber = /^\d+$/.test(text);
+  const { operador: _operadorIgnoradoParaEsseCheck, ...entidadesFortes } = entities;
+
+  if (
+    Object.keys(entidadesFortes).length === 0
+    && !isBareNumber
+    && !TICKET_DOMAIN_VOCABULARY_PATTERN.test(text)
+  ) {
+    return createClarificationDecision(
+      "fora_do_dominio",
+      "Não entendi essa pergunta como algo relacionado aos tickets do sistema. "
+        + "Você pode perguntar sobre status, prioridade, área, departamento, "
+        + "operador, cliente, período ou número de um ticket, por exemplo.",
     );
   }
 
