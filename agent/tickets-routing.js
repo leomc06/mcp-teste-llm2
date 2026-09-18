@@ -41,8 +41,15 @@ const TRAILING_BARE_VERB_PATTERN = new RegExp(
 // opcional antes do verbo (achado ao corrigir o P5 da auditoria end-to-end:
 // "tickets do João QUE ESTÃO aguardando atendimento" capturava operador:
 // "João que", porque o "que" antes de "estão" não era coberto) — mesma
-// ideia do "no/na" opcional já usado antes da data relativa.
-const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(`\\s+(?:que\\s+)?${ESTAR_SOURCE}\\s+.+$`, "iu");
+// ideia do "no/na" opcional já usado antes da data relativa. "foram"/"foi"
+// como alternativa a está/estão, com "ainda"/"não"/"já" opcionais antes
+// (achado testando o lote de perguntas ao vivo): "...do Ivan Márcio Barbosa
+// QUE AINDA NÃO FORAM RESOLVIDOS" capturava operador: "Ivan Márcio Barbosa
+// que ainda não foram", porque só está/estão eram cobertos, não foi/foram.
+const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:que\\s+)?(?:ainda\\s+)?(?:n[ãa]o\\s+)?(?:j[áa]\\s+)?(?:${ESTAR_SOURCE}|foram|foi)\\s+.+$`,
+  "iu",
+);
 
 // Achado extra descoberto testando o item 10 (mesma causa raiz do item 1):
 // o adjetivo de situação "aberto"/"pendente"/"congelado"/"travado"/
@@ -322,6 +329,27 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "desde agosto"/"a partir de agosto" — mês nomeado sozinho como início de
+  // um intervalo aberto (sem data final, assume até hoje), sem dia nem ano.
+  // Diferente do "desde <data completa>" que extractDateRange já cobre —
+  // achado testando o lote de perguntas ao vivo: "Qual cliente mais abriu
+  // chamados na área WEB DESDE JANEIRO?" não extraía data nenhuma (nem essa
+  // nem a de "no mês de"/"em" abaixo, que exigem outro conector), então o
+  // "desde janeiro" inteiro vazava pro nome da área.
+  const desdeMesNomeadoMatch = text.match(
+    new RegExp(`\\b(?:desde|a\\s+partir\\s+de)\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`, "iu"),
+  );
+
+  if (desdeMesNomeadoMatch) {
+    const mes = Number(MONTH_NUMBERS[desdeMesNomeadoMatch[1].toLowerCase()]);
+    const ano = agora.getFullYear();
+
+    return {
+      dataInicio: formatIsoDate(new Date(ano, mes - 1, 1)),
+      dataFim: formatIsoDate(agora),
+    };
+  }
+
   // "no mês de agosto"/"em agosto" — nome do mês solto, sem dia nem ano.
   // Diferente de LONG_DATE_SOURCE (que exige "de <mês> de <ano>" completo),
   // aqui assume-se o ano corrente, já que é assim que a maioria das
@@ -339,6 +367,36 @@ export function extractRelativeDateRange(text, agora = new Date()) {
       dataInicio: formatIsoDate(new Date(ano, mes - 1, 1)),
       dataFim: formatIsoDate(new Date(ano, mes, 0)),
     };
+  }
+
+  // "há mais de N dias/semanas/meses/anos" — período relativo EM ABERTO
+  // (só teto na data de abertura, sem piso): tickets abertos antes desse
+  // ponto no tempo. Achado testando o lote de perguntas ao vivo (Img 31):
+  // "tickets abertos há mais de 6 meses" não tinha suporte nenhum, o
+  // período inteiro era ignorado em silêncio.
+  // "mês" pluraliza irregular ("meses", não "mes" + "s"), por isso a
+  // unidade lista as duas formas de cada uma por extenso em vez de um
+  // radical + "s?" só (bug achado testando esta própria correção: "6
+  // meses" não batia com "mes" + s? opcional, porque sobra um "e" entre os
+  // dois "s").
+  const haMaisDeMatch = text.match(/\bha\s+mais\s+de\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu);
+
+  if (haMaisDeMatch) {
+    const quantidade = Number(haMaisDeMatch[1]);
+    const unidade = haMaisDeMatch[2].toLowerCase();
+    const limite = new Date(agora);
+
+    if (unidade.startsWith("dia")) {
+      limite.setDate(limite.getDate() - quantidade);
+    } else if (unidade.startsWith("semana")) {
+      limite.setDate(limite.getDate() - quantidade * 7);
+    } else if (unidade.startsWith("mes")) {
+      limite.setMonth(limite.getMonth() - quantidade);
+    } else {
+      limite.setFullYear(limite.getFullYear() - quantidade);
+    }
+
+    return { dataFim: formatIsoDate(limite) };
   }
 
   return undefined;
@@ -377,6 +435,20 @@ const TRAILING_NAMED_MONTH_CLAUSE_PATTERN = new RegExp(
   "iu",
 );
 
+// "desde agosto"/"a partir de agosto" (mês nomeado solto, sem data
+// completa) — mesma ideia do padrão acima, pro intervalo aberto que
+// extractRelativeDateRange também passou a reconhecer.
+const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:desde|a\\s+partir\\s+de)\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
+  "iu",
+);
+
+// "há mais de N dias/semanas/meses/anos" (Img 31) — mesma ideia, pro
+// período relativo em aberto que extractRelativeDateRange também passou a
+// reconhecer.
+const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
+  /\s+h[áa]\s+mais\s+de\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
+
 // "entre agosto e setembro" (intervalo de 2 meses soltos) — mesma ideia,
 // pro intervalo de meses que extractRelativeDateRange também reconhece.
 const TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN = new RegExp(
@@ -384,9 +456,21 @@ const TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN = new RegExp(
   "iu",
 );
 
+// Achado testando o lote de perguntas ao vivo (Img 35): 'Existe algum
+// chamado duplicado sobre "LED DE ALERTA"?' capturava texto: '"LED DE
+// ALERTA"' com as aspas literais dentro — a API de tickets provavelmente
+// faz match por substring contra o texto real do ticket, que não tem aspas
+// nenhuma, então a busca nunca batia com nada. Remove aspas (retas e
+// tipográficas) de qualquer entidade de texto livre capturada, não só busca
+// por texto — o mesmo problema valeria pra um nome de área/operador/cliente
+// entre aspas.
+const QUOTE_CHARACTERS_PATTERN = /["'“”‘’„‟‹›«»]/gu;
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
+    .trim()
+    .replace(QUOTE_CHARACTERS_PATTERN, "")
     .trim()
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
     .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
@@ -403,6 +487,8 @@ function cleanFreeText(value) {
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_HA_MAIS_DE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
@@ -561,20 +647,22 @@ export function extractDepartmentName(value) {
 // SLA vencido) são a mesma regressão do "usuário" acima — varredura
 // completa do arquivo por "do/da <palavra>" feita depois de achar o bug do
 // "usuário" pra não deixar mais casos iguais escondidos.
+// Lista única de palavras de domínio, compartilhada pelos padrões "por/pelo"
+// e "do/da" — "cliente"/"sistema"/"mês"/"ano"/"semana"/"período"/"total"
+// também vazavam via "por" (achado testando "Quantos tickets por cliente?" →
+// operador: "cliente" de brinde, corrompendo o filtro de resumo_por_cliente)
+// e não só via "do/da", então não faz sentido as duas listas divergirem:
+// se uma palavra é arriscada demais pra um conector possessivo, é arriscada
+// do mesmo jeito pro outro. resolveMetaId continua sendo a rede de segurança
+// final: um valor capturado errado só falha como "não encontrado", não
+// aplica um filtro errado silenciosamente.
 const OPERATOR_BY_EXCLUSION_SOURCE =
-  "status\\b|prioridade\\b|[áa]rea\\b|departamento\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
+  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b"
-  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b";
+  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
+  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b";
 
-// "do/da <nome>" ("tickets do João") é bem mais arriscado que "por/pelo" —
-// "do"/"da" também é o conector possessivo comum de área/departamento/
-// cliente/sistema/período, então a lista de exclusão de palavras de domínio
-// precisa ser mais generosa aqui. resolveMetaId continua sendo a rede de
-// segurança final: um valor capturado errado só falha como "não
-// encontrado", não aplica um filtro errado silenciosamente.
-const OPERATOR_DO_DA_EXCLUSION_SOURCE =
-  `${OPERATOR_BY_EXCLUSION_SOURCE}`
-  + "|cliente\\b|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b";
+const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
 
 // Achado P5 da auditoria end-to-end: as variantes "por/pelo X" e "do/da X"
 // (antes só na extração usada pelas tools de situação — aberto/fechado/
@@ -589,9 +677,15 @@ const OPERATOR_DO_DA_EXCLUSION_SOURCE =
 // bug de "Quantos tickets o Fábio Gali tem em aberto?" perder o operador)
 // quanto em extractOperatorWorkloadName mais abaixo (mesma ideia, pra
 // "carga do operador") — evita capturar "a área Suporte"/"o departamento
-// Governança"/etc. como se fosse nome de operador.
+// Governança"/etc. como se fosse nome de operador. Reaproveita a mesma lista
+// unificada de OPERATOR_BY_EXCLUSION_SOURCE (+ "responsável"/"atendente",
+// que só fazem sentido aqui) em vez de manter uma terceira lista divergente
+// — achado ao vivo testando a mesma classe de bug: "Quantos tickets o
+// sistema/mês/fornecedor/usuário tem?" todos roteavam pra
+// analisar_carga_operador com um "operador" inventado, porque essa lista
+// nunca tinha ganhado as palavras já excluídas nas outras duas.
 const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
-  "[áa]rea\\b|categoria\\b|departamento\\b|operador\\b|respons[áa]vel\\b|atendente\\b|cliente\\b|status\\b|prioridade\\b";
+  `${OPERATOR_BY_EXCLUSION_SOURCE}|respons[áa]vel\\b|atendente\\b`;
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
@@ -777,6 +871,42 @@ export function extractOperatorComparisonNames(value) {
     /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
     /^(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
+    // "atende(m) mais tickets/chamados que" (achado testando o lote de
+    // perguntas ao vivo — Img 28): mesma ideia comparativa de "tem"/"está
+    // com", só que com o verbo "atender", também comum na fala natural.
+    /^(.+?)\s+atendem?\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    const nome1 = cleanFreeText(match[1]);
+    const nome2 = cleanFreeText(match[2]);
+
+    if (nome1 !== undefined && nome2 !== undefined) {
+      return [nome1, nome2];
+    }
+  }
+
+  return undefined;
+}
+
+// Mesma ideia de extractOperatorComparisonNames, mas pra 2 CLIENTES em vez
+// de 2 operadores (achado testando o lote de perguntas ao vivo — Img 33):
+// "Quem abriu mais chamados: o cliente X ou o cliente Y?" não tinha nenhum
+// suporte, caía sempre no fallback genérico sem comparação nenhuma. Exige a
+// palavra "cliente" explícita nos dois lados (não generaliza pra "compare X
+// e Y" solto, que já é reservado pra operador).
+export function extractClientComparisonNames(value) {
+  const text = String(value ?? "");
+
+  const patterns = [
+    /\bquem\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s*:?\s*(?:o\s+)?cliente\s+(.+?)\s+ou\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    /^(?:o\s+)?cliente\s+(.+?)\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?cliente\s+(.+)$/iu,
   ];
 
   for (const pattern of patterns) {
@@ -998,6 +1128,15 @@ export function routeTicketQuestion(pergunta) {
     return createCompareDecision("comparar_carga_operador", [
       { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[0] } },
       { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[1] } },
+    ]);
+  }
+
+  const comparacaoClientes = extractClientComparisonNames(pergunta);
+
+  if (comparacaoClientes !== undefined) {
+    return createCompareDecision("comparar_atividade_cliente", [
+      { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[0] } },
+      { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[1] } },
     ]);
   }
 
@@ -1348,7 +1487,12 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
-      compactEntities({ status, area, operador, limite, ordem: ordemRanking }),
+      // dataInicio/dataFim faltavam aqui (achado B13/item 6 do plano de
+      // correção): "Quantos tickets por departamento entre 2026-01-01 e
+      // 2026-02-01?" descartava o período em silêncio, diferente de todo
+      // branch irmão (status/prioridade/área/operador/cliente), que já
+      // repassa a data extraída no topo da função.
+      compactEntities({ status, area, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
   }
 
@@ -1497,12 +1641,18 @@ export function routeTicketQuestion(pergunta) {
   const isOldestOverallIntent = /\bprimeir[oa]s?\s+\d+\b|\b\d+\s+primeir[oa]s?\b/.test(text);
 
   // "ultimo" também ganhou o \b de fechamento que faltava (bug de regex
-  // simples, evita casar como prefixo de outra palavra).
+  // simples, evita casar como prefixo de outra palavra). "por ultimo" no
+  // início da frase é conectivo de discurso ("por último, me diz..."), não
+  // pedido de ordenação por recência — mesma classe de falso positivo do
+  // item 8 (cortesia/discurso não é nome), confirmado ao vivo: "Por último,
+  // me diz quantos tickets tem no total" roteava pra mais_recentes, ignorando
+  // a pergunta real (quantidade total).
   const isMostRecentIntent =
-    /\brecent/.test(text)
-    || /\bultimos?\b/.test(text)
-    || /\bmais\s+nov[oa]/.test(text)
-    || /\brecem\b/.test(text);
+    (/\brecent/.test(text)
+      || /\bultimos?\b/.test(text)
+      || /\bmais\s+nov[oa]/.test(text)
+      || /\brecem\b/.test(text))
+    && !/\bpor\s+ultimo\b/.test(text);
 
   if (isOldestOverallIntent) {
     const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
@@ -1550,7 +1700,15 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "listar_abertos",
       "listar_tickets_abertos",
+      // status entra aqui (achado Img 31): "tickets abertos aguardando
+      // atendimento" tinha o status literal extraído no topo da função, mas
+      // esse branch descartava em silêncio — mesma classe do B13/item 6 do
+      // plano de correção, só que faltando nesta dupla específica em vez
+      // das de resumo. Seguro aqui porque detectaContradicao já barra a
+      // combinação equivalente do lado fechado (status literal nunca é um
+      // status de fechamento).
       compactEntities({
+        status,
         area,
         departamento,
         operador: extractOperatorName(pergunta),
@@ -1569,6 +1727,7 @@ export function routeTicketQuestion(pergunta) {
       "listar_fechados",
       "listar_tickets_fechados",
       compactEntities({
+        status,
         area,
         departamento,
         operador: extractOperatorName(pergunta),

@@ -70,6 +70,33 @@ const server = new McpServer({ name: "tickets-mcp", version: "1.0.0" });
 const { fetchAllTicketsSafe, listTicketsSafe, contarTicketsExato, contarAbertosFechados } =
   createTicketHelpers(ticketsApi);
 
+// P11 da auditoria end-to-end: cada resumo por dimensão (status/área/
+// operador/departamento) contava 1 item de catálogo por vez dentro de
+// mapWithConcurrency sem nenhuma tolerância a erro — se 1 chamada falhasse
+// (timeout, 5xx transitório), a rajada inteira rejeitava e o resumo virava
+// um erro genérico, mesmo com dezenas de outros itens já contados com
+// sucesso. Aqui cada item roda isolado: se falhar, vira "quantidade:
+// undefined" (excluído das somas via `?? 0`/filtros de quem chama) e entra
+// na contagem de falhas devolvida, pra quem chama decidir como avisar disso
+// na resposta em vez de descartar a rajada toda.
+async function contarPorCatalogo(itens, contarItem) {
+  let falhas = 0;
+
+  const resultados = await mapWithConcurrency(itens, FAN_OUT_CONCURRENCY, async (item) => {
+    try {
+      return { chave: item.name, quantidade: await contarItem(item) };
+    } catch (error) {
+      falhas += 1;
+      console.error(
+        `Falha ao contar tickets para "${item.name}", item ignorado neste resumo — ${error?.message ?? error}`,
+      );
+      return { chave: item.name, quantidade: undefined };
+    }
+  });
+
+  return { resultados, falhas };
+}
+
 server.registerTool(
   "listar_areas_tickets",
   {
@@ -380,14 +407,16 @@ server.registerTool(
       // abertura (só locais), dá pra contar cada status com chamadas
       // baratas e nunca truncar, mesmo em filtros com milhares de tickets.
       if (prioridade === undefined && dataInicio === undefined && dataFim === undefined) {
-        const porStatus = await mapWithConcurrency(statuses, FAN_OUT_CONCURRENCY, async (item) => ({
-          chave: item.name,
-          quantidade: await contarTicketsExato({ ...filtrosBase, status: item.id }),
-        }));
+        const { resultados: porStatus, falhas } = await contarPorCatalogo(statuses, (item) =>
+          contarTicketsExato({ ...filtrosBase, status: item.id }),
+        );
 
         const totalGeral = await contarTicketsExato(filtrosBase);
-        const somaStatus = porStatus.reduce((soma, item) => soma + item.quantidade, 0);
-        const naoInformado = Math.max(totalGeral - somaStatus, 0);
+        const somaStatus = porStatus.reduce((soma, item) => soma + (item.quantidade ?? 0), 0);
+        // Só dá pra calcular "não informado" com confiança se TODO status foi
+        // contado — com falha, a diferença pro total pode ser só o item que
+        // falhou, não tickets genuinamente sem status.
+        const naoInformado = falhas === 0 ? Math.max(totalGeral - somaStatus, 0) : undefined;
 
         const resumo = porStatus.filter((item) => item.quantidade > 0);
 
@@ -402,6 +431,7 @@ server.registerTool(
           filtros: { area, departamento, operador, prioridade, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
+          ...(falhas > 0 ? { itensComErro: falhas } : {}),
           abertos: totalGeral - fechados,
           fechados,
           resumo: rankearResumo(resumo, totalGeral, limite, ordem),
@@ -589,16 +619,13 @@ server.registerTool(
       // abertura (só locais), dá pra contar cada área com chamadas baratas
       // e nunca truncar, mesmo em filtros com milhares de tickets.
       if (prioridade === undefined && dataInicio === undefined && dataFim === undefined) {
-        const [porArea, { totalGeral, abertos, fechados }] = await Promise.all([
-          mapWithConcurrency(areas, FAN_OUT_CONCURRENCY, async (item) => ({
-            chave: item.name,
-            quantidade: await contarTicketsExato({ ...filtrosBase, area: item.id }),
-          })),
+        const [{ resultados: porArea, falhas }, { totalGeral, abertos, fechados }] = await Promise.all([
+          contarPorCatalogo(areas, (item) => contarTicketsExato({ ...filtrosBase, area: item.id })),
           contarAbertosFechados(filtrosBase, statuses, statusResolvido.id),
         ]);
 
-        const somaAreas = porArea.reduce((soma, item) => soma + item.quantidade, 0);
-        const semArea = Math.max(totalGeral - somaAreas, 0);
+        const somaAreas = porArea.reduce((soma, item) => soma + (item.quantidade ?? 0), 0);
+        const semArea = falhas === 0 ? Math.max(totalGeral - somaAreas, 0) : undefined;
 
         const resumo = porArea.filter((item) => item.quantidade > 0);
 
@@ -610,6 +637,7 @@ server.registerTool(
           filtros: { status, departamento, operador, prioridade, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
+          ...(falhas > 0 ? { itensComErro: falhas } : {}),
           abertos,
           fechados,
           resumo: rankearResumo(resumo, totalGeral, limite, ordem),
@@ -709,14 +737,13 @@ server.registerTool(
       // abertura (só locais), dá pra contar cada operador com chamadas
       // baratas e nunca truncar, mesmo em filtros com milhares de tickets.
       if (prioridade === undefined && situacao === undefined && dataInicio === undefined && dataFim === undefined) {
-        const porOperador = await mapWithConcurrency(usuarios, FAN_OUT_CONCURRENCY, async (item) => ({
-          chave: item.name,
-          quantidade: await contarTicketsExato({ ...filtrosBase, operator: item.id }),
-        }));
+        const { resultados: porOperador, falhas } = await contarPorCatalogo(usuarios, (item) =>
+          contarTicketsExato({ ...filtrosBase, operator: item.id }),
+        );
 
         const totalGeral = await contarTicketsExato(filtrosBase);
-        const somaOperadores = porOperador.reduce((soma, item) => soma + item.quantidade, 0);
-        const semOperador = Math.max(totalGeral - somaOperadores, 0);
+        const somaOperadores = porOperador.reduce((soma, item) => soma + (item.quantidade ?? 0), 0);
+        const semOperador = falhas === 0 ? Math.max(totalGeral - somaOperadores, 0) : undefined;
 
         const resumo = porOperador.filter((item) => item.quantidade > 0);
 
@@ -728,6 +755,7 @@ server.registerTool(
           filtros: { status, area, departamento, prioridade, situacao, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
+          ...(falhas > 0 ? { itensComErro: falhas } : {}),
           resumo: rankearResumo(resumo, totalGeral, limite, ordem),
         });
       }
@@ -817,18 +845,17 @@ server.registerTool(
         operator: operadorResolvido.id,
       };
 
-      const [totalGeral, porDepartamento] = await Promise.all([
+      const [totalGeral, { resultados: porDepartamento, falhas }] = await Promise.all([
         contarTicketsExato(filtrosBase),
-        mapWithConcurrency(departamentos, FAN_OUT_CONCURRENCY, async (departamento) => ({
-          chave: departamento.name,
-          quantidade: await contarTicketsExato({ ...filtrosBase, department: departamento.id }),
-        })),
+        contarPorCatalogo(departamentos, (departamento) =>
+          contarTicketsExato({ ...filtrosBase, department: departamento.id }),
+        ),
       ]);
 
-      const somaDepartamentos = porDepartamento.reduce((soma, item) => soma + item.quantidade, 0);
-      const semDepartamento = Math.max(totalGeral - somaDepartamentos, 0);
+      const somaDepartamentos = porDepartamento.reduce((soma, item) => soma + (item.quantidade ?? 0), 0);
+      const semDepartamento = falhas === 0 ? Math.max(totalGeral - somaDepartamentos, 0) : undefined;
 
-      const resumo = [...porDepartamento];
+      const resumo = porDepartamento.filter((item) => item.quantidade !== undefined);
 
       if (semDepartamento > 0) {
         resumo.push({ chave: "não atribuído", quantidade: semDepartamento });
@@ -838,6 +865,7 @@ server.registerTool(
         filtros: { status, area, operador },
         total_tickets: totalGeral,
         truncado: false,
+        ...(falhas > 0 ? { itensComErro: falhas } : {}),
         resumo: rankearResumo(resumo, totalGeral, limite, ordem),
       });
     } catch (error) {
@@ -1156,8 +1184,24 @@ server.registerTool(
         });
       }
 
-      const detalhes = await mapWithConcurrency(candidatos, FAN_OUT_CONCURRENCY, (ticket) =>
-        ticketsApi.getTicket(ticket.number));
+      // P11 da auditoria end-to-end: antes, se 1 getTicket() falhasse no meio
+      // do lote (timeout, 5xx transitório), a rajada inteira rejeitava e a
+      // tool inteira falhava — mesmo os outros candidatos já verificados com
+      // sucesso. Cada ticket agora falha isolado (vira undefined, excluído
+      // do resultado via o `?.lifetime` abaixo) e é contado em falhasSla,
+      // devolvido na resposta pra não fingir que a verificação foi completa.
+      let falhasSla = 0;
+      const detalhes = await mapWithConcurrency(candidatos, FAN_OUT_CONCURRENCY, async (ticket) => {
+        try {
+          return await ticketsApi.getTicket(ticket.number);
+        } catch (error) {
+          falhasSla += 1;
+          console.error(
+            `listar_tickets_vencidos: falha ao verificar o SLA do ticket ${ticket.number}, ele foi ignorado nesta consulta — ${error?.message ?? error}`,
+          );
+          return undefined;
+        }
+      });
 
       const vencidos = candidatos
         .map((ticket, indice) => ({ ticket, lifetime: detalhes[indice]?.lifetime }))
@@ -1171,6 +1215,7 @@ server.registerTool(
       return success({
         quantidade_total: vencidos.length,
         truncado,
+        ...(falhasSla > 0 ? { itensComErro: falhasSla } : {}),
         pagina,
         paginas: totalPaginas,
         tickets: vencidos.slice(inicio, inicio + limite),
@@ -1455,8 +1500,9 @@ server.registerTool(
   "listar_tickets_abertos",
   {
     title: "Listar tickets abertos",
-    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
+      status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
@@ -1468,16 +1514,19 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
-      const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
-        resolveMetaId(() => ticketsApi.listAreas(), area),
-        resolveMetaId(() => ticketsApi.listDepartments(), departamento),
-        resolveMetaId(() => ticketsApi.listUsers(), operador),
-        resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
-      ]);
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
+        await Promise.all([
+          resolveMetaId(() => ticketsApi.listStatuses(), status),
+          resolveMetaId(() => ticketsApi.listAreas(), area),
+          resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+          resolveMetaId(() => ticketsApi.listUsers(), operador),
+          resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
+        ]);
 
       const naoEncontrados = [
+        statusResolvido.naoEncontrado ? `status "${status}"` : null,
         areaResolvida.naoEncontrado ? `área "${area}"` : null,
         departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
         operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
@@ -1493,6 +1542,7 @@ server.registerTool(
 
       const { tickets, truncado } = await fetchAllTicketsSafe(
         {
+          status: statusResolvido.id,
           area: areaResolvida.id,
           department: departamentoResolvido.id,
           operator: operadorResolvido.id,
@@ -1533,8 +1583,9 @@ server.registerTool(
   "listar_tickets_fechados",
   {
     title: "Listar tickets fechados",
-    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por área, departamento, operador, cliente (solicitante), prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
+    description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
+      status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
@@ -1546,16 +1597,19 @@ server.registerTool(
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
-      const [areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
-        resolveMetaId(() => ticketsApi.listAreas(), area),
-        resolveMetaId(() => ticketsApi.listDepartments(), departamento),
-        resolveMetaId(() => ticketsApi.listUsers(), operador),
-        resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
-      ]);
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
+        await Promise.all([
+          resolveMetaId(() => ticketsApi.listStatuses(), status),
+          resolveMetaId(() => ticketsApi.listAreas(), area),
+          resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+          resolveMetaId(() => ticketsApi.listUsers(), operador),
+          resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
+        ]);
 
       const naoEncontrados = [
+        statusResolvido.naoEncontrado ? `status "${status}"` : null,
         areaResolvida.naoEncontrado ? `área "${area}"` : null,
         departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
         operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
@@ -1570,6 +1624,7 @@ server.registerTool(
       }
 
       const { tickets, truncado } = await fetchAllTicketsSafe({
+        status: statusResolvido.id,
         area: areaResolvida.id,
         department: departamentoResolvido.id,
         operator: operadorResolvido.id,
@@ -1803,6 +1858,71 @@ server.registerTool(
 
       return success({
         operador: operadorResolvido.nomeCanonico,
+        truncado,
+        total: tickets.length,
+        abertos: abertos.length,
+        fechados: fechados.length,
+        congelados: congelados.length,
+        prioridade_alta_ou_urgente: contarPrioridadeAltaOuUrgente(abertos),
+        mais_antigo_aberto:
+          maisAntigoAberto === undefined
+            ? null
+            : {
+                numero: maisAntigoAberto.number,
+                opening_date: maisAntigoAberto.opening_date,
+                dias_em_aberto: diasEmAberto(maisAntigoAberto.opening_date),
+              },
+      });
+    } catch (error) {
+      return ticketsFailure(error);
+    }
+  },
+);
+
+// Achado testando o lote de perguntas ao vivo (Img 33): não existia nenhuma
+// tool equivalente a analisar_carga_operador, mas pra cliente — "quem abriu
+// mais chamados, o cliente X ou o cliente Y?" caía sempre no fallback
+// genérico sem comparação nenhuma. Diferente de operador (que tem um
+// catálogo real via /meta/users e resolveMetaId), cliente não tem catálogo
+// próprio na API — mesmo filtro por substring em contact_name que já é
+// usado em todas as outras tools com filtro de cliente (ex.:
+// resumo_tickets_por_cliente), por isso não há uma checagem de "não
+// encontrado" prévia via resolveMetaId aqui: "não encontrado" é inferido
+// depois, por zero tickets baterem com o nome.
+server.registerTool(
+  "analisar_atividade_cliente",
+  {
+    title: "Analisar atividade de um cliente",
+    description: "Retorna a atividade de um cliente/solicitante específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto). Use para perguntas como \"o cliente Acme abre muito chamado?\" ou comparações do tipo \"o cliente X abriu mais chamados que o cliente Y?\".",
+    inputSchema: {
+      cliente: z.string().trim().min(1).max(100),
+    },
+  },
+  async ({ cliente }) => {
+    try {
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe({});
+      const clienteAlvo = normalizeForMatch(cliente);
+      const tickets = todos.filter((ticket) => normalizeForMatch(ticket.contact_name).includes(clienteAlvo));
+
+      if (tickets.length === 0) {
+        return success({
+          encontrado: false,
+          motivo: `Não encontrado(s): cliente "${cliente}".`,
+        });
+      }
+
+      const abertos = tickets.filter((ticket) => !ticket.closure_date);
+      const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
+      const congelados = tickets.filter((ticket) => ticket.is_frozen === true);
+
+      const maisAntigoAberto = abertos.reduce(
+        (mais_antigo, ticket) =>
+          mais_antigo === undefined || ticket.opening_date < mais_antigo.opening_date ? ticket : mais_antigo,
+        undefined,
+      );
+
+      return success({
+        cliente: tickets[0].contact_name,
         truncado,
         total: tickets.length,
         abertos: abertos.length,

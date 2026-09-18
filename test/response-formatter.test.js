@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { formatToolResults } from "../agent/response-formatter.js";
+import { AgentError } from "../agent/agent-error.js";
 
 function format(tool, dados) {
   return formatToolResults([{ tool, dados }]);
@@ -188,6 +189,49 @@ test("formata os comentários (entries) do ticket, não só a contagem", () => {
   assert.match(resposta, /Comentários \(2\):/);
   assert.match(resposta, /\[25\/02\/2026 09:18\] Bruno de Souza Castro: Em atendimento/);
   assert.match(resposta, /Arquivos identificados, renomeados e processamento seguindo sem conflito\./);
+});
+
+test("P12 da auditoria: HTML cru na descrição e nos comentários do detalhe do ticket é removido", () => {
+  const resposta = format("buscar_ticket_por_numero", {
+    encontrado: true,
+    ticket: {
+      number: 4830,
+      opening_date: "2026-02-25 09:00:00",
+      priority: "Baixa",
+      area: "WEB",
+      issue: "Portal",
+      operator: "admin",
+      status: "ENCERRADA",
+      description: "Prezado,<br />\r\nSem acesso ao sistema.<br /><br />Att,",
+      entries: [
+        {
+          entry: "Verificado <b>com o cliente</b><br />segue em análise.",
+          author: "Bruno de Souza Castro",
+          date: "2026-02-25 09:18:13",
+          type: 2,
+        },
+      ],
+      files: [],
+    },
+  });
+
+  assert.doesNotMatch(resposta, /<br|<b>|<\/b>/);
+  assert.match(resposta, /Descrição: Prezado, Sem acesso ao sistema\. Att,/);
+  assert.match(resposta, /Verificado com o cliente segue em análise\./);
+});
+
+test("P14 da auditoria: formatToolResults sem resultado nenhum lança AgentError, não Error genérico", () => {
+  assert.throws(
+    () => formatToolResults([]),
+    (error) => error instanceof AgentError && error.code === "nenhum_resultado_informado",
+  );
+});
+
+test("P14 da auditoria: tool sem formatador conhecido lança AgentError, não Error genérico", () => {
+  assert.throws(
+    () => format("tool_inexistente", {}),
+    (error) => error instanceof AgentError && error.code === "resultado_nao_suportado",
+  );
 });
 
 test("ticket não encontrado retorna mensagem amigável", () => {

@@ -1,3 +1,5 @@
+import { AgentError } from "./agent-error.js";
+
 // Quando o resultado vem vazio E truncado ao mesmo tempo (ex.: filtro de
 // período antigo combinado com uma busca que já parou nos tickets mais
 // recentes por volume), dizer só "nenhum encontrado" é enganoso — parece
@@ -117,6 +119,16 @@ function stripHtmlTags(value) {
   return typeof value === "string"
     ? value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
     : value;
+}
+
+// P11 da auditoria end-to-end: quando uma rajada de contagem/verificação por
+// item (resumo por dimensão, SLA de listar_tickets_vencidos) tem algum item
+// que falhou (em vez de derrubar a chamada inteira, ver contarPorCatalogo em
+// src/server.js), o resultado é honesto sobre quantos itens ficaram de fora.
+function itensComErroAviso(data) {
+  return data.itensComErro
+    ? ` (${data.itensComErro} item(ns) não puderam ser verificados e foram ignorados)`
+    : "";
 }
 
 function truncateText(value, maxLength) {
@@ -255,7 +267,7 @@ function formatTicketDetail(data) {
   ];
 
   if (ticket.description) {
-    details.push(`Descrição: ${decodeHtmlEntities(ticket.description)}`);
+    details.push(`Descrição: ${stripHtmlTags(decodeHtmlEntities(ticket.description))}`);
   }
 
   if (ticket.treatment_date) {
@@ -284,7 +296,7 @@ function formatTicketDetail(data) {
     for (const entrada of entries) {
       const quando = formatNaiveDateTime(entrada.date);
       const autor = decodeHtmlEntities(entrada.author) ?? "desconhecido";
-      const texto = decodeHtmlEntities(entrada.entry) ?? "";
+      const texto = stripHtmlTags(decodeHtmlEntities(entrada.entry)) ?? "";
       details.push(`  - [${quando}] ${autor}: ${texto}`);
     }
   } else {
@@ -394,7 +406,7 @@ function formatTicketSummary(data, dimensaoLabel) {
     : "";
 
   const linhas = [
-    `Resumo de ${data.total_tickets ?? 0} ticket(s) por ${dimensaoLabel}${truncadoAviso}:`,
+    `Resumo de ${data.total_tickets ?? 0} ticket(s) por ${dimensaoLabel}${truncadoAviso}${itensComErroAviso(data)}:`,
     ...resumo.map((row) =>
       row.percentual !== undefined
         ? `- ${decodeHtmlEntities(row.chave)}: ${row.quantidade} (${row.percentual}%)`
@@ -582,7 +594,7 @@ function formatOverdueTickets(data) {
       : "";
 
   return [
-    `${tickets.length} ticket(s) com SLA vencido de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
+    `${tickets.length} ticket(s) com SLA vencido de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}${itensComErroAviso(data)}:`,
     ...tickets.map((ticket) => `- ${formatTicket(ticket, { incluirSla: true })}`),
   ].join("\n");
 }
@@ -640,6 +652,36 @@ function formatOperatorWorkload(data) {
   return linhas.join("\n");
 }
 
+// Mesma forma de formatOperatorWorkload, só que pra cliente (Img 33) — sem
+// catálogo próprio pra cliente na API, então não tem o "não encontrado"
+// prévio de resolveMetaId, só o caso de zero tickets terem batido no filtro
+// por substring (ver analisar_atividade_cliente em src/server.js).
+function formatClientActivity(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  const linhas = [
+    `Atividade de ${decodeHtmlEntities(data.cliente)}: ${data.total} ticket(s) no total ` +
+      `(${data.abertos} aberto(s), ${data.fechados} fechado(s))${truncadoAviso}.`,
+    `- Com SLA congelado: ${data.congelados}`,
+    `- Prioridade alta ou urgente (entre os abertos): ${data.prioridade_alta_ou_urgente}`,
+  ];
+
+  linhas.push(
+    data.mais_antigo_aberto
+      ? `- Ticket aberto mais antigo: #${data.mais_antigo_aberto.numero}, há ${data.mais_antigo_aberto.dias_em_aberto} dia(s) `
+        + `(desde ${formatDate(data.mais_antigo_aberto.opening_date)})`
+      : "- Nenhum ticket em aberto no momento.",
+  );
+
+  return linhas.join("\n");
+}
+
 // "Compare X e Y" chama a MESMA tool duas vezes (uma por lado) — só faz
 // sentido pra tools cujo resultado já é auto-contido (carga de 1 operador,
 // detalhe de 1 ticket); reaproveita o formatter de cada uma individualmente
@@ -648,13 +690,17 @@ function formatOperatorWorkload(data) {
 const COMPARISON_FORMATTERS = {
   analisar_carga_operador: formatOperatorWorkload,
   buscar_ticket_por_numero: formatTicketDetail,
+  analisar_atividade_cliente: formatClientActivity,
 };
 
 export function formatComparison(toolName, dadosArray) {
   const formatter = COMPARISON_FORMATTERS[toolName];
 
   if (!formatter) {
-    throw new Error(`Comparação não suportada para a tool "${toolName}".`);
+    throw new AgentError(
+      "comparacao_nao_suportada",
+      `Comparação não suportada para a tool "${toolName}".`,
+    );
   }
 
   return dadosArray
@@ -745,8 +791,12 @@ function formatOne(toolResult) {
     case "analisar_carga_operador":
       return formatOperatorWorkload(dados);
 
+    case "analisar_atividade_cliente":
+      return formatClientActivity(dados);
+
     default:
-      throw new Error(
+      throw new AgentError(
+        "resultado_nao_suportado",
         "Resultado de tool não suportado pelo formatador.",
       );
   }
@@ -754,7 +804,8 @@ function formatOne(toolResult) {
 
 export function formatToolResults(toolResults) {
   if (!Array.isArray(toolResults) || toolResults.length === 0) {
-    throw new Error(
+    throw new AgentError(
+      "nenhum_resultado_informado",
       "Nenhum resultado de tool foi informado ao formatador.",
     );
   }

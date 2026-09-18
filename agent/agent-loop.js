@@ -2,14 +2,9 @@ import { formatToolResults, formatComparison } from "./response-formatter.js";
 import {
   normalizeText,
 } from "./routing-utils.js";
+import { AgentError } from "./agent-error.js";
 
-export class AgentError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = "AgentError";
-    this.code = code;
-  }
-}
+export { AgentError };
 
 function mcpContentToText(result) {
   if (!Array.isArray(result.content)) {

@@ -28,6 +28,7 @@ const allowedToolNames = new Set([
   "listar_tickets_mais_antigos",
   "resumo_operacional_tickets",
   "analisar_carga_operador",
+  "analisar_atividade_cliente",
 ]);
 
 // `createTransport`/`createClient` têm defaults que produzem o cliente MCP

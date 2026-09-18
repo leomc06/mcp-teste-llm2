@@ -7,6 +7,7 @@ import {
   extractDateRange,
   extractDepartmentName,
   extractOperatorComparisonNames,
+  extractClientComparisonNames,
   extractOperatorName,
   extractOperatorWorkloadName,
   extractPage,
@@ -80,6 +81,16 @@ test("roteia resumo de tickets por departamento", () => {
   assert.deepEqual(route.toolNames, ["resumo_tickets_por_departamento"]);
 });
 
+test("resumo por departamento repassa o período informado (não descarta mais dataInicio/dataFim)", () => {
+  const route = routeTicketQuestion(
+    "Quantos tickets por departamento entre 2026-01-01 e 2026-02-01?",
+  );
+
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_departamento"]);
+  assert.equal(route.entities.dataInicio, "2026-01-01");
+  assert.equal(route.entities.dataFim, "2026-02-01");
+});
+
 test("resumo por operador com filtro de área não é capturado pela dimensão de área", () => {
   const route = routeTicketQuestion("Quantos tickets por operador na área de Suporte?");
 
@@ -139,11 +150,116 @@ test("bug: 'liste todos os status'/'liste todas as areas' com quantificador não
   );
 });
 
+test("'que ainda não foram resolvidos' não vaza pro nome do operador capturado", () => {
+  const route = routeTicketQuestion(
+    "Me mostra os chamados urgentes do Ivan Márcio Barbosa que ainda não foram resolvidos.",
+  );
+
+  assert.equal(route.entities.operador, "Ivan Márcio Barbosa");
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("'desde <mês>'/'a partir de <mês>' vira dataInicio/dataFim (até hoje) e não vaza pro nome da área", () => {
+  const route = routeTicketQuestion("Qual cliente mais abriu chamados na área WEB desde janeiro?");
+  const anoAtual = new Date().getFullYear();
+  const hoje = new Date().toISOString().slice(0, 10);
+
+  assert.equal(route.entities.area, "WEB");
+  assert.equal(route.entities.dataInicio, `${anoAtual}-01-01`);
+  assert.equal(route.entities.dataFim, hoje);
+});
+
+test("status literal combinado com situação aberta funciona junto (Img 31)", () => {
+  const route = routeTicketQuestion(
+    "Existem tickets abertos há mais de 6 meses que ainda estão aguardando atendimento?",
+  );
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.status, "Aguardando atendimento");
+  assert.ok(route.entities.dataFim !== undefined);
+});
+
+test("'há mais de N dias/semanas/meses/anos' vira dataFim (teto de abertura) e não vaza pro nome da área (Img 31)", () => {
+  const semanas = routeTicketQuestion("Tickets da área Suporte abertos há mais de 3 semanas.");
+  assert.equal(semanas.entities.area, "Suporte");
+  assert.ok(semanas.entities.dataFim !== undefined);
+  assert.equal(semanas.entities.dataInicio, undefined);
+
+  const meses = routeTicketQuestion("Tickets abertos há mais de 6 meses.");
+  assert.ok(meses.entities.dataFim !== undefined);
+
+  const anos = routeTicketQuestion("Tickets abertos há mais de 1 ano.");
+  assert.ok(anos.entities.dataFim !== undefined);
+});
+
+test("'há mais tempo' (proxy de mais antigos) continua funcionando sem ser capturado como 'há mais de N'", () => {
+  const route = routeTicketQuestion("Quais tickets estão atrasados há mais tempo?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+});
+
+test("aspas literais em torno do texto de busca são removidas (Img 35)", () => {
+  const route = routeTicketQuestion('Existe algum chamado duplicado sobre "LED DE ALERTA"?');
+
+  assert.equal(route.entities.texto, "LED DE ALERTA");
+});
+
 test("'usuário' funciona como sinônimo de operador na listagem genérica", () => {
   const route = routeTicketQuestion("me mostre os chamados do usuario paulo");
 
   assert.deepEqual(route.toolNames, ["listar_tickets"]);
   assert.equal(route.entities.operador, "paulo");
+});
+
+test("'cliente' não vaza pro filtro de operador via padrão 'por X' (resumo por cliente)", () => {
+  const route = routeTicketQuestion("Quantos tickets por cliente?");
+
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_cliente"]);
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'cliente Acme' via 'por cliente X' captura só o cliente, não um operador de brinde", () => {
+  const route = routeTicketQuestion("Tickets fechados por cliente Acme.");
+
+  assert.equal(route.entities.cliente, "Acme");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("palavras de tempo/quantidade (mês, ano, semana, período, total, limite, sistema) não vazam pro operador via 'por X'", () => {
+  const casos = [
+    "Tickets fechados por limite 5.",
+    "Tickets por total de 10 dias.",
+    "Tickets abertos por semana passada.",
+    "Tickets fechados por mês de agosto.",
+    "Tickets fechados por ano de 2025.",
+    "Tickets abertos por período de janeiro.",
+    "Tickets fechados por sistema web.",
+  ];
+
+  for (const pergunta of casos) {
+    assert.equal(routeTicketQuestion(pergunta).entities.operador, undefined, pergunta);
+  }
+});
+
+test("'categoria' (sinônimo de área) não vaza pro filtro de operador via padrão 'da X'", () => {
+  const route = routeTicketQuestion(
+    "Quantos tickets urgentes da categoria Suporte foram abertos este mês?",
+  );
+
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'por último' no início da frase é conectivo de discurso, não pedido de ordenação por recência", () => {
+  const route = routeTicketQuestion("Por último, me diz quantos tickets tem no total");
+
+  assert.notDeepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+});
+
+test("'últimos' continua funcionando como pedido real de mais recentes fora do conectivo 'por último'", () => {
+  const route = routeTicketQuestion("Quais os últimos tickets abertos?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
 });
 
 test("roteia listagem genérica de tickets com filtros extraídos", () => {
@@ -1219,6 +1335,40 @@ test("extractOperatorComparisonNames extrai os 2 nomes com 'carga' ou com 'está
   );
   // sem nenhum dos dois vocabulários, não extrai (evita capturar comparação de outra coisa, ex. áreas)
   assert.equal(extractOperatorComparisonNames("Compare as áreas Suporte e WEB"), undefined);
+});
+
+test("extractOperatorComparisonNames reconhece 'atende(m) mais... que' (Img 28)", () => {
+  assert.deepEqual(
+    extractOperatorComparisonNames("O Cesar Augusto de Mello atende mais chamados que a Wanilene Cassiano?"),
+    ["Cesar Augusto de Mello", "Wanilene Cassiano"],
+  );
+});
+
+test("extractClientComparisonNames extrai os 2 nomes de 'quem abriu mais... cliente X ou cliente Y' (Img 33)", () => {
+  assert.deepEqual(
+    extractClientComparisonNames(
+      "Quem abriu mais chamados: o cliente Cesar Augusto de Mello ou o cliente Diego Mota Siqueira?",
+    ),
+    ["Cesar Augusto de Mello", "Diego Mota Siqueira"],
+  );
+  assert.deepEqual(
+    extractClientComparisonNames("O cliente Acme abriu mais chamados que o cliente Beta?"),
+    ["Acme", "Beta"],
+  );
+  // sem a palavra "cliente" nos dois lados, não extrai (evita colidir com comparação de operador)
+  assert.equal(extractClientComparisonNames("O Fábio atende mais chamados que o Cesar?"), undefined);
+});
+
+test("comparação de clientes roteia pra 2 chamadas de analisar_atividade_cliente (Img 33)", () => {
+  const route = routeTicketQuestion(
+    "Quem abriu mais chamados: o cliente Cesar Augusto de Mello ou o cliente Diego Mota Siqueira?",
+  );
+
+  assert.deepEqual(route.toolNames, ["analisar_atividade_cliente"]);
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Cesar Augusto de Mello" } },
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Diego Mota Siqueira" } },
+  ]);
 });
 
 test("routeTicketQuestion: 'compare os tickets X e Y' vira 2 chamadas de buscar_ticket_por_numero, sem passar pelo caminho de número único", () => {

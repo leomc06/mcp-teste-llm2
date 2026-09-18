@@ -96,8 +96,25 @@ const rateLimiterPruneInterval = setInterval(
   config.AGENT_RATE_LIMIT_WINDOW_MS,
 ).unref();
 
+// P13 da auditoria end-to-end: a resposta em texto (montada pelos
+// formatters a partir do resultado das tools) não tinha nenhum teto de
+// tamanho antes de virar JSON de saída — a maioria das tools já limita
+// quantidade de tickets via `limite`, mas o detalhe de 1 ticket (comentários
+// sem limite nenhum) ou um resumo com muitas categorias podiam gerar uma
+// resposta grande o bastante pra pesar no cliente sem nenhum aviso. Corta
+// com uma nota explícita em vez de deixar crescer sem limite.
+const MAX_RESPOSTA_LENGTH = 50000;
+
 function sendJson(response, statusCode, data) {
-  const body = JSON.stringify(data);
+  const payload =
+    typeof data?.resposta === "string" && data.resposta.length > MAX_RESPOSTA_LENGTH
+      ? {
+          ...data,
+          resposta: `${data.resposta.slice(0, MAX_RESPOSTA_LENGTH)}\n\n[resposta truncada: excedeu o tamanho máximo de ${MAX_RESPOSTA_LENGTH} caracteres]`,
+        }
+      : data;
+
+  const body = JSON.stringify(payload);
 
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",

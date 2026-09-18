@@ -30,6 +30,7 @@ const REQUIRED_TOOL_NAMES = [
   "listar_tickets_mais_antigos",
   "resumo_operacional_tickets",
   "analisar_carga_operador",
+  "analisar_atividade_cliente",
 ];
 
 function fakeClient({ tools, callToolImpl, closeImpl } = {}) {
