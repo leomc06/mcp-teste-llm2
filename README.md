@@ -13,7 +13,7 @@ Usuário → web/ (frontend estático)
         SEM depender do LLM pra isso (baixo risco de "alucinação de tool")
   → agent/agent-loop.js chama o Ollama só pra formalizar a chamada da tool
     já decidida (o Ollama não escolhe livremente qual tool usar)
-  → agent/mcp-client.js (stdio) → src/server.js (servidor MCP, 24 tools)
+  → agent/mcp-client.js (stdio) → src/server.js (servidor MCP, 27 tools)
   → src/tickets-api.js (cliente HTTP da API de tickets)
   → agent/response-formatter.js monta a resposta final em texto
 ```
@@ -52,7 +52,7 @@ default sensato) — a tabela abaixo documenta cada uma:
 
 | Variável | Default | Para que serve |
 |---|---|---|
-| `AGENT_HOST` | `127.0.0.1` | Endereço em que o backend escuta. **Não mude pra `0.0.0.0`/rede sem colocar autenticação e HTTPS na frente** — ver "Limitações conhecidas" abaixo. |
+| `AGENT_HOST` | `127.0.0.1` | Endereço em que o backend escuta. **Não mude pra `0.0.0.0`/rede sem colocar autenticação e HTTPS na frente** — o header `X-User-Id` é só um rótulo de auditoria, não autenticação real (qualquer valor passa). |
 | `AGENT_PORT` | `3100` | Porta do backend. |
 | `AGENT_REQUEST_TIMEOUT_MS` | — | Timeout máximo por requisição ao endpoint de consulta. |
 | `AGENT_MAX_TOOL_CALLS` | — | Máximo de chamadas de tool por pergunta. |
@@ -67,6 +67,7 @@ default sensato) — a tabela abaixo documenta cada uma:
 | `TICKETS_API_TIMEOUT_MS` | `10000` | Timeout por requisição à API de tickets. |
 | `TICKETS_API_METADATA_CACHE_TTL_MS` | `300000` | TTL do cache em memória dos catálogos (status/área/prioridade/canal/departamento/operador) — eles mudam raramente, então repetir a busca a cada pergunta é desperdício. |
 | `TICKETS_API_FAN_OUT_CONCURRENCY` | `8` | Teto de chamadas concorrentes nas tools de resumo que contam 1 item de catálogo por vez (ex.: "resumo por operador"). |
+| `TICKETS_API_SLA_CHECK_LIMIT` | `1000` | Acima de quantos candidatos `listar_tickets_vencidos` recusa a rajada de checagem de SLA (1 chamada por ticket) e pede pra restringir o filtro. |
 
 ### 3. Preparar o Ollama
 
@@ -147,7 +148,7 @@ formatação, cliente da API de tickets, cliente do Ollama, whitelist do
 cliente MCP, rate limiter e sanitização — tudo com mocks, não precisa da API
 de tickets real nem do Ollama de pé).
 
-O que a suíte **não** cobre: as 24 tools MCP em si (`src/server.js`) e a
+O que a suíte **não** cobre: as 27 tools MCP em si (`src/server.js`) e a
 camada HTTP do backend (`agent/server.js`) de ponta a ponta — isso só é
 exercitado pelo teste de integração abaixo, contra a stack real.
 
@@ -159,27 +160,3 @@ teste de integração ponta a ponta (usa a API de tickets real configurada no
 node --env-file=.env integration-agent.mjs        # todos os casos
 node --env-file=.env integration-agent.mjs 1       # só o caso 1
 ```
-
-## Limitações conhecidas
-
-- **Sem autenticação real.** O header `X-User-Id` é só um rótulo de
-  auditoria (qualquer valor passa, não é validado contra identidade
-  nenhuma) — quem tiver acesso de rede ao backend tem acesso de leitura a
-  todos os tickets. Isso é aceitável rodando só em `127.0.0.1`/rede
-  interna confiável; **não exponha `AGENT_HOST` numa rede não confiável sem
-  colocar autenticação e HTTPS na frente** (reverse proxy, por exemplo).
-  Rate limiting por IP existe (`AGENT_RATE_LIMIT_*`), mas não substitui
-  controle de acesso.
-- **Truncamento em consultas muito amplas.** Buscas sem filtro suficiente
-  (ex.: período antigo sem área/departamento) só varrem os ~1000 tickets
-  mais recentes antes de desistir — a resposta avisa quando isso acontece
-  ("resultado parcial"), mas o número pode não ser o total exato.
-- **Só uma tool por pergunta, com uma exceção deliberada: comparação.**
-  "Compare a carga do X com a do Y" e "compare o ticket X com o ticket Y"
-  chamam a mesma tool duas vezes (uma por lado), de forma 100% determinística
-  (o roteador decide os dois lados, sem passar pelo Ollama). Qualquer outra
-  combinação (ex.: comparar duas áreas, ou perguntas que misturam tools
-  diferentes) não é suportada — faça perguntas separadas.
-- **Prioridade e cliente/solicitante não são filtráveis no servidor da API
-  de tickets** — só status, área, departamento e operador são. Isso afeta
-  o desempenho e a exatidão de consultas amplas por esses dois campos.

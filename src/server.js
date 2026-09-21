@@ -1113,7 +1113,7 @@ server.registerTool(
   {
     title: "Listar tickets com SLA vencido",
     description:
-      "Lista os tickets (chamados) que realmente estouraram o SLA (de resposta ou de solução), usando o dado de SLA por ticket — ao contrário de listar_tickets_abertos_mais_antigos (que só aproxima \"atrasado\" pelos tickets ainda abertos há mais tempo, sem checar o SLA de verdade), esta tool considera TAMBÉM tickets já encerrados que estouraram o prazo antes de fechar. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Como o SLA só é obtido 1 ticket por vez, se o filtro resultar em mais de 100 candidatos a tool avisa e pede pra restringir o filtro, em vez de fazer uma rajada grande de chamadas.",
+      "Lista os tickets (chamados) que realmente estouraram o SLA (de resposta ou de solução), usando o dado de SLA por ticket — ao contrário de listar_tickets_abertos_mais_antigos (que só aproxima \"atrasado\" pelos tickets ainda abertos há mais tempo, sem checar o SLA de verdade), esta tool considera TAMBÉM tickets já encerrados que estouraram o prazo antes de fechar. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Como o SLA só é obtido 1 ticket por vez, se o filtro resultar em mais de 1000 candidatos a tool avisa e pede pra restringir o filtro, em vez de fazer uma rajada grande de chamadas.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
