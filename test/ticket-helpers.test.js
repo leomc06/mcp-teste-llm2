@@ -7,6 +7,8 @@ import {
   normalizeForMatch,
   findClosedStatus,
   resolveMetaId,
+  describeNaoEncontrado,
+  formatNaoEncontrados,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
   criarParaQuandoAbertura,
@@ -123,6 +125,52 @@ test("resolveMetaId: igualdade exata continua resolvendo direto, mesmo se outros
   const result = await resolveMetaId(listFn, "suporte");
 
   assert.deepEqual(result, { id: 1, nomeCanonico: "Suporte", naoEncontrado: false });
+});
+
+// --- P9 da auditoria end-to-end (parte 2): a mensagem de erro devolvida pra
+// quem pergunta precisa distinguir "não encontrado" (nome não existe) de
+// "ambíguo" (nome existe mas bate com vários candidatos ao mesmo tempo),
+// em vez da mensagem genérica única que existia antes. ---
+
+test("describeNaoEncontrado: resolvido com sucesso não gera descrição (null)", () => {
+  const resolvido = { id: 1, nomeCanonico: "Suporte", naoEncontrado: false };
+  assert.equal(describeNaoEncontrado("área", "Suporte", resolvido), null);
+});
+
+test("describeNaoEncontrado: sem nome informado (resolvido undefined-like) não gera descrição", () => {
+  const resolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: false };
+  assert.equal(describeNaoEncontrado("área", undefined, resolvido), null);
+});
+
+test("describeNaoEncontrado: não encontrado (sem candidato nenhum) descreve como 'não encontrado'", () => {
+  const resolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  assert.equal(describeNaoEncontrado("operador", "Zebedeu", resolvido), 'operador "Zebedeu" não encontrado');
+});
+
+test("describeNaoEncontrado: ambíguo descreve como 'é ambíguo' e lista os candidatos", () => {
+  const resolvido = {
+    id: undefined,
+    nomeCanonico: undefined,
+    naoEncontrado: true,
+    ambiguo: true,
+    candidatos: ["Ana Paula", "Mariana", "Anderson"],
+  };
+  assert.equal(
+    describeNaoEncontrado("operador", "an", resolvido),
+    'operador "an" é ambíguo (pode ser: Ana Paula, Mariana, Anderson)',
+  );
+});
+
+test("formatNaoEncontrados: junta descrições mistas (não encontrado + ambíguo) numa única mensagem", () => {
+  const mensagem = formatNaoEncontrados([
+    'área "Financeiro" não encontrado',
+    'operador "an" é ambíguo (pode ser: Ana Paula, Mariana, Anderson)',
+  ]);
+
+  assert.equal(
+    mensagem,
+    'área "Financeiro" não encontrado; operador "an" é ambíguo (pode ser: Ana Paula, Mariana, Anderson).',
+  );
 });
 
 test("criarParaQuandoAbertura: undefined sem dataInicio (nada pra cortar)", () => {

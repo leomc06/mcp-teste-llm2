@@ -159,6 +159,36 @@ export async function resolveMetaId(listFn, nome) {
   return { id: candidatos[0].id, nomeCanonico: candidatos[0].name, naoEncontrado: false };
 }
 
+// Achado P9 da auditoria end-to-end (parte 2 — mensagem): resolveMetaId já
+// distingue "não encontrado" de "ambíguo" (com a lista de candidatos), mas
+// até aqui todo chamador jogava fora essa distinção e sempre mostrava
+// "Não encontrado(s): operador X", mesmo quando o problema real era
+// ambiguidade (ex.: "an" batendo com Ana/Mariana/Anderson ao mesmo tempo) —
+// o usuário via uma mensagem que sugeria "esse nome não existe", quando na
+// verdade existiam candidatos demais pra escolher com segurança. Helper
+// central pra descrever 1 filtro não resolvido, usado nos ~20 handlers que
+// resolvem múltiplos filtros de catálogo (status/área/departamento/
+// operador/prioridade) em paralelo.
+export function describeNaoEncontrado(rotulo, valor, resolvido) {
+  if (!resolvido?.naoEncontrado) {
+    return null;
+  }
+
+  if (resolvido.ambiguo) {
+    return `${rotulo} "${valor}" é ambíguo (pode ser: ${resolvido.candidatos.join(", ")})`;
+  }
+
+  return `${rotulo} "${valor}" não encontrado`;
+}
+
+// Junta as descrições de describeNaoEncontrado (já filtradas com .filter(Boolean))
+// numa única mensagem — cada item já carrega seu próprio motivo ("não
+// encontrado" ou "é ambíguo, pode ser: ..."), então não há mais um prefixo
+// único "Não encontrado(s):" que mentiria pro caso ambíguo.
+export function formatNaoEncontrados(naoEncontrados) {
+  return `${naoEncontrados.join("; ")}.`;
+}
+
 // Corte antecipado seguro pra fetchAllTickets (ver comentário lá): só faz
 // sentido continuar paginando enquanto a página ainda tiver ticket dentro
 // do período pedido — como a API devolve em ordem decrescente de abertura,

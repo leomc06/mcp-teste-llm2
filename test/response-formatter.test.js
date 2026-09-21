@@ -305,6 +305,43 @@ test("formata resumo de tickets por área com totais de abertos e fechados", () 
   assert.match(resposta, /Total abertos: 4; total fechados: 1/);
 });
 
+test("Img 36: resumo operacional destaca os tickets abertos mais antigos ainda sem solução", () => {
+  const resposta = format("resumo_operacional_tickets", {
+    total: 10,
+    truncado: false,
+    abertos: 6,
+    fechados: 4,
+    sem_operador: 1,
+    congelados: 2,
+    por_prioridade: [{ chave: "Urgente", quantidade: 1 }],
+    abertos_com_mais_de_7_dias: 3,
+    mais_antigos_em_aberto: [
+      { numero: 100, issue: "Impressora não liga", opening_date: "2026-01-01 10:00:00", dias_em_aberto: 90 },
+      { numero: 200, issue: "VPN caindo", opening_date: "2026-02-01 10:00:00", dias_em_aberto: 60 },
+    ],
+  });
+
+  assert.match(resposta, /Mais antigos ainda em aberto:/);
+  assert.match(resposta, /- #100 \(Impressora não liga\): há 90 dia\(s\)/);
+  assert.match(resposta, /- #200 \(VPN caindo\): há 60 dia\(s\)/);
+});
+
+test("resumo operacional sem tickets abertos não mostra a seção de mais antigos", () => {
+  const resposta = format("resumo_operacional_tickets", {
+    total: 4,
+    truncado: false,
+    abertos: 0,
+    fechados: 4,
+    sem_operador: 0,
+    congelados: 0,
+    por_prioridade: [],
+    abertos_com_mais_de_7_dias: 0,
+    mais_antigos_em_aberto: [],
+  });
+
+  assert.doesNotMatch(resposta, /Mais antigos ainda em aberto:/);
+});
+
 test("formata lista de áreas de ticket", () => {
   const resposta = format("listar_areas_tickets", {
     quantidade: 2,

@@ -9,6 +9,8 @@ import {
   normalizeForMatch,
   findClosedStatus,
   resolveMetaId,
+  describeNaoEncontrado,
+  formatNaoEncontrados,
   filtrarPorPeriodo,
   filtrarPorPeriodoFechamento,
   criarParaQuandoAbertura,
@@ -276,17 +278,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -384,16 +386,16 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -506,16 +508,16 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -596,16 +598,16 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -714,16 +716,16 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -827,15 +829,15 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -903,17 +905,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -982,16 +984,16 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1059,16 +1061,16 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1138,17 +1140,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1254,17 +1256,17 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1345,17 +1347,17 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1442,17 +1444,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1526,17 +1528,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1609,17 +1611,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1696,17 +1698,17 @@ server.registerTool(
         ]);
 
       const naoEncontrados = [
-        statusResolvido.naoEncontrado ? `status "${status}"` : null,
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
-        operadorResolvido.naoEncontrado ? `operador "${operador}"` : null,
-        prioridadeResolvida.naoEncontrado ? `prioridade "${prioridade}"` : null,
+        describeNaoEncontrado("status", status, statusResolvido),
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1757,7 +1759,7 @@ server.registerTool(
   "resumo_operacional_tickets",
   {
     title: "Visão geral operacional dos tickets",
-    description: "Retorna um retrato geral da operação de tickets (chamados): total, abertos, fechados, sem operador, com SLA congelado, distribuição por prioridade e quantidade de abertos há mais de 7 dias. Use para perguntas amplas de gestão como \"como está a operação?\", \"tem algo preocupante?\" ou \"me dá uma visão geral\", com filtros opcionais por área, departamento e período de abertura (dataInicio/dataFim).",
+    description: "Retorna um retrato geral da operação de tickets (chamados): total, abertos, fechados, sem operador, com SLA congelado, distribuição por prioridade, quantidade de abertos há mais de 7 dias e os 5 tickets abertos mais antigos ainda sem solução. Use para perguntas amplas de gestão como \"como está a operação?\", \"tem algo preocupante?\", \"me dá uma visão geral\" ou \"quais os tickets mais antigos ainda sem solução?\", com filtros opcionais por área, departamento e período de abertura (dataInicio/dataFim).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
@@ -1773,14 +1775,14 @@ server.registerTool(
       ]);
 
       const naoEncontrados = [
-        areaResolvida.naoEncontrado ? `área "${area}"` : null,
-        departamentoResolvido.naoEncontrado ? `departamento "${departamento}"` : null,
+        describeNaoEncontrado("área", area, areaResolvida),
+        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
       ].filter(Boolean);
 
       if (naoEncontrados.length > 0) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): ${naoEncontrados.join(", ")}.`,
+          motivo: formatNaoEncontrados(naoEncontrados),
         });
       }
 
@@ -1815,6 +1817,15 @@ server.registerTool(
         congelados: congelados.length,
         por_prioridade: [...contagemPrioridade.entries()].map(([chave, quantidade]) => ({ chave, quantidade })),
         abertos_com_mais_de_7_dias: abertos.filter((ticket) => diasEmAberto(ticket.opening_date) > 7).length,
+        mais_antigos_em_aberto: [...abertos]
+          .sort((a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0))
+          .slice(0, 5)
+          .map((ticket) => ({
+            numero: ticket.number,
+            issue: ticket.issue,
+            opening_date: ticket.opening_date,
+            dias_em_aberto: diasEmAberto(ticket.opening_date),
+          })),
       });
     } catch (error) {
       return ticketsFailure(error);
@@ -1838,7 +1849,7 @@ server.registerTool(
       if (operadorResolvido.naoEncontrado) {
         return success({
           encontrado: false,
-          motivo: `Não encontrado(s): operador "${operador}".`,
+          motivo: formatNaoEncontrados([describeNaoEncontrado("operador", operador, operadorResolvido)]),
         });
       }
 

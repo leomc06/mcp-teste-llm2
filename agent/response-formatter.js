@@ -623,6 +623,17 @@ function formatOperationalSummary(data) {
     );
   }
 
+  if (data.mais_antigos_em_aberto?.length > 0) {
+    linhas.push(
+      "Mais antigos ainda em aberto:",
+      ...data.mais_antigos_em_aberto.map(
+        (ticket) =>
+          `- #${ticket.numero} (${decodeHtmlEntities(ticket.issue)}): há ${ticket.dias_em_aberto} dia(s) `
+          + `(desde ${formatDate(ticket.opening_date)})`,
+      ),
+    );
+  }
+
   return linhas.join("\n");
 }
 
