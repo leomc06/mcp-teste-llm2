@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   extractAreaName,
   extractClientName,
+  extractClientActivityName,
   extractDateRange,
   extractDepartmentName,
   extractOperatorComparisonNames,
@@ -1957,4 +1958,89 @@ test("'foram abertos <período>' continua sendo podado inteiro (não deixa 'fora
 
   assert.equal(route.entities.area, "Suporte");
   assert.ok(!route.entities.area?.includes("foram"));
+});
+
+// --- Achados testando um novo lote de perguntas ao vivo (imagens enviadas
+// pelo usuário numa rodada de testes manual via UI, não geradas por este
+// arquivo) — cada um confirmado lendo o código antes de corrigir. ---
+
+test("Img 2: 'e-mail do usuário X' roteia pra busca de usuário, mesma família de 'quem é o usuário X'", () => {
+  const route = routeTicketQuestion("Qual é o e-mail do usuário Cesar Augusto de Mello?");
+
+  assert.deepEqual(route.toolNames, ["buscar_usuarios_por_nome"]);
+  assert.equal(route.entities.nome, "Cesar Augusto de Mello");
+});
+
+test("Img 5: data no formato DD/MM/AAAA é reconhecida em 'entre X e Y', não vaza pro nome da área", () => {
+  const route = routeTicketQuestion("Quantos chamados a área WEB teve entre 01/07/2026 e 31/07/2026?");
+
+  assert.equal(route.entities.area, "WEB");
+  assert.equal(route.entities.dataInicio, "2026-07-01");
+  assert.equal(route.entities.dataFim, "2026-07-31");
+});
+
+test("Img 5: extractDateRange também aceita DD/MM/AAAA fora do contexto de área", () => {
+  const { dataInicio, dataFim } = extractDateRange("entre 05/01/2026 e 20/01/2026");
+
+  assert.equal(dataInicio, "2026-01-05");
+  assert.equal(dataFim, "2026-01-20");
+});
+
+test("Img 7: 'cliente X abre muito(s) chamado(s)' roteia pra analisar_atividade_cliente (1 cliente só, sem comparação)", () => {
+  const route = routeTicketQuestion("O cliente Acme abre muito chamado?");
+
+  assert.deepEqual(route.toolNames, ["analisar_atividade_cliente"]);
+  assert.equal(route.entities.cliente, "Acme");
+});
+
+test("Img 7: extractClientActivityName não deixa 'abre muitos chamados' vazar pro nome do cliente", () => {
+  assert.equal(extractClientActivityName("a cliente Amanda Carolina abre muitos chamados?"), "Amanda Carolina");
+  assert.equal(extractClientActivityName("o cliente Acme está com muitos tickets"), "Acme");
+  assert.equal(extractClientActivityName("o cliente Acme tem muitos chamados"), "Acme");
+});
+
+test("Img 8: 'atendido(s)/resolvido(s) por ninguém' vira sem-operador, não uma negação não suportada", () => {
+  const route = routeTicketQuestion("Tickets que ainda não foram atendidos por ninguém.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
+  assert.equal(route.clarification, undefined);
+});
+
+test("Img 11: 'tirando os X' é reconhecido como negação (esclarecimento honesto), não filtra POR X", () => {
+  const route = routeTicketQuestion("Quantos tickets tem?  tirando os cancelados");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.match(route.clarification, /n[aã]o\s+consigo\s+filtrar\s+excluindo/iu);
+});
+
+test("Img 12: 'primeiro ticket' (singular, sem número) roteia pra mais antigos com limite 1", () => {
+  const route = routeTicketQuestion("Primeiro ticket que a Sabrina Mariotto abriu.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
+  assert.equal(route.entities.limite, 1);
+  assert.equal(route.entities.cliente, "Sabrina Mariotto");
+});
+
+test("Img 12: extractClientName captura 'que o/a <nome> abriu' sem precisar da palavra 'cliente'", () => {
+  assert.equal(extractClientName("o ticket que a Sabrina Mariotto abriu"), "Sabrina Mariotto");
+  assert.equal(extractClientName("o chamado que o João Pedro abriu"), "João Pedro");
+});
+
+test("Img 12: 'primeiros N'/'N primeiros' com número continuam funcionando (não regride pro caso singular)", () => {
+  const route = routeTicketQuestion("Liste os primeiros 10 tickets.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
+  assert.equal(route.entities.limite, 10);
+});
+
+test("Img 13: 'sem contar os fechados' é negação de fechado (vira aberto), não filtro positivo por fechados", () => {
+  const route = routeTicketQuestion("Quantos tickets o Fábio Moreira tratou, sem contar os fechados?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.operador, "Fábio Moreira");
+});
+
+test("Img 13: 'tratou'/'atendeu' são reconhecidos como sinônimo de 'tem' na captura de operador", () => {
+  assert.equal(extractOperatorName("Quantos tickets o Fábio Moreira tratou hoje?"), "Fábio Moreira");
+  assert.equal(extractOperatorName("Quantos chamados a Vanessa Ventura atendeu?"), "Vanessa Ventura");
 });

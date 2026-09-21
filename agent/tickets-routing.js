@@ -173,15 +173,35 @@ const NORMALIZED_MONTH_NAME_SOURCE = Object.keys(MONTH_NUMBERS).join("|");
 const LONG_DATE_SOURCE =
   `(?:dia\\s+)?\\d{1,2}\\s+de\\s+(?:${MONTH_NAME_SOURCE})\\s+de\\s+\\d{4}`;
 
-// Qualquer formato de data aceito (ISO ou por extenso), como um único token.
-const DATE_TOKEN_SOURCE = `(?:${ISO_DATE_SOURCE}|${LONG_DATE_SOURCE})`;
+// Data no formato brasileiro DD/MM/AAAA (achado testando o lote de perguntas
+// ao vivo — Img 5): "entre 01/07/2026 e 31/07/2026" não batia em nenhum
+// formato aceito (só ISO ou por extenso), então o intervalo inteiro vazava
+// pro nome da entidade capturada (ex.: área "WEB teve entre 01/07/2026 e
+// 31/07/2026"). Assume DD/MM (dia primeiro), o formato padrão em pt-BR — não
+// há como distinguir de MM/DD sem contexto adicional, mas essa é a leitura
+// natural de quem escreve em português.
+const BR_DATE_SOURCE = "\\d{1,2}/\\d{1,2}/\\d{4}";
 
-// Normaliza um token de data (ISO ou por extenso) para "AAAA-MM-DD".
+// Qualquer formato de data aceito (ISO, por extenso ou BR), como um único
+// token.
+const DATE_TOKEN_SOURCE = `(?:${ISO_DATE_SOURCE}|${LONG_DATE_SOURCE}|${BR_DATE_SOURCE})`;
+
+// Normaliza um token de data (ISO, por extenso ou BR) para "AAAA-MM-DD".
 function parseDateToken(token) {
   const texto = token.trim();
 
   if (new RegExp(`^${ISO_DATE_SOURCE}$`).test(texto)) {
     return texto;
+  }
+
+  const brMatch = texto.match(new RegExp(`^(\\d{1,2})/(\\d{1,2})/(\\d{4})$`));
+
+  if (brMatch) {
+    const dia = brMatch[1].padStart(2, "0");
+    const mes = brMatch[2].padStart(2, "0");
+    const ano = brMatch[3];
+
+    return `${ano}-${mes}-${dia}`;
   }
 
   const longMatch = texto.match(
@@ -466,6 +486,17 @@ const TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN = new RegExp(
 // entre aspas.
 const QUOTE_CHARACTERS_PATTERN = /["'“”‘’„‟‹›«»]/gu;
 
+// "abre muito(s) chamado(s)/ticket(s)/atendimento(s)" no fim da captura não
+// faz parte do nome (achado testando o lote de perguntas ao vivo — Img 7):
+// "cliente Amanda Carolina ABRE MUITOS CHAMADOS?" capturava cliente: "Amanda
+// Carolina abre muitos chamados" inteiro, que nunca batia por substring com
+// nenhum contact_name real.
+const CLIENT_ACTIVITY_VERB_SOURCE = "(?:abre|abrem|abriu|abriram)";
+const TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN = new RegExp(
+  `\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\s+muito[s]?\\s+(?:tickets?|chamados?|atendimentos?)\\b.*$`,
+  "iu",
+);
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -484,6 +515,7 @@ function cleanFreeText(value) {
     // comeria só o "abertos" e deixaria o "foram" órfão pra trás.
     .replace(TRAILING_OPEN_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_CREATED_BY_CLAUSE_PATTERN, "")
+    .replace(TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
@@ -656,11 +688,17 @@ export function extractDepartmentName(value) {
 // do mesmo jeito pro outro. resolveMetaId continua sendo a rede de segurança
 // final: um valor capturado errado só falha como "não encontrado", não
 // aplica um filtro errado silenciosamente.
+// "ninguém" (achado testando o lote de perguntas ao vivo — Img 8): "tickets
+// que ainda não foram atendidos POR NINGUÉM" capturava operador: "ninguém"
+// (um nome inventado), e o detector de negação via ("não" antes desse valor)
+// concluía (errado) que era uma exclusão não suportada — a pergunta real é
+// "sem operador" (isSemOperadorIntent, já suportado), só numa ordem de
+// frase ("verbo + por ninguém") que esse detector ainda não cobria.
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
-  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b";
+  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b";
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
 
@@ -687,6 +725,12 @@ const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
 const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
   `${OPERATOR_BY_EXCLUSION_SOURCE}|respons[áa]vel\\b|atendente\\b`;
 
+// "tratou"/"atendeu" (achado testando o lote de perguntas ao vivo — Img 13):
+// "Quantos tickets o Fábio Moreira TRATOU...?" não capturava o operador,
+// porque só "tem" fechava esse padrão — o nome inteiro se perdia, mesmo
+// antes de qualquer problema de negação na cláusula seguinte.
+const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram))";
+
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
     /\b(?:operador|respons[áa]vel|atendente|usu[áa]rio)\s+(?!(?:mais|menos)\b)(.+)$/iu,
@@ -700,7 +744,7 @@ export function extractOperatorName(value) {
     // não força a rota de carga (que perderia os outros filtros) como
     // extractOperatorWorkloadName faz.
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\b.*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
       "iu",
     ),
   ]);
@@ -709,6 +753,31 @@ export function extractOperatorName(value) {
 export function extractClientName(value) {
   return extractByPatterns(value, [
     /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
+    // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
+    // vivo — Img 12): quem abre um ticket é o cliente/contato, não precisa
+    // da palavra "cliente" explícita — "que" como âncora evita capturar
+    // qualquer "X abriu" solto fora desse contexto bem específico.
+    /\bque\s+(?:o\s+|a\s+)?(?!(?:mais|menos)\b)(.+?)\s+abriu\b/iu,
+  ]);
+}
+
+// "O cliente X abre muito(s) chamado(s)/ticket(s)?" / "...tem muitos
+// tickets?" / "...está com muitos chamados?" (achado testando o lote de
+// perguntas ao vivo — Img 7): a tool analisar_atividade_cliente já existia
+// (Img 33, versão de comparação entre 2 clientes), mas não tinha rota pra
+// UM cliente só, apesar da própria descrição da tool citar esse exemplo de
+// pergunta. Exige a palavra "cliente" explícita, mesma cautela de
+// extractClientComparisonNames — cliente não tem catálogo/resolveMetaId
+// próprio (só substring contra o contact_name real), então um nome
+// capturado errado não falha graciosamente como "não encontrado" sozinho.
+export function extractClientActivityName(value) {
+  return extractByPatterns(value, [
+    /^(?:o\s+|a\s+)?cliente\s+(.+?)\s+(?:esta|está|estao|estão)\s+com\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
+    /^(?:o\s+|a\s+)?cliente\s+(.+?)\s+tem\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
+    new RegExp(
+      `^(?:o\\s+|a\\s+)?cliente\\s+(.+?)\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\s+muito[s]?\\s+(?:ticket|chamado|atendimento)`,
+      "iu",
+    ),
   ]);
 }
 
@@ -817,6 +886,12 @@ export function extractUserName(value) {
     new RegExp(`\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:chamado\\s+|de\\s+nome\\s+)(.+)$`, "iu"),
     new RegExp(`\\bquem\\s+[ée]\\s+(?:o\\s+|a\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+)$`, "iu"),
     new RegExp(`\\binforma[çc][õo]es\\s+(?:do|sobre\\s+o)\\s+(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+)$`, "iu"),
+    // "Qual é o e-mail do usuário X?" (achado testando o lote de perguntas
+    // ao vivo — Img 2): pergunta por um dado específico do cadastro
+    // (e-mail), mesma intenção de busca de usuário das outras 4 variantes
+    // acima, só com "e-mail" como gatilho em vez de "busque"/"quem é"/
+    // "informações".
+    new RegExp(`\\be-?mail\\s+(?:do|da|de)\\s+(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+)$`, "iu"),
   ]);
 }
 
@@ -1152,10 +1227,18 @@ export function routeTicketQuestion(pergunta) {
   // pro outro sem ambiguidade (diferente de área/prioridade/operador/status
   // literal, que têm N valores possíveis — ver detectaNegacaoNaoSuportada
   // abaixo, que trata esses casos como "não suportado" em vez de inverter).
+  // "sem contar"/"tirando" (achado testando o lote de perguntas ao vivo —
+  // Img 13) são a mesma ideia de exclusão em outro idioma comum: "quantos
+  // tickets o Fulano tratou, SEM CONTAR os fechados?" também significa
+  // "aberto", mas não batia em nenhum marcador antes — o sistema lia
+  // "fechados" como filtro POSITIVO (o oposto do pedido), já que só
+  // "não"/"diferente de"/"exceto" eram reconhecidos como negação.
   const NEGATION_PREFIX_SOURCE =
     "(?:nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?"
     + "|diferentes?\\s+de\\s+"
-    + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?)";
+    + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|sem\\s+contar\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|tirando\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?)";
   const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
 
@@ -1216,6 +1299,11 @@ export function routeTicketQuestion(pergunta) {
     // só de "atribuído" (ex.: "quantos tickets não têm operador?").
     || /\bnao\s+tem\s+(?:operador|responsavel|atendente)\b/.test(text)
     || /\bninguem\s+(?:e\s+)?(?:responsavel|pegando|atendendo|cuidando|resolvendo)\b/.test(text)
+    // "atendido(s)/resolvido(s)/tratado(s) POR NINGUÉM" (achado testando o
+    // lote de perguntas ao vivo — Img 8) é a mesma ideia do padrão acima,
+    // só com o verbo antes de "ninguém" em vez de depois — ordem de frase
+    // comum que ainda não estava coberta.
+    || /\bpor\s+ninguem\b/.test(text)
     || /\baguardando\s+atribuicao\b/.test(text);
 
   // "Mais antigo"/"mais velho"/"há mais tempo" pede ordem cronológica —
@@ -1244,7 +1332,15 @@ export function routeTicketQuestion(pergunta) {
   // não sustenta isso. NÃO reage aos 2 idiomas que já são tratados como
   // intenção própria e correta: negação de fechado (vira aberto, acima) e
   // "sem operador"/"não atribuído" (vira isSemOperadorIntent).
-  const NEGATION_MARKER_SOURCE = "(?:nao|excet[oa]|diferentes?\\s+de)";
+  // "tirando"/"sem contar" (achado testando o lote de perguntas ao vivo —
+  // Img 11): "Quantos tickets tem, TIRANDO os cancelados?" capturava
+  // status: "Cancelado" como filtro POSITIVO (o oposto do pedido) e nem
+  // caía aqui, porque nenhum marcador reconhecia "tirando" como negação —
+  // mesma classe de idioma já coberta em NEGATION_PREFIX_SOURCE acima, só
+  // que "cancelado" não é um valor de 2 opções só (status literal tem N
+  // valores possíveis), então aqui o tratamento certo é o esclarecimento,
+  // não inverter.
+  const NEGATION_MARKER_SOURCE = "(?:nao|excet[oa]|diferentes?\\s+de|tirando|sem\\s+contar)";
   const NEGATION_MARKER_PATTERN = new RegExp(`\\b${NEGATION_MARKER_SOURCE}\\b`, "u");
   const LEADING_NEGATION_PATTERN = new RegExp(`^${NEGATION_MARKER_SOURCE}\\b`, "iu");
 
@@ -1622,6 +1718,18 @@ export function routeTicketQuestion(pergunta) {
     );
   }
 
+  // "O cliente X abre muito(s) chamado(s)?" (Img 7) — mesma ideia de
+  // operadorCarga acima, só que pra atividade de UM cliente só.
+  const clienteAtividade = extractClientActivityName(pergunta);
+
+  if (clienteAtividade !== undefined) {
+    return createTicketDecision(
+      "analisar_atividade_cliente",
+      "analisar_atividade_cliente",
+      { cliente: clienteAtividade },
+    );
+  }
+
   // Item 9 do plano de correção (achado B12): "primeiro"/"primeira" sozinho,
   // no domínio de tickets, é mais comumente o CONTRÁRIO de "mais recente" (o
   // mais antigo/o 1º cronológico) — confirmado ao vivo: "Qual foi o primeiro
@@ -1638,7 +1746,17 @@ export function routeTicketQuestion(pergunta) {
   // (ex.: "os 5 primeiros tickets fechados") — achado ao vivo: só a primeira
   // ordem estava coberta, a segunda caía no fallback de aberto/fechado sem
   // limite nem ordenação nenhuma.
-  const isOldestOverallIntent = /\bprimeir[oa]s?\s+\d+\b|\b\d+\s+primeir[oa]s?\b/.test(text);
+  const isOldestOverallWithCountIntent = /\bprimeir[oa]s?\s+\d+\b|\b\d+\s+primeir[oa]s?\b/.test(text);
+
+  // "primeiro"/"primeira" SOZINHO, sem número (achado testando o lote de
+  // perguntas ao vivo — Img 12): "Primeiro ticket que a Sabrina Mariotto
+  // abriu" não batia no padrão acima (não tem dígito nenhum) e caía inteiro
+  // no fallback de listagem sem filtro nenhum. Mesmo sentido (mais antigo,
+  // não mais recente) do caso com número, só que pedindo exatamente 1.
+  const isBareOldestOverallIntent =
+    !isOldestOverallWithCountIntent && /\bprimeir[oa]\b/.test(text);
+
+  const isOldestOverallIntent = isOldestOverallWithCountIntent || isBareOldestOverallIntent;
 
   // "ultimo" também ganhou o \b de fechamento que faltava (bug de regex
   // simples, evita casar como prefixo de outra palavra). "por ultimo" no
@@ -1668,7 +1786,7 @@ export function routeTicketQuestion(pergunta) {
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : (isBareOldestOverallIntent ? 1 : undefined)),
         pagina,
       }),
     );
