@@ -2044,3 +2044,34 @@ test("Img 13: 'tratou'/'atendeu' são reconhecidos como sinônimo de 'tem' na ca
   assert.equal(extractOperatorName("Quantos tickets o Fábio Moreira tratou hoje?"), "Fábio Moreira");
   assert.equal(extractOperatorName("Quantos chamados a Vanessa Ventura atendeu?"), "Vanessa Ventura");
 });
+
+test("Img 15: 'em <data DD/MM/AAAA>' vira dataInicio=dataFim, não é ignorado silenciosamente", () => {
+  const route = routeTicketQuestion("Tickets abertos em 05/03/2026.");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.deepEqual(extractDateRange("Tickets abertos em 05/03/2026."), {
+    dataInicio: "2026-03-05",
+    dataFim: "2026-03-05",
+  });
+  assert.equal(route.entities.dataInicio, "2026-03-05");
+  assert.equal(route.entities.dataFim, "2026-03-05");
+});
+
+test("Img 15: 'no dia <data>' também é reconhecido como data única", () => {
+  assert.deepEqual(extractDateRange("tickets abertos no dia 2026-01-10"), {
+    dataInicio: "2026-01-10",
+    dataFim: "2026-01-10",
+  });
+});
+
+test("Img 16: 'equipe X' é reconhecido como sinônimo de área, não descartado", () => {
+  assert.equal(extractAreaName("tickets da equipe web"), "web");
+  assert.equal(extractAreaName("tickets da equipe de suporte"), "suporte");
+});
+
+test("Img 16: 'equipe X atendeu/tratou' poda o verbo de atividade do nome da área", () => {
+  const route = routeTicketQuestion("Tickets que a equipe web atendeu essa semana");
+
+  assert.equal(route.entities.area, "web");
+  assert.equal(extractAreaName("tickets da equipe redes tratou"), "redes");
+});

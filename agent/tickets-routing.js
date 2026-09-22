@@ -497,6 +497,11 @@ const TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN = new RegExp(
   "iu",
 );
 
+// "tickets que a equipe X atendeu/tratou" — o verbo de atividade sobra no
+// fim depois da data já ser podada acima (Img 16: "equipe web atendeu essa
+// semana" virava area: "web atendeu" sem isso).
+const TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN = /\s+(?:trat(?:ou|aram)|atend(?:eu|eram))\s*$/iu;
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -524,6 +529,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
+    .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
     .trim();
 
   return text.length >= 1 && text.length <= 100 ? text : undefined;
@@ -650,7 +656,7 @@ export function extractAreaName(value) {
     // sistema (quem pergunta não necessariamente sabe que a API chama isso
     // de "área") — resolveMetaId falha graciosamente se não for um nome de
     // área real, então o risco de falso positivo é baixo.
-    /(?<![\p{L}\p{N}])(?:[áa]rea|categoria)\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
+    /(?<![\p{L}\p{N}])(?:[áa]rea|categoria|equipe)\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
     // sem usar a palavra "área" — mesmo raciocínio acima.
     /\bpessoal\s+d[ao]\s+(?!(?:mais|menos)\b)(.+)$/iu,
@@ -1034,6 +1040,15 @@ export function extractDateRange(value) {
 
   if (absoluto.dataInicio !== undefined || absoluto.dataFim !== undefined) {
     return absoluto;
+  }
+
+  const diaMatch = text.match(
+    new RegExp(`\\b(?:em|no\\s+dia)\\s+(${DATE_TOKEN_SOURCE})\\b`, "iu"),
+  );
+
+  if (diaMatch) {
+    const data = parseDateToken(diaMatch[1]);
+    return { dataInicio: data, dataFim: data };
   }
 
   return extractRelativeDateRange(normalizeText(value)) ?? {};
