@@ -248,7 +248,7 @@ function formatTicketList(data) {
   ].join("\n");
 }
 
-function formatTicketDetail(data) {
+export function formatTicketDetail(data) {
   if (!data.encontrado || !data.ticket) {
     return "O ticket informado não foi encontrado.";
   }
@@ -310,6 +310,26 @@ function formatTicketDetail(data) {
   }
 
   return details.join("\n");
+}
+
+// Usado pela síntese de resumo de ticket (agent-loop.js) pra decidir se vale
+// a pena chamar o modelo — sem descrição nem comentário com texto real, um
+// "resumo" seria o modelo inventando conteúdo plausível em cima de quase
+// nada; o bloco de detalhe já mostra "Comentários: nenhum" sozinho, o que é
+// mais honesto do que forçar uma síntese vazia.
+export function hasSummarizableTicketContent(ticket) {
+  const description = stripHtmlTags(decodeHtmlEntities(ticket?.description));
+
+  if (typeof description === "string" && description.length >= 20) {
+    return true;
+  }
+
+  const entries = ticket?.entries ?? [];
+
+  return entries.some((entrada) => {
+    const texto = stripHtmlTags(decodeHtmlEntities(entrada?.entry));
+    return typeof texto === "string" && texto.length > 0;
+  });
 }
 
 function formatAreasList(data) {
@@ -599,7 +619,48 @@ function formatOverdueTickets(data) {
   ].join("\n");
 }
 
-function formatOperationalSummary(data) {
+// AAAA-MM-DD -> DD/MM/AAAA sem passar por Date/fuso-horário (dataInicio/
+// dataFim não têm componente de hora; `new Date("2010-01-01")` seria
+// interpretado como UTC e poderia exibir o dia anterior em horário de
+// Brasília).
+function formatFiltroData(value) {
+  if (!value) {
+    return value;
+  }
+
+  const [ano, mes, dia] = value.split("-");
+
+  return `${dia}/${mes}/${ano}`;
+}
+
+// Descreve os filtros aplicados no topo do resumo — sem isso, o parágrafo
+// gerado por IA (ver SYNTHESIS_SPECS em agent-loop.js) não tem como saber
+// qual área/departamento/período foi realmente consultado.
+function describeFiltrosOperacionais(filtros) {
+  const partes = [];
+
+  if (filtros?.area) {
+    partes.push(`área: ${filtros.area}`);
+  }
+
+  if (filtros?.departamento) {
+    partes.push(`departamento: ${filtros.departamento}`);
+  }
+
+  if (filtros?.dataInicio) {
+    partes.push(`a partir de ${formatFiltroData(filtros.dataInicio)}`);
+  }
+
+  if (filtros?.dataFim) {
+    partes.push(`até ${formatFiltroData(filtros.dataFim)}`);
+  }
+
+  return partes.length > 0
+    ? `Filtros aplicados: ${partes.join(", ")}.`
+    : "Nenhum filtro aplicado (todos os tickets).";
+}
+
+export function formatOperationalSummary(data) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -609,6 +670,7 @@ function formatOperationalSummary(data) {
     : "";
 
   const linhas = [
+    describeFiltrosOperacionais(data.filtros),
     `Visão geral de ${data.total} ticket(s)${truncadoAviso}:`,
     `- Abertos: ${data.abertos}; fechados: ${data.fechados}`,
     `- Sem operador atribuído: ${data.sem_operador}`,

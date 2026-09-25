@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatToolResults } from "../agent/response-formatter.js";
+import { formatToolResults, hasSummarizableTicketContent } from "../agent/response-formatter.js";
 import { AgentError } from "../agent/agent-error.js";
 
 function format(tool, dados) {
@@ -220,6 +220,38 @@ test("P12 da auditoria: HTML cru na descrição e nos comentários do detalhe do
   assert.match(resposta, /Verificado com o cliente segue em análise\./);
 });
 
+test("hasSummarizableTicketContent: true com descrição real", () => {
+  assert.equal(
+    hasSummarizableTicketContent({ description: "Usuário sem acesso ao sistema desde ontem.", entries: [] }),
+    true,
+  );
+});
+
+test("hasSummarizableTicketContent: true só com comentário, mesmo sem descrição", () => {
+  assert.equal(
+    hasSummarizableTicketContent({
+      description: "",
+      entries: [{ entry: "Verificado com o cliente, resolvido.", author: "x", date: "2026-01-01", type: 2 }],
+    }),
+    true,
+  );
+});
+
+test("hasSummarizableTicketContent: false sem descrição real nem comentário", () => {
+  assert.equal(hasSummarizableTicketContent({ description: "", entries: [] }), false);
+  assert.equal(hasSummarizableTicketContent({ description: null, entries: [] }), false);
+});
+
+test("hasSummarizableTicketContent: false quando só sobra HTML/espaço depois de limpar", () => {
+  assert.equal(
+    hasSummarizableTicketContent({
+      description: "<br />  <br/> ",
+      entries: [{ entry: "<b></b>", author: "x", date: "2026-01-01", type: 2 }],
+    }),
+    false,
+  );
+});
+
 test("P14 da auditoria: formatToolResults sem resultado nenhum lança AgentError, não Error genérico", () => {
   assert.throws(
     () => formatToolResults([]),
@@ -340,6 +372,42 @@ test("resumo operacional sem tickets abertos não mostra a seção de mais antig
   });
 
   assert.doesNotMatch(resposta, /Mais antigos ainda em aberto:/);
+});
+
+test("resumo operacional sem filtros avisa explicitamente que é sobre todos os tickets", () => {
+  const resposta = format("resumo_operacional_tickets", {
+    total: 4,
+    truncado: false,
+    abertos: 0,
+    fechados: 4,
+    sem_operador: 0,
+    congelados: 0,
+    por_prioridade: [],
+    abertos_com_mais_de_7_dias: 0,
+    mais_antigos_em_aberto: [],
+  });
+
+  assert.match(resposta, /^Nenhum filtro aplicado \(todos os tickets\)\.\n/);
+});
+
+test("resumo operacional com filtros descreve área, departamento e período no topo", () => {
+  const resposta = format("resumo_operacional_tickets", {
+    filtros: { area: "Redes", departamento: "TI", dataInicio: "2010-01-01", dataFim: "2010-01-02" },
+    total: 0,
+    truncado: false,
+    abertos: 0,
+    fechados: 0,
+    sem_operador: 0,
+    congelados: 0,
+    por_prioridade: [],
+    abertos_com_mais_de_7_dias: 0,
+    mais_antigos_em_aberto: [],
+  });
+
+  assert.match(
+    resposta,
+    /^Filtros aplicados: área: Redes, departamento: TI, a partir de 01\/01\/2010, até 02\/01\/2010\.\n/,
+  );
 });
 
 test("formata lista de áreas de ticket", () => {

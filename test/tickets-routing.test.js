@@ -2075,3 +2075,50 @@ test("Img 16: 'equipe X atendeu/tratou' poda o verbo de atividade do nome da ár
   assert.equal(route.entities.area, "web");
   assert.equal(extractAreaName("tickets da equipe redes tratou"), "redes");
 });
+
+test("'resuma o ticket X' marca synthesize: resumo_ticket sem mudar a tool", () => {
+  const route = routeTicketQuestion("Resuma o ticket 4830.");
+
+  assert.deepEqual(route.toolNames, ["buscar_ticket_por_numero"]);
+  assert.equal(route.entities.numero, 4830);
+  assert.equal(route.synthesize, "resumo_ticket");
+});
+
+test("'o que foi feito/aconteceu/houve/rolou no ticket X' também marca resumo_ticket", () => {
+  assert.equal(routeTicketQuestion("O que foi feito no ticket 4830?").synthesize, "resumo_ticket");
+  assert.equal(routeTicketQuestion("O que aconteceu no ticket 4830?").synthesize, "resumo_ticket");
+  assert.equal(routeTicketQuestion("Conte o que rolou no ticket 4830.").synthesize, "resumo_ticket");
+});
+
+test("busca normal de ticket (sem gatilho de resumo) não marca synthesize", () => {
+  assert.equal(routeTicketQuestion("Busque o ticket 4830.").synthesize, undefined);
+  assert.equal(routeTicketQuestion("Qual o status do ticket 4830?").synthesize, undefined);
+});
+
+test("'resumo executivo'/'parágrafo pro chefe' marca synthesize: resumo_executivo", () => {
+  const route = routeTicketQuestion("Resumo executivo da operação.");
+
+  assert.deepEqual(route.toolNames, ["resumo_operacional_tickets"]);
+  assert.equal(route.synthesize, "resumo_executivo");
+
+  assert.equal(
+    routeTicketQuestion("Escreve um parágrafo pra mandar pro chefe.").synthesize,
+    "resumo_executivo",
+  );
+  assert.equal(
+    routeTicketQuestion("Manda uma mensagem pra diretoria sobre os tickets.").synthesize,
+    "resumo_executivo",
+  );
+});
+
+test("'resumo operacional' comum (sem 'executivo'/destinatário) não marca synthesize", () => {
+  const route = routeTicketQuestion("Resumo operacional dos tickets.");
+
+  assert.deepEqual(route.toolNames, ["resumo_operacional_tickets"]);
+  assert.equal(route.synthesize, undefined);
+});
+
+test("resumo por dimensão (área/status) continua intacto, não vira resumo executivo", () => {
+  assert.deepEqual(routeTicketQuestion("Resumo dos tickets por área.").toolNames, ["resumo_tickets_por_area"]);
+  assert.deepEqual(routeTicketQuestion("Resumo dos tickets por status.").toolNames, ["resumo_tickets_por_status"]);
+});

@@ -1,4 +1,10 @@
-import { formatToolResults, formatComparison } from "./response-formatter.js";
+import {
+  formatToolResults,
+  formatComparison,
+  formatTicketDetail,
+  formatOperationalSummary,
+  hasSummarizableTicketContent,
+} from "./response-formatter.js";
 import {
   normalizeText,
 } from "./routing-utils.js";
@@ -61,6 +67,72 @@ export function sanitizeForModel(text) {
   return semPadroesSuspeitos.length > MAX_TOOL_TEXT_FOR_MODEL
     ? `${semPadroesSuspeitos.slice(0, MAX_TOOL_TEXT_FOR_MODEL)}... [truncado]`
     : semPadroesSuspeitos;
+}
+
+// Camada de síntese: a única parte do sistema onde o modelo lê e reescreve
+// texto de verdade, em vez de só formalizar uma chamada de tool já decidida
+// pelo roteador (`tickets-routing.js`). Continua sem poder de decisão sobre
+// tool/parâmetro — o roteador já decidiu isso e marcou `synthesize` no
+// objeto de rota; esta camada só entra DEPOIS de uma chamada de tool já
+// bem-sucedida, e nunca substitui o bloco de dados original (sempre exibido
+// junto — "quem lê decide", mesma filosofia de formatComparison).
+const SYNTHESIS_SPECS = {
+  resumo_ticket: {
+    tool: "buscar_ticket_por_numero",
+    intro: "Resumo automático",
+    label: "Ticket completo",
+    buildSourceText: (dados) => formatTicketDetail(dados),
+    isEligible: (dados) => dados.encontrado === true && hasSummarizableTicketContent(dados.ticket),
+    systemPrompt: [
+      "Você resume um ticket de suporte técnico.",
+      "O texto a seguir traz metadados do ticket (status, prioridade, datas, SLA) seguidos da descrição e dos comentários.",
+      "Baseie o resumo exclusivamente na descrição e nos comentários — não repita os metadados, eles já aparecem em outro lugar.",
+      "Nunca invente informações que não estejam no texto.",
+      "Não adicione opiniões, recomendações ou conclusões que não estejam explicitamente no texto.",
+      "Se não houver comentários além da abertura, diga isso em vez de inventar andamento.",
+      "Escreva de 1 a 2 frases, em português, tom neutro e objetivo.",
+    ].join(" "),
+  },
+  resumo_executivo: {
+    tool: "resumo_operacional_tickets",
+    intro: "Resumo executivo",
+    label: "Números da operação",
+    buildSourceText: (dados) => formatOperationalSummary(dados),
+    isEligible: (dados) => dados.encontrado !== false,
+    systemPrompt: [
+      "Você escreve um parágrafo executivo em português, resumindo a operação de atendimento a chamados para um gestor não técnico.",
+      "Baseie-se exclusivamente nos números fornecidos a seguir, incluindo os filtros (área/departamento/período) já aplicados.",
+      "Nunca invente números, tendências ou causas que não estejam nos dados.",
+      "\"Sem operador atribuído: N\" significa que N tickets estão sem operador atribuído — não inverta esse sentido.",
+      "A lista de tickets mais antigos ainda em aberto já vem ordenada do mais antigo para o mais recente; ao citá-la, descreva-a nessa ordem e não afirme qual ticket específico \"tem mais dias em aberto\" ou \"espera há mais tempo\" além do primeiro da lista.",
+      "Não conclua se a operação está indo bem ou mal (ex.: \"eficiente\", \"tranquila\", \"preocupante\") nem adicione recomendações, julgamentos de desempenho ou comparações com períodos anteriores — os dados são só do período atual, apenas descreva os números.",
+      "Escreva um único parágrafo corrido, tom profissional, sem tópicos nem marcadores.",
+    ].join(" "),
+  },
+};
+
+// Nunca lança erro — é um passo adicional sobre um resultado que já teve
+// sucesso (a tool MCP já respondeu), então uma falha aqui (timeout, erro
+// HTTP, resposta vazia) não pode derrubar a resposta inteira. Diferente da
+// chamada principal do loop (linha ~360), que lança AgentError porque sem
+// ela não há resposta nenhuma pra devolver.
+async function trySynthesize({ ollama, spec, sourceText, signal }) {
+  try {
+    const response = await ollama.chat({
+      messages: [
+        { role: "system", content: spec.systemPrompt },
+        { role: "user", content: sanitizeForModel(sourceText) },
+      ],
+      tools: [],
+      signal,
+    });
+
+    const texto = response.message.content.trim();
+
+    return texto.length > 0 ? texto : null;
+  } catch {
+    return null;
+  }
 }
 
 function collectSources(text, toolName, sources) {
@@ -324,6 +396,7 @@ export async function runAgent({
   ollama,
   ollamaTools,
   routeToolArguments = null,
+  synthesize = null,
   maxToolCalls,
   signal,
 }) {
@@ -512,8 +585,25 @@ export async function runAgent({
     }
 
     if (!hasToolError) {
+      const baseResposta = formatToolResults(toolResults);
+      let resposta = baseResposta;
+
+      if (synthesize && toolResults.length === 1) {
+        const spec = SYNTHESIS_SPECS[synthesize];
+        const [{ tool, dados }] = toolResults;
+
+        if (spec && tool === spec.tool && spec.isEligible(dados)) {
+          const sourceText = spec.buildSourceText(dados);
+          const synthesisText = await trySynthesize({ ollama, spec, sourceText, signal });
+
+          resposta = synthesisText
+            ? `${spec.intro}: ${synthesisText}\n\n--- ${spec.label} ---\n${sourceText}`
+            : `${baseResposta}\n\n(resumo automático indisponível no momento; seguem os dados completos)`;
+        }
+      }
+
       return {
-        resposta: formatToolResults(toolResults),
+        resposta,
         fontes: [...sources.values()],
         dadosConsultados: toolResults,
         toolsUtilizadas: [

@@ -1520,11 +1520,11 @@ export function routeTicketQuestion(pergunta) {
   // é um retrato amplo (total, abertos, fechados, sem operador, congelados,
   // por prioridade, backlog antigo).
   const isDashboardIntent =
-    // "resumo operacional"/"resumo geral" é o nome da própria intenção
-    // (usado no título da tool e no que o usuário digita na prática) —
-    // faltava na lista original, que só cobria frases mais informais tipo
-    // "visão geral"/"como está a operação".
-    /\bresumo\s+(?:operacional|geral)\b/.test(text)
+    // "resumo operacional"/"resumo geral"/"resumo executivo" é o nome da
+    // própria intenção (usado no título da tool e no que o usuário digita
+    // na prática) — faltava na lista original, que só cobria frases mais
+    // informais tipo "visão geral"/"como está a operação".
+    /\bresumo\s+(?:operacional|geral|executivo)\b/.test(text)
     || /\bvisao\s+geral\b/.test(text)
     || /\bsituacao\s+geral\b/.test(text)
     || /\bcomo\s+esta\s+a\s+operacao\b/.test(text)
@@ -1535,12 +1535,29 @@ export function routeTicketQuestion(pergunta) {
     || /\bdando\s+conta\s+da\s+demanda\b/.test(text)
     || /\btem\s+algum\s+problema\b/.test(text);
 
-  if (isDashboardIntent) {
-    return createTicketDecision(
+  // "resumo executivo" ou um pedido de texto pra uma audiência de gestão —
+  // pede pro modelo transformar os números já calculados por
+  // resumo_operacional_tickets num parágrafo corrido, em vez de só exibir
+  // os números. Lista de gatilhos deliberadamente conservadora: perder um
+  // caso só mantém o comportamento de hoje (números puros, seguro); um
+  // falso positivo só gasta 1 chamada extra ao Ollama.
+  const isResumoExecutivoIntent =
+    /\bresumo\s+executivo\b/.test(text)
+    || /\b(?:paragrafo|texto|mensagem)\b.*\b(?:chefe|diretoria|gestor|gestao|lideranca)\b/.test(text)
+    || /\bresumo\b.*\b(?:chefe|diretoria|gestor|gestao|lideranca)\b/.test(text);
+
+  if (isDashboardIntent || isResumoExecutivoIntent) {
+    const decision = createTicketDecision(
       "resumo_operacional",
       "resumo_operacional_tickets",
       compactEntities({ area, departamento, dataInicio, dataFim }),
     );
+
+    if (isResumoExecutivoIntent) {
+      decision.synthesize = "resumo_executivo";
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && mentionsStatusDimension) {
@@ -1626,11 +1643,25 @@ export function routeTicketQuestion(pergunta) {
   }
 
   if (numero !== undefined) {
-    return createTicketDecision(
+    // "resuma"/"resumo do ticket"/"o que foi feito no ticket X" pede pro
+    // modelo ler a descrição+comentários do ticket já buscado e escrever um
+    // resumo curto, em vez de só devolver o detalhe cru.
+    const isResumoTicketIntent =
+      /\bresum[ao]\b|\bresumir\b|\bresumindo\b|\bsintetiz\w*\b/.test(text)
+      || /\bo\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text)
+      || /\bconte\s+o\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text);
+
+    const decision = createTicketDecision(
       "buscar_por_numero",
       "buscar_ticket_por_numero",
       { numero },
     );
+
+    if (isResumoTicketIntent) {
+      decision.synthesize = "resumo_ticket";
+    }
+
+    return decision;
   }
 
   if (isCongeladoIntent) {

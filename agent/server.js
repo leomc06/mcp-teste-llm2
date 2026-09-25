@@ -479,6 +479,13 @@ const server = http.createServer(async (request, response) => {
         };
       }
 
+      // Separado de routeToolArguments de propósito — este tem outro
+      // contrato (é comparado com o nome da tool que o modelo propôs,
+      // dentro de resolveToolArguments); `synthesize` só diz pro loop se,
+      // depois da tool já ter respondido com sucesso, vale a pena fazer
+      // uma 2ª chamada ao Ollama pra sintetizar o resultado em texto.
+      const synthesize = toolDecision.route?.synthesize ?? null;
+
       if (
         activeAgentRequests
         >= config.AGENT_MAX_CONCURRENT_REQUESTS
@@ -520,6 +527,7 @@ const server = http.createServer(async (request, response) => {
           ollama,
           ollamaTools: selectedOllamaTools,
           routeToolArguments,
+          synthesize,
           maxToolCalls: config.AGENT_MAX_TOOL_CALLS,
           signal,
         });
