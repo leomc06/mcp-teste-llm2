@@ -497,6 +497,18 @@ const TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN = new RegExp(
   "iu",
 );
 
+// "equipe X tratou NO DIA DD/MM/AAAA" — TRAILING_DATE_CLAUSE_PATTERN só
+// cobre data absoluta em intervalo ("entre/desde/até"), não uma data única
+// ("em"/"no dia" + 1 data, o mesmo formato que extractDateRange reconhece
+// via diaMatch) — sem isso, a cláusula de data inteira sobrava colada no
+// verbo (achado ao vivo: "a equipe de Suporte tratou no dia 17/12/2025"
+// virava area: "Suporte tratou no dia 17/12/2025", porque nem essa data nem
+// o verbo em seguida eram podados).
+const TRAILING_SINGLE_DATE_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:em|no\\s+dia)\\s+${DATE_TOKEN_SOURCE}\\s*$`,
+  "iu",
+);
+
 // "tickets que a equipe X atendeu/tratou" — o verbo de atividade sobra no
 // fim depois da data já ser podada acima (Img 16: "equipe web atendeu essa
 // semana" virava area: "web atendeu" sem isso).
@@ -529,6 +541,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
+    .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
     .trim();
 
@@ -700,8 +713,14 @@ export function extractDepartmentName(value) {
 // concluía (errado) que era uma exclusão não suportada — a pergunta real é
 // "sem operador" (isSemOperadorIntent, já suportado), só numa ordem de
 // frase ("verbo + por ninguém") que esse detector ainda não cobria.
+// "equipe" (achado ao vivo: "Quantos tickets a EQUIPE DE REDES tem?" e
+// "...a equipe de Suporte TRATOU..." capturavam operador: "equipe de X"
+// inteiro, porque extractAreaName passou a aceitar "equipe" como sinônimo de
+// área mas essa lista de exclusão — compartilhada pelos padrões de
+// operador/carga — nunca ganhou a mesma palavra, então os 2 padrões
+// competiam pelo mesmo trecho da frase).
 const OPERATOR_BY_EXCLUSION_SOURCE =
-  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
+  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b";
@@ -1069,11 +1088,18 @@ export function extractPage(value) {
     : undefined;
 }
 
+// "quais (os/as) X" — o artigo entre "quais" e o substantivo é opcional na
+// fala real ("quais OS canais", "quais AS áreas") e faltava em todos os
+// gatilhos abaixo, que só casavam a forma sem artigo (achado ao vivo: "Quais
+// os canais de atendimento disponíveis?" não batia em nenhum META_INTENTS e
+// caía no fallback genérico de listar_tickets).
+const QUAIS_ARTIGO_SOURCE = "(?:quais\\s+(?:a|as|o|os)?\\s*)";
+
 const META_INTENTS = [
   {
     tool: "listar_areas_tickets",
     patterns: [
-      /\bquais\s+areas\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}areas\\b`),
       /\bliste\s+(?:todas\s+)?as\s+areas\b/,
       /\blistar\s+areas\b/,
       /\bareas\s+existem\b/,
@@ -1082,7 +1108,7 @@ const META_INTENTS = [
   {
     tool: "listar_prioridades_tickets",
     patterns: [
-      /\bquais\s+prioridades\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}prioridades\\b`),
       /\bliste\s+(?:todas\s+)?as\s+prioridades\b/,
       /\blistar\s+prioridades\b/,
       /\bprioridades\s+existem\b/,
@@ -1091,7 +1117,7 @@ const META_INTENTS = [
   {
     tool: "listar_canais_tickets",
     patterns: [
-      /\bquais\s+canais\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}canais\\b`),
       /\bliste\s+(?:todos\s+)?os\s+canais\b/,
       /\blistar\s+canais\b/,
       /\bcanais\s+existem\b/,
@@ -1101,7 +1127,7 @@ const META_INTENTS = [
   {
     tool: "listar_status_tickets",
     patterns: [
-      /\bquais\s+status\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}status\\b`),
       /\bliste\s+(?:todos\s+)?os\s+status\b/,
       /\blistar\s+status\b/,
       /\bstatus\s+existem\b/,
@@ -1111,7 +1137,7 @@ const META_INTENTS = [
   {
     tool: "listar_departamentos_tickets",
     patterns: [
-      /\bquais\s+departamentos\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}departamentos\\b`),
       /\bliste\s+(?:todos\s+)?os\s+departamentos\b/,
       /\blistar\s+departamentos\b/,
       /\bdepartamentos\s+existem\b/,
@@ -1120,11 +1146,11 @@ const META_INTENTS = [
   {
     tool: "listar_usuarios_tickets",
     patterns: [
-      /\bquais\s+usuarios\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}usuarios\\b`),
       /\bliste\s+(?:todos\s+)?os\s+usuarios\b/,
       /\blistar\s+usuarios\b/,
       /\busuarios\s+existem\b/,
-      /\bquais\s+operadores\b/,
+      new RegExp(`\\b${QUAIS_ARTIGO_SOURCE}operadores\\b`),
       /\boperadores\s+existem\b/,
     ],
   },

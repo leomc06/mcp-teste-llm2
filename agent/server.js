@@ -509,9 +509,30 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const signal = AbortSignal.timeout(
-        config.AGENT_REQUEST_TIMEOUT_MS,
-      );
+      // Sem isso, cancelar a pergunta no navegador não parava nada no
+      // servidor: a chamada ao Ollama (até 2, com a síntese) continuava
+      // rodando sozinha até o timeout de 5 minutos, segurando a única vaga
+      // de concorrência (AGENT_MAX_CONCURRENT_REQUESTS=1) e o CPU inteiro —
+      // achado ao vivo (lote de perguntas): cancelar um "resumo executivo"
+      // demorado deixava o PC fazendo barulho e impedia até reiniciar o
+      // backend em seguida. Escuta em `response` (não em `request`) de
+      // propósito — testado ao vivo que `request.on("close")` não dispara
+      // nesse cenário (o corpo da requisição já foi todo recebido antes
+      // daqui), enquanto `response.on("close")` dispara tanto num
+      // cancelamento quanto numa resposta normal — o `!response.writableEnded`
+      // evita abortar à toa depois que a resposta já foi enviada com sucesso.
+      const disconnectController = new AbortController();
+
+      response.on("close", () => {
+        if (!response.writableEnded) {
+          disconnectController.abort();
+        }
+      });
+
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(config.AGENT_REQUEST_TIMEOUT_MS),
+        disconnectController.signal,
+      ]);
 
       const selectedOllamaTools =
         toolDecision.tools;

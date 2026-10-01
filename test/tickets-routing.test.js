@@ -2076,6 +2076,36 @@ test("Img 16: 'equipe X atendeu/tratou' poda o verbo de atividade do nome da ár
   assert.equal(extractAreaName("tickets da equipe redes tratou"), "redes");
 });
 
+test("Img 19: 'quais os canais' (com artigo) também aciona listar_canais_tickets", () => {
+  const route = routeTicketQuestion("Quais os canais de atendimento disponíveis?");
+
+  assert.deepEqual(route.toolNames, ["listar_canais_tickets"]);
+});
+
+test("'quais (as/os) X' com artigo funciona pras outras listas de catálogo também", () => {
+  assert.deepEqual(routeTicketQuestion("Quais as áreas existem?").toolNames, ["listar_areas_tickets"]);
+  assert.deepEqual(routeTicketQuestion("Quais os status possíveis?").toolNames, ["listar_status_tickets"]);
+  assert.deepEqual(routeTicketQuestion("Quais os operadores existem?").toolNames, ["listar_usuarios_tickets"]);
+});
+
+test("Img 20: 'quantos tickets a equipe de X tem' não captura 'equipe' como nome de operador", () => {
+  const route = routeTicketQuestion("Quantos tickets a equipe de Redes tem?");
+
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.area, "Redes");
+});
+
+test("Img 21: 'equipe X tratou no dia <data>' poda data e verbo, sem duplicar como operador", () => {
+  const route = routeTicketQuestion("Quantos tickets a equipe de Suporte tratou no dia 17/12/2025?");
+
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.area, "Suporte");
+  assert.deepEqual(
+    { dataInicio: route.entities.dataInicio, dataFim: route.entities.dataFim },
+    { dataInicio: "2025-12-17", dataFim: "2025-12-17" },
+  );
+});
+
 test("'resuma o ticket X' marca synthesize: resumo_ticket sem mudar a tool", () => {
   const route = routeTicketQuestion("Resuma o ticket 4830.");
 
