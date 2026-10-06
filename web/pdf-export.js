@@ -17,6 +17,53 @@ const BODY_FONT_SIZE = 9;
 const MAX_ROWS_PER_PAGE = 40;
 const COURIER_CHAR_WIDTH_RATIO = 0.6;
 
+// Mesma paleta de web/styles.css (:root) — mantém o PDF com a identidade
+// visual do app. Atualize os dois juntos se a paleta mudar lá.
+const PDF_COLORS = {
+  background: "#1a232b",
+  border: "#435562",
+  text: "#eef2f4",
+  muted: "#9fb2bc",
+  accent: "#2fae8e",
+  accentText: "#0e2420",
+};
+
+function hexToRgbTriplet(hex) {
+  const value = hex.replace("#", "");
+  const channels = [0, 2, 4].map((start) => parseInt(value.slice(start, start + 2), 16) / 255);
+  return channels.map((channel) => channel.toFixed(3)).join(" ");
+}
+
+const FILL = Object.fromEntries(
+  Object.entries(PDF_COLORS).map(([key, hex]) => [key, hexToRgbTriplet(hex)]),
+);
+
+function slugifyForFileName(value) {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .toLowerCase();
+}
+
+function formatDateForFileName(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}_${hh}${min}`;
+}
+
+// Nome de arquivo legível: nome da tool consultada + data/hora, em vez de
+// "tickets-<timestamp>" (achado ao vivo: o usuário queria identificar o
+// relatório pelo nome, não por um número grande sem significado).
+export function buildPdfFileName(shape, now = new Date()) {
+  const tool = shape?.tool ? slugifyForFileName(shape.tool) : "relatorio-tickets";
+  return `${tool}-${formatDateForFileName(now)}.pdf`;
+}
+
 function sanitizeLatin1(value) {
   return Array.from(String(value))
     .map((ch) => (ch.codePointAt(0) <= 255 ? ch : "?"))
@@ -85,38 +132,61 @@ function padRow(cols, widths) {
 }
 
 function buildPageContentStream({ title, subtitle, headerLine, bodyLines, isFirstPage }) {
-  const lines = [];
+  const ops = [];
 
-  lines.push("BT");
-  lines.push(`/F1 ${TITLE_FONT_SIZE} Tf`);
-  lines.push(`${MARGIN} ${PAGE_HEIGHT - MARGIN} Td`);
-  lines.push(`(${toPdfText(isFirstPage ? title : `${title} (cont.)`)}) Tj`);
-  lines.push("ET");
+  function textLine(y, size, font, fillColor, text) {
+    ops.push("BT");
+    ops.push(`${fillColor} rg`);
+    ops.push(`/${font} ${size} Tf`);
+    ops.push(`${MARGIN} ${y} Td`);
+    ops.push(`(${toPdfText(text)}) Tj`);
+    ops.push("ET");
+  }
+
+  // Fundo da página (--background) e barra de destaque no topo (--accent) —
+  // mesmas cores do .response-panel/.app-topbar-mark da interface.
+  ops.push(`${FILL.background} rg`);
+  ops.push(`0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT} re f`);
+  ops.push(`${FILL.accent} rg`);
+  ops.push(`0 ${PAGE_HEIGHT - 6} ${PAGE_WIDTH} 6 re f`);
+
+  textLine(
+    PAGE_HEIGHT - MARGIN,
+    TITLE_FONT_SIZE,
+    "F1",
+    FILL.text,
+    isFirstPage ? title : `${title} (cont.)`,
+  );
 
   let cursorY = PAGE_HEIGHT - MARGIN - 24;
 
   if (isFirstPage && subtitle) {
-    lines.push("BT");
-    lines.push(`/F2 ${BODY_FONT_SIZE} Tf`);
-    lines.push(`${MARGIN} ${cursorY} Td`);
-    lines.push(`(${toPdfText(subtitle)}) Tj`);
-    lines.push("ET");
+    textLine(cursorY, BODY_FONT_SIZE, "F2", FILL.muted, subtitle);
     cursorY -= LINE_HEIGHT * 1.5;
   }
 
-  lines.push("BT");
-  lines.push(`/F2 ${BODY_FONT_SIZE} Tf`);
-  lines.push(`${MARGIN} ${cursorY} Td`);
-  lines.push(`(${toPdfText(headerLine)}) Tj`);
+  // Faixa de cabeçalho da tabela (--accent) com texto em --accent-text pro
+  // contraste — mesmo par de cores do botão de toggle ativo na interface.
+  ops.push(`${FILL.accent} rg`);
+  ops.push(`${MARGIN - 4} ${cursorY - 3} ${PAGE_WIDTH - (MARGIN - 4) * 2} ${LINE_HEIGHT + 2} re f`);
+  textLine(cursorY, BODY_FONT_SIZE, "F2", FILL.accentText, headerLine);
+  cursorY -= LINE_HEIGHT;
+
+  // Linha separadora sob cada registro (--border), espelhando o
+  // border-bottom dos <td> da tabela HTML.
+  ops.push(`${FILL.border} RG`);
+  ops.push("0.5 w");
 
   for (const bodyLine of bodyLines) {
-    lines.push(`0 -${LINE_HEIGHT} Td`);
-    lines.push(`(${toPdfText(bodyLine)}) Tj`);
+    textLine(cursorY, BODY_FONT_SIZE, "F2", FILL.text, bodyLine);
+    const ruleY = cursorY - 3;
+    ops.push(`${MARGIN - 4} ${ruleY} m`);
+    ops.push(`${PAGE_WIDTH - MARGIN + 4} ${ruleY} l`);
+    ops.push("S");
+    cursorY -= LINE_HEIGHT;
   }
 
-  lines.push("ET");
-
-  return lines.join("\n");
+  return ops.join("\n");
 }
 
 function assemblePdf(pageContents) {

@@ -6,7 +6,7 @@ import {
   buildRefinementChips,
 } from "./shapes.js";
 import { renderBarChart, renderPieChart } from "./charts.js";
-import { buildPdfBytes } from "./pdf-export.js";
+import { buildPdfBytes, buildPdfFileName } from "./pdf-export.js";
 
 const form = document.querySelector("#query-form");
 const questionInput = document.querySelector("#question");
@@ -317,7 +317,7 @@ pdfExportButton.addEventListener("click", () => {
   const link = document.createElement("a");
 
   link.href = url;
-  link.download = `tickets-${Date.now()}.pdf`;
+  link.download = buildPdfFileName(currentShape);
   link.click();
 
   URL.revokeObjectURL(url);

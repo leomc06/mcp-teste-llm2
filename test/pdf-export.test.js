@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildPdfBytes,
   buildPdfDocument,
+  buildPdfFileName,
   computeColumnWidths,
   pdfStringToBytes,
 } from "../web/pdf-export.js";
@@ -118,4 +119,22 @@ test("computeColumnWidths: encolhe proporcionalmente quando excede o orçamento"
 test("pdfStringToBytes: cada caractere vira um byte 0-255", () => {
   const bytes = pdfStringToBytes("AB\u00e7");
   assert.deepEqual(Array.from(bytes), [65, 66, 0xe7]);
+});
+
+// Achado ao vivo: o nome do arquivo baixado vinha como "tickets-<timestamp>",
+// um monte de n\u00fameros sem significado \u2014 o usu\u00e1rio queria identificar o
+// relat\u00f3rio pelo nome da tool consultada.
+test("buildPdfFileName: usa o nome da tool (sem acentos/espa\u00e7os) e a data/hora", () => {
+  const now = new Date(2026, 9, 6, 14, 30);
+
+  assert.equal(
+    buildPdfFileName({ tool: "resumo_tickets_por_area" }, now),
+    "resumo_tickets_por_area-2026-10-06_1430.pdf",
+  );
+});
+
+test("buildPdfFileName: sem tool no shape, cai pra um nome gen\u00e9rico", () => {
+  const now = new Date(2026, 9, 6, 14, 30);
+  assert.equal(buildPdfFileName({}, now), "relatorio-tickets-2026-10-06_1430.pdf");
+  assert.equal(buildPdfFileName(null, now), "relatorio-tickets-2026-10-06_1430.pdf");
 });

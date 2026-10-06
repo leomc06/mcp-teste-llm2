@@ -40,6 +40,7 @@ export function detectTabularShape(dadosConsultados) {
     ) {
       return {
         kind: "operacional",
+        tool: item.tool,
         filtros: dados.filtros ?? {},
         rows: [
           { label: "Abertos", value: dados.abertos },
@@ -64,6 +65,7 @@ export function detectTabularShape(dadosConsultados) {
     if (Array.isArray(dados.tickets)) {
       return {
         kind: "lista",
+        tool: item.tool,
         isPartial: true,
         rows: dados.tickets,
       };
