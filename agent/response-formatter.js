@@ -215,7 +215,7 @@ function formatTicket(ticket, { incluirDescricao = false, termoBusca, incluirSla
   return parts.join("; ");
 }
 
-function formatTicketList(data) {
+function formatTicketList(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -244,7 +244,7 @@ function formatTicketList(data) {
 
   return [
     cabecalho,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
@@ -441,7 +441,7 @@ function formatTicketSummary(data, dimensaoLabel) {
   return linhas.join("\n");
 }
 
-function formatFrozenTickets(data) {
+function formatFrozenTickets(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -470,7 +470,7 @@ function formatFrozenTickets(data) {
 
   return [
     cabecalho,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
@@ -507,7 +507,7 @@ function formatTicketsBySituacao(data, situacaoLabel, ticketOptions = {}) {
   ].join("\n");
 }
 
-function formatOldestOpenTickets(data) {
+function formatOldestOpenTickets(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -529,11 +529,11 @@ function formatOldestOpenTickets(data) {
 
   return [
     `${tickets.length} ticket(s) aberto(s) mais antigo(s) de ${data.quantidade_total_abertos ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
-function formatMostRecentTickets(data) {
+function formatMostRecentTickets(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -555,11 +555,11 @@ function formatMostRecentTickets(data) {
 
   return [
     `${tickets.length} ticket(s) mais recente(s) de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
-function formatOldestTickets(data) {
+function formatOldestTickets(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -581,11 +581,11 @@ function formatOldestTickets(data) {
 
   return [
     `${tickets.length} ticket(s) mais antigo(s) de ${data.quantidade_total ?? tickets.length} no total${paginacao}${truncadoAviso}:`,
-    ...tickets.map((ticket) => `- ${formatTicket(ticket)}`),
+    ...tickets.map((ticket) => `- ${formatTicket(ticket, ticketOptions)}`),
   ].join("\n");
 }
 
-function formatOverdueTickets(data) {
+function formatOverdueTickets(data, ticketOptions = {}) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
   }
@@ -781,8 +781,27 @@ export function formatComparison(toolName, dadosArray) {
     .join("\n\n");
 }
 
-function formatOne(toolResult) {
+// `verbosidade` ("resumido"/"detalhado", decision.verbosidade no roteador)
+// só se aplica às tools que listam tickets individualmente — formatTicket
+// já tinha `incluirDescricao` como opção (default false, oculto), então
+// "detalhado" é só forçar esse default pra true e "resumido" forçar pra
+// false (sobrescrevendo até o default de `buscar_tickets_por_texto`, que
+// hoje já mostra o trecho encontrado por padrão).
+function buildTicketOptions(incluirDescricaoOverride, extra = {}) {
+  return incluirDescricaoOverride === undefined
+    ? extra
+    : { ...extra, incluirDescricao: incluirDescricaoOverride };
+}
+
+function formatOne(toolResult, { verbosidade } = {}) {
   const { tool, dados } = toolResult;
+
+  const incluirDescricaoOverride =
+    verbosidade === "detalhado"
+      ? true
+      : verbosidade === "resumido"
+        ? false
+        : undefined;
 
   switch (tool) {
     case "listar_areas_tickets":
@@ -808,7 +827,7 @@ function formatOne(toolResult) {
       return formatTicketDetail(dados);
 
     case "listar_tickets":
-      return formatTicketList(dados);
+      return formatTicketList(dados, buildTicketOptions(incluirDescricaoOverride));
 
     case "resumo_tickets_por_status":
       return formatTicketSummary(dados, "status");
@@ -830,33 +849,33 @@ function formatOne(toolResult) {
 
     case "buscar_tickets_por_texto":
       return formatTicketsBySituacao(dados, "encontrado(s) para o texto pesquisado", {
-        incluirDescricao: true,
+        incluirDescricao: incluirDescricaoOverride ?? true,
         termoBusca: dados.texto,
       });
 
     case "listar_tickets_congelados":
-      return formatFrozenTickets(dados);
+      return formatFrozenTickets(dados, buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_abertos":
-      return formatTicketsBySituacao(dados, "aberto(s)");
+      return formatTicketsBySituacao(dados, "aberto(s)", buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_fechados":
-      return formatTicketsBySituacao(dados, "fechado(s)");
+      return formatTicketsBySituacao(dados, "fechado(s)", buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_sem_operador":
-      return formatTicketsBySituacao(dados, "sem operador atribuído");
+      return formatTicketsBySituacao(dados, "sem operador atribuído", buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_abertos_mais_antigos":
-      return formatOldestOpenTickets(dados);
+      return formatOldestOpenTickets(dados, buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_vencidos":
-      return formatOverdueTickets(dados);
+      return formatOverdueTickets(dados, buildTicketOptions(incluirDescricaoOverride, { incluirSla: true }));
 
     case "listar_tickets_mais_recentes":
-      return formatMostRecentTickets(dados);
+      return formatMostRecentTickets(dados, buildTicketOptions(incluirDescricaoOverride));
 
     case "listar_tickets_mais_antigos":
-      return formatOldestTickets(dados);
+      return formatOldestTickets(dados, buildTicketOptions(incluirDescricaoOverride));
 
     case "resumo_operacional_tickets":
       return formatOperationalSummary(dados);
@@ -875,7 +894,7 @@ function formatOne(toolResult) {
   }
 }
 
-export function formatToolResults(toolResults) {
+export function formatToolResults(toolResults, { verbosidade } = {}) {
   if (!Array.isArray(toolResults) || toolResults.length === 0) {
     throw new AgentError(
       "nenhum_resultado_informado",
@@ -883,5 +902,7 @@ export function formatToolResults(toolResults) {
     );
   }
 
-  return toolResults.map(formatOne).join("\n\n");
+  return toolResults
+    .map((toolResult) => formatOne(toolResult, { verbosidade }))
+    .join("\n\n");
 }

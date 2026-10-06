@@ -18,6 +18,22 @@ const routes = new Map([
     fileName: "app.js",
     contentType: "text/javascript; charset=utf-8",
   }],
+  ["/markdown-subset.js", {
+    fileName: "markdown-subset.js",
+    contentType: "text/javascript; charset=utf-8",
+  }],
+  ["/shapes.js", {
+    fileName: "shapes.js",
+    contentType: "text/javascript; charset=utf-8",
+  }],
+  ["/charts.js", {
+    fileName: "charts.js",
+    contentType: "text/javascript; charset=utf-8",
+  }],
+  ["/pdf-export.js", {
+    fileName: "pdf-export.js",
+    contentType: "text/javascript; charset=utf-8",
+  }],
 ]);
 
 export async function serveStaticFile({

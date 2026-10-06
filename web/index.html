@@ -99,6 +99,46 @@
 
         <div id="answer" class="answer"></div>
 
+        <div id="view-toggle" class="view-toggle" hidden>
+          <button
+            type="button"
+            data-view="texto"
+            class="view-toggle-button"
+            aria-pressed="true"
+          >Texto</button>
+
+          <button
+            type="button"
+            data-view="tabela"
+            class="view-toggle-button"
+          >Tabela</button>
+
+          <button
+            type="button"
+            data-view="grafico"
+            class="view-toggle-button"
+          >Gráfico</button>
+
+          <button
+            type="button"
+            id="csv-export"
+            class="view-toggle-button view-toggle-button-csv"
+            hidden
+          >Exportar CSV</button>
+
+          <button
+            type="button"
+            id="pdf-export"
+            class="view-toggle-button view-toggle-button-pdf"
+            hidden
+          >Exportar PDF</button>
+        </div>
+
+        <div id="view-table" class="view-table" hidden></div>
+        <div id="view-chart" class="view-chart" hidden></div>
+
+        <div id="refinement-chips" class="refinement-chips" hidden></div>
+
         <div id="pagination" class="pagination" hidden>
           <button
             id="pagination-prev"

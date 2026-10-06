@@ -22,6 +22,23 @@
   --accent-text: #0e2420;
   --wine: #82235a;
   --wine-hover: #952868;
+
+  /* Paleta categórica validada com o script da skill dataviz contra ESTE
+     fundo (--surface:#2a3640), não copiada direto da referência da skill
+     (que valida contra um fundo mais escuro, #1a1a19). Resultado: todos os
+     checks de banda/croma/CVD/contraste normal passam; só o slot 6 (verde)
+     fica abaixo de 3:1 de contraste aqui — mitigado por construção, nunca
+     exibido sem rótulo direto ao lado (ver web/charts.js) e com a visão de
+     tabela sempre disponível como alternativa. */
+  --chart-series-1: #3987e5;
+  --chart-series-2: #d95926;
+  --chart-series-3: #199e70;
+  --chart-series-4: #c98500;
+  --chart-series-5: #d55181;
+  --chart-series-6: #008300;
+  --chart-series-7: #9085e9;
+  --chart-series-8: #e66767;
+  --chart-grid: var(--border);
 }
 
 * {
@@ -296,10 +313,193 @@ button {
 
 .answer {
   color: var(--text);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 0.98rem;
   line-height: 1.75;
+}
+
+.answer p {
+  margin: 0 0 14px;
+}
+
+.answer p:last-child {
+  margin-bottom: 0;
+}
+
+.answer ul {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.answer ul:last-child {
+  margin-bottom: 0;
+}
+
+.answer li {
+  margin-bottom: 4px;
+}
+
+.answer strong {
+  font-weight: 700;
+}
+
+.data-table {
+  width: 100%;
+  margin: 0 0 14px;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.data-table:last-child {
+  margin-bottom: 0;
+}
+
+.data-table td,
+.data-table th {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.data-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.view-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.view-toggle[hidden] {
+  display: none;
+}
+
+.view-toggle-button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.8rem;
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.view-toggle-button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.view-toggle-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent);
+}
+
+.view-toggle-button-csv {
+  margin-left: auto;
+}
+
+.view-toggle-button-csv[hidden] {
+  display: none;
+}
+
+.view-toggle-button-pdf[hidden] {
+  display: none;
+}
+
+.view-table[hidden],
+.view-chart[hidden] {
+  display: none;
+}
+
+.view-table {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.view-chart {
+  margin-top: 16px;
+}
+
+.chart-sub-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.chart-sub-toggle-button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.72rem;
+}
+
+.chart-sub-toggle-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.chart-empty-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chart-legend-item {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.chart-legend-swatch {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.refinement-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.refinement-chips[hidden] {
+  display: none;
+}
+
+.refinement-chip {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 20px;
+  color: var(--accent);
+  background: transparent;
+  font-size: 0.8rem;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.refinement-chip:hover {
+  color: #ffffff;
+  background: var(--accent);
 }
 
 .pagination {

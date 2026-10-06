@@ -397,6 +397,7 @@ export async function runAgent({
   ollamaTools,
   routeToolArguments = null,
   synthesize = null,
+  verbosidade = null,
   maxToolCalls,
   signal,
 }) {
@@ -585,7 +586,7 @@ export async function runAgent({
     }
 
     if (!hasToolError) {
-      const baseResposta = formatToolResults(toolResults);
+      const baseResposta = formatToolResults(toolResults, { verbosidade });
       let resposta = baseResposta;
 
       if (synthesize && toolResults.length === 1) {

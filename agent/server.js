@@ -12,6 +12,7 @@ import {
   buildToolArguments,
 } from "./routing-utils.js";
 import { isWriteRequest } from "./write-policy.js";
+import { detectsContinuation, mergeContinuation } from "./continuation.js";
 import { serveStaticFile } from "./static-files.js";
 import { createRateLimiter } from "./rate-limiter.js";
 
@@ -80,6 +81,11 @@ const ollamaTools = ollama.formatTools(mcp.tools);
 const requestSchema = z
   .object({
     pergunta: z.string().trim().min(1).max(2000),
+    // Opcional — a pergunta "efetiva" (já com continuação anterior
+    // mesclada, se houve) devolvida na resposta anterior. Mesmo teto de
+    // `pergunta`: a concatenação das duas fica em ~4000 caracteres, bem
+    // dentro do que o modelo local processa sem problema.
+    perguntaAnterior: z.string().trim().max(2000).optional(),
   })
   .strict();
 
@@ -281,7 +287,27 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      if (isWriteRequest(bodyResult.data.pergunta)) {
+      // Mescla a pergunta anterior (devolvida por este mesmo servidor na
+      // resposta de antes) só quando a frase nova começa com um marcador de
+      // continuação de alta confiança — ver agent/continuation.js. A mescla
+      // acontece ANTES de qualquer outra checagem, pra um pedido de escrita
+      // não escapar do guard só por vir partido em 2 turnos (checa os dois
+      // textos, cru e mesclado, abaixo).
+      const temPerguntaAnterior =
+        typeof bodyResult.data.perguntaAnterior === "string"
+        && bodyResult.data.perguntaAnterior.length > 0;
+
+      const continuacaoDetectada =
+        temPerguntaAnterior && detectsContinuation(bodyResult.data.pergunta);
+
+      const perguntaEfetiva = continuacaoDetectada
+        ? mergeContinuation(bodyResult.data.perguntaAnterior, bodyResult.data.pergunta)
+        : bodyResult.data.pergunta;
+
+      if (
+        isWriteRequest(bodyResult.data.pergunta)
+        || (continuacaoDetectada && isWriteRequest(perguntaEfetiva))
+      ) {
         const duracaoMs = Date.now() - startedAt;
 
         audit({
@@ -289,6 +315,7 @@ const server = http.createServer(async (request, response) => {
           usuario: userResult.data,
           resultado: "recusado",
           motivo: "operacao_de_escrita",
+          continuacaoDetectada,
           toolsUtilizadas: [],
           quantidadeChamadas: 0,
           duracaoMs,
@@ -307,7 +334,7 @@ const server = http.createServer(async (request, response) => {
       }
 
       const toolDecision = selectToolDecision(
-        bodyResult.data.pergunta,
+        perguntaEfetiva,
         ollamaTools,
       );
 
@@ -327,6 +354,7 @@ const server = http.createServer(async (request, response) => {
           quantidadeToolsDisponibilizadas: 0,
           toolsUtilizadas: [],
           quantidadeChamadas: 0,
+          continuacaoDetectada,
           duracaoMs,
         });
 
@@ -338,6 +366,7 @@ const server = http.createServer(async (request, response) => {
           toolsUtilizadas: [],
           quantidadeChamadas: 0,
           esclarecimento: true,
+          perguntaEfetiva,
           duracaoMs,
         });
         return;
@@ -455,6 +484,7 @@ const server = http.createServer(async (request, response) => {
             quantidadeToolsDisponibilizadas: 0,
             toolsUtilizadas: [],
             quantidadeChamadas: 0,
+            continuacaoDetectada,
             duracaoMs,
           });
 
@@ -467,6 +497,7 @@ const server = http.createServer(async (request, response) => {
             toolsUtilizadas: [],
             quantidadeChamadas: 0,
             esclarecimento: true,
+            perguntaEfetiva,
             duracaoMs,
           });
 
@@ -485,6 +516,16 @@ const server = http.createServer(async (request, response) => {
       // depois da tool já ter respondido com sucesso, vale a pena fazer
       // uma 2ª chamada ao Ollama pra sintetizar o resultado em texto.
       const synthesize = toolDecision.route?.synthesize ?? null;
+
+      // Cosmético, não auditado (diferente de synthesize): só diz pro
+      // frontend qual visão abrir por padrão (texto/tabela/gráfico), não
+      // muda nenhum dado consultado nem passa por runAgent.
+      const visualizacaoPreferida = toolDecision.route?.formato ?? null;
+
+      // Diferente de `formato`, passa por runAgent de verdade — quem decide
+      // incluir ou não a descrição de cada ticket é o formatter, chamado lá
+      // dentro, não o server.
+      const verbosidade = toolDecision.route?.verbosidade ?? null;
 
       if (
         activeAgentRequests
@@ -543,12 +584,13 @@ const server = http.createServer(async (request, response) => {
 
       try {
         agentResult = await runAgent({
-          pergunta: bodyResult.data.pergunta,
+          pergunta: perguntaEfetiva,
           mcp,
           ollama,
           ollamaTools: selectedOllamaTools,
           routeToolArguments,
           synthesize,
+          verbosidade,
           maxToolCalls: config.AGENT_MAX_TOOL_CALLS,
           signal,
         });
@@ -565,6 +607,7 @@ const server = http.createServer(async (request, response) => {
         quantidadeToolsDisponibilizadas: selectedOllamaTools.length,
         toolsUtilizadas: agentResult.toolsUtilizadas,
         quantidadeChamadas: agentResult.quantidadeChamadas,
+        continuacaoDetectada,
         duracaoMs,
       });
 
@@ -575,6 +618,8 @@ const server = http.createServer(async (request, response) => {
         dadosConsultados: agentResult.dadosConsultados,
         toolsUtilizadas: agentResult.toolsUtilizadas,
         quantidadeChamadas: agentResult.quantidadeChamadas,
+        visualizacaoPreferida,
+        perguntaEfetiva,
         duracaoMs,
       });
     } catch (error) {

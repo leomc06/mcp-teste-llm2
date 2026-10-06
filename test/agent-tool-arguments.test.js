@@ -195,6 +195,121 @@ test("força a tool da rota quando a LLM não cria tool call", async () => {
   );
 });
 
+test("verbosidade 'detalhado' chega até o texto final da resposta (via runAgent -> formatToolResults)", async () => {
+  const ollama = {
+    async chat() {
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [],
+        },
+      };
+    },
+  };
+
+  const mcp = {
+    async callTool() {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              filtros: {},
+              total: 1,
+              tickets: [
+                {
+                  number: 1,
+                  opening_date: "2026-08-20 09:15:00",
+                  priority: "Alta",
+                  area: "DEFAULT",
+                  issue: "Rede",
+                  description: "Sem acesso à internet desde ontem",
+                  operator: "admin",
+                  status: "Aguardando atendimento",
+                  is_frozen: false,
+                },
+              ],
+            }),
+          },
+        ],
+      };
+    },
+  };
+
+  const result = await runAgent({
+    pergunta: "Liste os tickets, de forma detalhada.",
+    mcp,
+    ollama,
+    ollamaTools: [ollamaTools[0]],
+    routeToolArguments: {
+      name: "listar_tickets",
+      args: {},
+    },
+    verbosidade: "detalhado",
+    maxToolCalls: 1,
+  });
+
+  assert.match(result.resposta, /comentário de abertura: Sem acesso à internet desde ontem/);
+});
+
+test("sem verbosidade, runAgent preserva o comportamento de hoje (sem comentário numa listagem comum)", async () => {
+  const ollama = {
+    async chat() {
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [],
+        },
+      };
+    },
+  };
+
+  const mcp = {
+    async callTool() {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              filtros: {},
+              total: 1,
+              tickets: [
+                {
+                  number: 1,
+                  opening_date: "2026-08-20 09:15:00",
+                  priority: "Alta",
+                  area: "DEFAULT",
+                  issue: "Rede",
+                  description: "Sem acesso à internet desde ontem",
+                  operator: "admin",
+                  status: "Aguardando atendimento",
+                  is_frozen: false,
+                },
+              ],
+            }),
+          },
+        ],
+      };
+    },
+  };
+
+  const result = await runAgent({
+    pergunta: "Liste os tickets.",
+    mcp,
+    ollama,
+    ollamaTools: [ollamaTools[0]],
+    routeToolArguments: {
+      name: "listar_tickets",
+      args: {},
+    },
+    maxToolCalls: 1,
+  });
+
+  assert.doesNotMatch(result.resposta, /comentário de abertura/);
+});
+
 test("não força tool quando não existe rota determinística", async () => {
   let mcpWasCalled = false;
 

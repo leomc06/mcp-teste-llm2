@@ -266,6 +266,54 @@ test("P14 da auditoria: tool sem formatador conhecido lança AgentError, não Er
   );
 });
 
+const TICKET_COM_DESCRICAO = {
+  number: 1,
+  opening_date: "2026-08-20 09:15:00",
+  priority: "Alta",
+  area: "DEFAULT",
+  issue: "Rede",
+  description: "Sem acesso à internet desde ontem",
+  operator: "admin",
+  status: "Aguardando atendimento",
+  is_frozen: false,
+};
+
+test("verbosidade 'detalhado' acrescenta o comentário de abertura numa listagem que por padrão não mostra", () => {
+  const resposta = formatToolResults(
+    [{ tool: "listar_tickets", dados: { filtros: {}, total: 1, tickets: [TICKET_COM_DESCRICAO] } }],
+    { verbosidade: "detalhado" },
+  );
+
+  assert.match(resposta, /comentário de abertura: Sem acesso à internet desde ontem/);
+});
+
+test("verbosidade 'resumido' suprime o comentário mesmo numa tool que mostra por padrão (buscar_tickets_por_texto)", () => {
+  const resposta = formatToolResults(
+    [{
+      tool: "buscar_tickets_por_texto",
+      dados: { filtros: {}, quantidade: 1, texto: "internet", tickets: [TICKET_COM_DESCRICAO] },
+    }],
+    { verbosidade: "resumido" },
+  );
+
+  assert.doesNotMatch(resposta, /comentário de abertura/);
+});
+
+test("sem verbosidade, comportamento de hoje é preservado (listar_tickets sem descrição, busca por texto com descrição)", () => {
+  const listagem = formatToolResults([
+    { tool: "listar_tickets", dados: { filtros: {}, total: 1, tickets: [TICKET_COM_DESCRICAO] } },
+  ]);
+  assert.doesNotMatch(listagem, /comentário de abertura/);
+
+  const busca = formatToolResults([
+    {
+      tool: "buscar_tickets_por_texto",
+      dados: { filtros: {}, quantidade: 1, texto: "internet", tickets: [TICKET_COM_DESCRICAO] },
+    },
+  ]);
+  assert.match(busca, /comentário de abertura/);
+});
+
 test("ticket não encontrado retorna mensagem amigável", () => {
   const resposta = format("buscar_ticket_por_numero", {
     encontrado: false,

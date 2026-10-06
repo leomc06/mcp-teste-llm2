@@ -20,6 +20,19 @@ const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
 const TRAILING_PAGE_CLAUSE_PATTERN =
   /\s*\(?\s*p[áa]gina\s+\d+\)?\s*$/iu;
 
+// Achado ao vivo testando continuação conversacional (agent/continuation.js):
+// mergeContinuation só concatena a pergunta anterior com a nova usando um
+// espaço, sem nenhuma pontuação entre as duas — "Resumo... na área Suporte"
+// + "e desses só os Urgente" virava literalmente "...área Suporte e desses
+// só os Urgente" numa frase só, e a captura de nome de área (livre, vai até
+// o fim da frase) engolia a continuação inteira junto, virando
+// area: "Suporte e desses só os Urgente". Mesma lista de marcadores de
+// agent/continuation.js, repetida aqui de propósito (routing-utils.js não
+// importa de agent/continuation.js nem vice-versa, pra não criar uma
+// dependência cruzada só por isso).
+const TRAILING_CONTINUATION_CLAUSE_PATTERN =
+  /\s+(?:e\s+desses|desses|e\s+os|s[óo]\s+os|apenas\s+os|e\s+quanto\s+a(?:os?)?)\b.*$/iu;
+
 // Verbo solto no fim da captura, sem cláusula depois (ex.: "...o operador
 // Cesar tem?" → o "tem" sobra porque não há um "no/na/do/da <dimensão>"
 // depois dele para o corte acima remover junto). "no total"/"ao todo" depois
@@ -60,7 +73,12 @@ const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(
 // etc.), mas não havia um pattern irmão pra esse vocabulário.
 const OPEN_STATE_ADJECTIVE_SOURCE =
   "(?:abert[oa]s?|pendentes?|congelad[oa]s?|travad[oa]s?|paralisad[oa]s?)";
-const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(`\\s+${OPEN_STATE_ADJECTIVE_SOURCE}\\b.*$`, "iu");
+// "em" opcional antes do adjetivo (achado ao vivo: "a equipe de Suporte tem
+// EM aberto?" deixava "tem em" sobrando — o corte só pegava " aberto" sozinho,
+// sem a preposição que normalmente vem antes ("está EM aberto"), e o "em"
+// dangling impedia TRAILING_BARE_VERB_PATTERN de reconhecer "tem" como
+// último token da frase logo depois).
+const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(`\\s+(?:em\\s+)?${OPEN_STATE_ADJECTIVE_SOURCE}\\b.*$`, "iu");
 
 // Vocabulário de "fechado" em toda forma verbal (3ª pessoa do singular/
 // plural no passado) e adjetiva (singular/plural) dos 6 sinônimos aceitos —
@@ -522,6 +540,7 @@ function cleanFreeText(value) {
     .trim()
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
     .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
+    .replace(TRAILING_CONTINUATION_CLAUSE_PATTERN, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_RESOLVED_CLAUSE_PATTERN, "")
@@ -719,11 +738,16 @@ export function extractDepartmentName(value) {
 // área mas essa lista de exclusão — compartilhada pelos padrões de
 // operador/carga — nunca ganhou a mesma palavra, então os 2 padrões
 // competiam pelo mesmo trecho da frase).
+// "vencidos"/"atrasados"/"estourados" (achado ao vivo: "Quantos tickets
+// VENCIDOS tem o departamento Suporte...?" capturava operador: "vencidos" —
+// o padrão "quantos tickets <nome> tem" só verifica a PRIMEIRA palavra
+// contra a exclusão, e esse adjetivo de SLA nunca tinha entrado na lista).
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
-  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b";
+  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b"
+  + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
 
@@ -816,7 +840,7 @@ export function extractTicketStatusName(value) {
 // ticket): "tickets sobre impressora", "chamados relacionados a rede",
 // "chamados que falam de VPN".
 const SEARCH_TEXT_CONNECTOR_SOURCE =
-  "sobre|relacionad[oa]s?\\s+(?:a|com)|mencionando|contendo|falando\\s+(?:de|sobre)|que\\s+fal(?:a|am|e)\\s+(?:de|sobre)";
+  "sobre|relacionad[oa]s?\\s+(?:a|com)|mencionando|mencion(?:a|am|e|em|ar)|contendo|falando\\s+(?:de|sobre)|que\\s+fal(?:a|am|e)\\s+(?:de|sobre)";
 
 export function extractSearchText(value) {
   return extractByPatterns(value, [
@@ -1088,12 +1112,65 @@ export function extractPage(value) {
     : undefined;
 }
 
-// "quais (os/as) X" — o artigo entre "quais" e o substantivo é opcional na
-// fala real ("quais OS canais", "quais AS áreas") e faltava em todos os
+// Pedido explícito de visualização — troca a visão padrão da resposta
+// (texto/tabela/gráfico) no FRONTEND, sem mudar qual tool é chamada nem o
+// texto que o backend gera; mesmo padrão de decision.synthesize, só que pro
+// lado do "como mostrar" em vez do "como resumir". Lista de gatilhos
+// deliberadamente pequena: perder um caso só mantém o comportamento de hoje
+// (abre em texto), um falso positivo só troca a view inicial.
+const FORMATO_TABELA_SOURCE =
+  "(?:mostr[ae]|exib[ae]|apresent[ae]|coloc[ae]|p[oõ]e)\\w*\\s+(?:isso\\s+|isto\\s+)?em\\s+(?:uma\\s+)?tabela"
+  + "|\\btabela\\s*,?\\s*por\\s+favor\\b"
+  + "|\\bformato\\s+de\\s+tabela\\b";
+const FORMATO_GRAFICO_SOURCE =
+  "\\b(?:faz|crie|gera|monta)\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
+  + "|\\bem\\s+(?:forma\\s+de\\s+)?gr[áa]fico\\b"
+  + "|\\bformato\\s+de\\s+gr[áa]fico\\b";
+const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
+const FORMATO_GRAFICO_PATTERN = new RegExp(FORMATO_GRAFICO_SOURCE, "iu");
+
+function detectFormatoPreferido(text) {
+  if (FORMATO_GRAFICO_PATTERN.test(text)) {
+    return "grafico";
+  }
+
+  if (FORMATO_TABELA_PATTERN.test(text)) {
+    return "tabela";
+  }
+
+  return undefined;
+}
+
+// Nível de detalhe pedido explicitamente — só tem efeito nos branches de
+// LISTAGEM (cada um chama formatTicket por ticket; "detalhado" mostra o
+// comentário de abertura, "resumido" garante que não mostra, mesmo nas
+// tools que já mostram por padrão como buscar_tickets_por_texto). Não
+// colide com isResumoTicketIntent (branch de ticket único): "resumido"
+// nunca casa com /\bresum[ao]\b/, e de qualquer forma esse flag só é lido
+// nos branches de listagem, nunca no de número.
+const DETALHADO_PATTERN = /\bdetalhad[oa]s?\b|\bcom\s+detalhes?\b|\bna\s+[íi]ntegra\b/iu;
+const RESUMIDO_PATTERN = /\bresumid[oa]s?\b|\bde\s+forma\s+(?:breve|resumida)\b|\bs[óo]\s+o\s+essencial\b/iu;
+
+function detectVerbosidade(text) {
+  if (DETALHADO_PATTERN.test(text)) {
+    return "detalhado";
+  }
+
+  if (RESUMIDO_PATTERN.test(text)) {
+    return "resumido";
+  }
+
+  return undefined;
+}
+
+// "quais (são) (os/as) X" — o artigo entre "quais" e o substantivo é opcional
+// na fala real ("quais OS canais", "quais AS áreas") e faltava em todos os
 // gatilhos abaixo, que só casavam a forma sem artigo (achado ao vivo: "Quais
 // os canais de atendimento disponíveis?" não batia em nenhum META_INTENTS e
-// caía no fallback genérico de listar_tickets).
-const QUAIS_ARTIGO_SOURCE = "(?:quais\\s+(?:a|as|o|os)?\\s*)";
+// caía no fallback genérico de listar_tickets). "são" entre "quais" e o
+// artigo também é opcional ("Quais são as prioridades disponíveis?" tem
+// "sao" entre os dois e não batia sem essa peça).
+const QUAIS_ARTIGO_SOURCE = "(?:quais\\s+(?:sao\\s+)?(?:a|as|o|os)?\\s*)";
 
 const META_INTENTS = [
   {
@@ -1199,6 +1276,8 @@ export function routeTicketQuestion(pergunta) {
   const text = normalizeText(pergunta);
 
   const numero = extractTicketNumber(pergunta);
+  const formatoPreferido = detectFormatoPreferido(text);
+  const verbosidadePreferida = detectVerbosidade(text);
 
   const status =
     extractTicketStatusName(pergunta)
@@ -1351,10 +1430,20 @@ export function routeTicketQuestion(pergunta) {
   // não necessariamente estourou o SLA. Fica separado da intenção de
   // "vencido"/"atrasado" abaixo, que agora usa o SLA real por ticket (ver
   // listar_tickets_vencidos em src/server.js), não mais um proxy.
-  const isOldestOpenIntent =
+  const mentionsMaisAntigo =
     /\bmais\s+antig/.test(text)
     || /\bmais\s+velh/.test(text)
     || /\bha\s+mais\s+tempo\b/.test(text);
+
+  // Achado ao vivo + decisão explícita do usuário: "mais antigo" sozinho
+  // (SEM a palavra "aberto" na frase) restringia a busca aos ainda não
+  // encerrados por padrão — "Quais os tickets mais antigos?" (sem
+  // "abertos") deve varrer TODOS os status (listar_tickets_mais_antigos,
+  // isOldestOverallIntent mais abaixo), não só os em aberto. Só vira
+  // "abertos mais antigos" quando a frase TAMBÉM qualifica com "aberto"
+  // ("tickets ABERTOS mais antigos", "mais antigos ainda ABERTOS", "estão
+  // ABERTOS há mais tempo").
+  const isOldestOpenIntent = mentionsMaisAntigo && isAbertoIntent;
 
   // "Atrasado"/"vencido"/"estourado" agora usam o SLA real (result_sla_
   // response/result_sla_solution) por ticket, em vez do proxy antigo de
@@ -1443,7 +1532,10 @@ export function routeTicketQuestion(pergunta) {
   if (!isNegatedClosed && !isSemOperadorIntent && detectaNegacaoNaoSuportada()) {
     return createClarificationDecision(
       "esclarecimento_negacao",
-      "Não consigo filtrar excluindo um valor (\"diferente de\"/\"exceto\"/\"não\" aplicado a status, área, departamento, operador, prioridade ou prazo) — as consultas disponíveis só filtram por um valor específico citado, não por exclusão. Pode reformular dizendo exatamente qual valor você quer ver?",
+      "Não consigo filtrar excluindo um valor (\"diferente de\"/\"exceto\"/\"não\" aplicado a status, área, departamento, operador, prioridade ou prazo) — as consultas disponíveis só filtram por um valor específico citado, não por exclusão. Pode reformular dizendo exatamente qual valor você quer ver?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets estão com prioridade Alta?\n"
+        + "- Tickets abertos na área Suporte.",
     );
   }
 
@@ -1479,7 +1571,10 @@ export function routeTicketQuestion(pergunta) {
   if (detectaContradicao()) {
     return createClarificationDecision(
       "esclarecimento_contradicao",
-      "Essa pergunta parece pedir duas coisas que não podem ser verdade ao mesmo tempo (por exemplo, duas prioridades diferentes, ou um status que não combina com \"fechado\"/\"encerrado\"). Pode reformular dizendo só o que você quer ver?",
+      "Essa pergunta parece pedir duas coisas que não podem ser verdade ao mesmo tempo (por exemplo, duas prioridades diferentes, ou um status que não combina com \"fechado\"/\"encerrado\"). Pode reformular dizendo só o que você quer ver?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com prioridade Urgente.\n"
+        + "- Tickets com status Aguardando cliente.",
     );
   }
 
@@ -1496,7 +1591,11 @@ export function routeTicketQuestion(pergunta) {
   if (hasAmbiguousParado) {
     return createClarificationDecision(
       "esclarecimento_termo_ambiguo",
-      "\"Parado\" pode significar SLA congelado, sem operador atribuído ou só o ticket mais antigo em aberto — pode dizer qual dessas situações você quer ver?",
+      "\"Parado\" pode significar SLA congelado, sem operador atribuído ou só o ticket mais antigo em aberto — pode dizer qual dessas situações você quer ver?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com SLA congelado.\n"
+        + "- Tickets sem operador atribuído.\n"
+        + "- Ticket mais antigo em aberto.",
     );
   }
 
@@ -1510,6 +1609,15 @@ export function routeTicketQuestion(pergunta) {
         ? "aberto"
         : undefined;
 
+  // Achado ao vivo: "Faz um gráfico de tickets por departamento" não tinha
+  // nenhuma palavra de resumo (resumo/quantos/distribuição/...) — caía
+  // inteiro no fallback genérico (buscar_por_texto/listar_tickets), sem
+  // filtro nenhum. "Pedir um gráfico/tabela" de algo já implica, por si só,
+  // um pedido de distribuição — por isso formatoPreferido também conta
+  // como gatilho de resumo aqui. Só tem efeito quando mentionsXDimension
+  // também bate (ex.: "por departamento"), então não hijacka listagens
+  // comuns (que filtram por um nome específico, não pela palavra solta da
+  // dimensão).
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -1518,6 +1626,7 @@ export function routeTicketQuestion(pergunta) {
     || /\bquantas\b/.test(text)
     || /\bcontagem\b/.test(text)
     || /\btop\s+\d+\b/.test(text)
+    || formatoPreferido !== undefined
     || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text);
 
   const mentionsStatusDimension = mentionsDimension(text, "status");
@@ -1583,27 +1692,43 @@ export function routeTicketQuestion(pergunta) {
       decision.synthesize = "resumo_executivo";
     }
 
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
     return decision;
   }
 
   if (hasResumoIntent && mentionsStatusDimension) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
       compactEntities({ area, departamento, operador, prioridade, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && mentionsPriorityDimension) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
       compactEntities({ status, area, departamento, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && mentionsAreaDimension) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
       compactEntities({
@@ -1617,10 +1742,16 @@ export function routeTicketQuestion(pergunta) {
         ordem: ordemRanking,
       }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent)) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
       compactEntities({
@@ -1635,10 +1766,16 @@ export function routeTicketQuestion(pergunta) {
         ordem: ordemRanking,
       }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && mentionsDepartmentDimension) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
       // dataInicio/dataFim faltavam aqui (achado B13/item 6 do plano de
@@ -1648,10 +1785,16 @@ export function routeTicketQuestion(pergunta) {
       // repassa a data extraída no topo da função.
       compactEntities({ status, area, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (hasResumoIntent && mentionsClienteDimension) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",
       compactEntities({
@@ -1666,6 +1809,12 @@ export function routeTicketQuestion(pergunta) {
         ordem: ordemRanking,
       }),
     );
+
+    if (formatoPreferido) {
+      decision.formato = formatoPreferido;
+    }
+
+    return decision;
   }
 
   if (numero !== undefined) {
@@ -1828,7 +1977,13 @@ export function routeTicketQuestion(pergunta) {
   const isBareOldestOverallIntent =
     !isOldestOverallWithCountIntent && /\bprimeir[oa]\b/.test(text);
 
-  const isOldestOverallIntent = isOldestOverallWithCountIntent || isBareOldestOverallIntent;
+  // "mais antigo" SEM "aberto" (ver mentionsMaisAntigo/isOldestOpenIntent
+  // acima) também entra aqui — é o mesmo pedido de "TODOS os status" que o
+  // resto desse branch já busca, só com outro vocabulário de gatilho.
+  const isOldestOverallIntent =
+    isOldestOverallWithCountIntent
+    || isBareOldestOverallIntent
+    || (mentionsMaisAntigo && !isAbertoIntent);
 
   // "ultimo" também ganhou o \b de fechamento que faltava (bug de regex
   // simples, evita casar como prefixo de outra palavra). "por ultimo" no
@@ -1887,7 +2042,7 @@ export function routeTicketQuestion(pergunta) {
   }
 
   if (isAbertoIntent && !isFechadoIntent) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_abertos",
       "listar_tickets_abertos",
       // status entra aqui (achado Img 31): "tickets abertos aguardando
@@ -1910,10 +2065,16 @@ export function routeTicketQuestion(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isFechadoIntent && !isAbertoIntent) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_fechados",
       "listar_tickets_fechados",
       compactEntities({
@@ -1929,6 +2090,12 @@ export function routeTicketQuestion(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isSemOperadorIntent) {
@@ -2016,13 +2183,23 @@ export function routeTicketQuestion(pergunta) {
       "fora_do_dominio",
       "Não entendi essa pergunta como algo relacionado aos tickets do sistema. "
         + "Você pode perguntar sobre status, prioridade, área, departamento, "
-        + "operador, cliente, período ou número de um ticket, por exemplo.",
+        + "operador, cliente, período ou número de um ticket, por exemplo."
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets estão abertos na área Suporte?\n"
+        + "- Qual o resumo dos tickets por prioridade este mês?\n"
+        + "- Detalhe o ticket 1050.",
     );
   }
 
-  return createTicketDecision(
+  const decisaoListar = createTicketDecision(
     "listar",
     "listar_tickets",
     entities,
   );
+
+  if (verbosidadePreferida) {
+    decisaoListar.verbosidade = verbosidadePreferida;
+  }
+
+  return decisaoListar;
 }

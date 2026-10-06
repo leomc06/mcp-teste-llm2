@@ -194,9 +194,14 @@ test("'há mais de N dias/semanas/meses/anos' vira dataFim (teto de abertura) e 
 });
 
 test("'há mais tempo' (proxy de mais antigos) continua funcionando sem ser capturado como 'há mais de N'", () => {
+  // "atrasados" não é "aberto" — por decisão do usuário, "mais antigos" SEM
+  // a palavra "aberto" não força mais o proxy cronológico restrito aos
+  // abertos; aqui quem ganha é o SLA real (isSlaVencidoIntent), que já tinha
+  // prioridade sobre o proxy antigo assim que "mais antigos" parou de
+  // interceptar a frase primeiro.
   const route = routeTicketQuestion("Quais tickets estão atrasados há mais tempo?");
 
-  assert.deepEqual(route.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_vencidos"]);
 });
 
 test("aspas literais em torno do texto de busca são removidas (Img 35)", () => {
@@ -1259,8 +1264,9 @@ test("prioridade chega em tickets congelados, mais antigos e mais recentes", () 
   assert.deepEqual(congelados.toolNames, ["listar_tickets_congelados"]);
   assert.equal(congelados.entities.prioridade, "Urgente");
 
+  // Sem a palavra "aberto" — varre todos os status (mudança de convenção).
   const maisAntigos = routeTicketQuestion("Tickets urgentes mais antigos.");
-  assert.deepEqual(maisAntigos.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.deepEqual(maisAntigos.toolNames, ["listar_tickets_mais_antigos"]);
   assert.equal(maisAntigos.entities.prioridade, "Urgente");
 
   const maisRecentes = routeTicketQuestion("Tickets urgentes mais recentes.");
@@ -1494,10 +1500,10 @@ test("'cliente' chega em listar_tickets_sem_operador", () => {
   assert.equal(route.entities.cliente, "Acme");
 });
 
-test("'cliente' chega em listar_tickets_abertos_mais_antigos", () => {
+test("'cliente' chega em listar_tickets_mais_antigos (sem 'aberto', varre todos os status)", () => {
   const route = routeTicketQuestion("Tickets mais antigos do cliente Acme");
 
-  assert.deepEqual(route.toolNames, ["listar_tickets_abertos_mais_antigos"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_antigos"]);
   assert.equal(route.entities.cliente, "Acme");
 });
 
@@ -2151,4 +2157,158 @@ test("'resumo operacional' comum (sem 'executivo'/destinatário) não marca synt
 test("resumo por dimensão (área/status) continua intacto, não vira resumo executivo", () => {
   assert.deepEqual(routeTicketQuestion("Resumo dos tickets por área.").toolNames, ["resumo_tickets_por_area"]);
   assert.deepEqual(routeTicketQuestion("Resumo dos tickets por status.").toolNames, ["resumo_tickets_por_status"]);
+});
+
+test("pedido explícito de formato marca decision.formato sem mudar a tool", () => {
+  const tabela = routeTicketQuestion("Resumo dos tickets por status, mostra em tabela.");
+  assert.deepEqual(tabela.toolNames, ["resumo_tickets_por_status"]);
+  assert.equal(tabela.formato, "tabela");
+
+  const grafico = routeTicketQuestion("Faz um gráfico do resumo por prioridade.");
+  assert.deepEqual(grafico.toolNames, ["resumo_tickets_por_prioridade"]);
+  assert.equal(grafico.formato, "grafico");
+
+  const executivoEmGrafico = routeTicketQuestion("Resumo executivo em formato de gráfico.");
+  assert.deepEqual(executivoEmGrafico.toolNames, ["resumo_operacional_tickets"]);
+  assert.equal(executivoEmGrafico.formato, "grafico");
+});
+
+test("pergunta sem gatilho de formato não marca decision.formato", () => {
+  const route = routeTicketQuestion("Resumo dos tickets por status.");
+  assert.equal(route.formato, undefined);
+});
+
+test("pedido de gráfico numa listagem paginada não marca decision.formato (não é uma forma 'resumo'/'operacional')", () => {
+  const route = routeTicketQuestion("Lista os tickets abertos em formato de gráfico.");
+  assert.equal(route.formato, undefined);
+});
+
+test("continuação conversacional: frase já mesclada (como server.js produziria) roteia normalmente, sem lógica nova aqui", () => {
+  const route = routeTicketQuestion(
+    "Resumo dos tickets por status na área Suporte. e desses só os urgentes",
+  );
+
+  // A frase mesclada tem "status" (resumo) e "urgentes" (prioridade) —
+  // routeTicketQuestion só vê uma string só, igual sempre viu; o merge em
+  // si é responsabilidade de agent/continuation.js + server.js, não daqui.
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_status"]);
+  assert.equal(route.entities.area, "Suporte");
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("achado ao vivo: mergeContinuation concatena SEM pontuação — marcador de continuação não deve vazar pro nome de área/operador/cliente capturado", () => {
+  // mergeContinuation (agent/continuation.js) só junta com um espaço, sem
+  // vírgula/ponto entre as duas perguntas — sem TRAILING_CONTINUATION_CLAUSE_PATTERN,
+  // a captura livre de área ia até o fim da frase e vazava a continuação
+  // inteira junto: area ficava "Suporte e desses só os Urgente" em vez de
+  // só "Suporte", e a tool de prioridade recebia um filtro de área inválido.
+  const area = routeTicketQuestion(
+    "Resumo dos tickets por prioridade na área Suporte e desses só os Urgente",
+  );
+  assert.equal(area.entities.area, "Suporte");
+
+  const operador = routeTicketQuestion(
+    "Quantos tickets o operador Cesar tem? e desses só os abertos",
+  );
+  assert.equal(operador.entities.operador, "Cesar");
+});
+
+test("verbosidade: 'detalhado'/'resumido' marcam decision.verbosidade nos branches de listagem mais comuns", () => {
+  assert.equal(
+    routeTicketQuestion("Liste os tickets abertos de forma detalhada.").verbosidade,
+    "detalhado",
+  );
+  assert.equal(
+    routeTicketQuestion("Liste os tickets fechados de forma resumida.").verbosidade,
+    "resumido",
+  );
+  assert.equal(
+    routeTicketQuestion("Liste os tickets, com detalhes.").verbosidade,
+    "detalhado",
+  );
+});
+
+test("verbosidade: sem gatilho não marca decision.verbosidade", () => {
+  assert.equal(routeTicketQuestion("Liste os tickets abertos.").verbosidade, undefined);
+});
+
+test("verbosidade: 'resumido' não colide com o gatilho de resumo_ticket (branch de número é outro, não lê verbosidade)", () => {
+  const route = routeTicketQuestion("Resuma o ticket 4830 de forma resumida.");
+  assert.deepEqual(route.toolNames, ["buscar_ticket_por_numero"]);
+  assert.equal(route.synthesize, "resumo_ticket");
+  assert.equal(route.verbosidade, undefined);
+});
+
+test("mensagens de esclarecimento trazem exemplos de frase válida", () => {
+  const negacao = routeTicketQuestion("Quantos tickets tem?  tirando os cancelados");
+  assert.match(negacao.clarification, /Exemplos:\n- /u);
+
+  const contradicao = routeTicketQuestion("Tickets urgentes de baixa prioridade.");
+  assert.match(contradicao.clarification, /Exemplos:\n- /u);
+
+  const termoAmbiguo = routeTicketQuestion("Tickets parados.");
+  assert.match(termoAmbiguo.clarification, /Exemplos:\n- /u);
+
+  const foraDoDominio = routeTicketQuestion("Me conte uma piada, por favor.");
+  assert.match(foraDoDominio.clarification, /Exemplos:\n- /u);
+});
+
+// Achados ao vivo testando o lote de perguntas com as features novas (A-H +
+// PDF) — 5 bugs reais de roteamento descobertos via screenshot do usuário.
+
+test("'quais são as X' (com 'são' entre 'quais' e o artigo) roteia pro meta-intent certo", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais são as prioridades disponíveis?").toolNames,
+    ["listar_prioridades_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais são os canais de atendimento?").toolNames,
+    ["listar_canais_tickets"],
+  );
+});
+
+test("'faz um gráfico de X por Y' sem palavra de resumo ainda roteia pro resumo por dimensão, com formato gráfico", () => {
+  const route = routeTicketQuestion("Faz um gráfico de tickets por departamento");
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_departamento"]);
+  assert.equal(route.formato, "grafico");
+});
+
+test("busca textual reconhece 'mencionem'/'mencione' (conjugações de mencionar), não só 'mencionando'", () => {
+  const route = routeTicketQuestion("Busca tickets que mencionem 'impressora'");
+  assert.deepEqual(route.toolNames, ["buscar_tickets_por_texto"]);
+  assert.equal(route.entities.texto, "impressora");
+});
+
+test("'tickets vencidos' combinado com outros filtros não captura 'vencidos' como nome de operador", () => {
+  const route = routeTicketQuestion(
+    "Quantos tickets vencidos tem o departamento Suporte, aberto entre 01/01/2026 e 30/06/2026, com prioridade Urgente?",
+  );
+  assert.deepEqual(route.toolNames, ["listar_tickets_vencidos"]);
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("'equipe de X tem em aberto' não deixa 'tem em' sobrando no nome da área", () => {
+  const route = routeTicketQuestion("Quantos tickets a equipe de Suporte tem em aberto?");
+  assert.equal(route.entities.area, "Suporte");
+});
+
+// Mudança de convenção pedida pelo usuário (decisão explícita, não achado de
+// bug): "mais antigos" SOZINHO, sem a palavra "aberto" na frase, passa a
+// varrer TODOS os status (abertos+fechados+cancelados), não só os abertos.
+// Só fica restrito aos abertos quando a frase também diz "aberto"
+// explicitamente.
+test("'mais antigos' sem 'aberto' varre todos os status; com 'aberto', continua restrito", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais os tickets mais antigos?").toolNames,
+    ["listar_tickets_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais os tickets abertos mais antigos?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais os tickets mais antigos ainda abertos?").toolNames,
+    ["listar_tickets_abertos_mais_antigos"],
+  );
 });
