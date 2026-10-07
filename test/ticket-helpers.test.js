@@ -14,6 +14,7 @@ import {
   criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
   agruparContagemPorNomeNormalizado,
+  resolveClienteFiltro,
   rankearResumo,
   diasEmAberto,
   createTicketHelpers,
@@ -248,6 +249,48 @@ test("agruparContagemPorNomeNormalizado funde variantes de acento/caixa do mesmo
 
 test("agruparContagemPorNomeNormalizado: sem tickets, devolve lista vazia", () => {
   assert.deepEqual(agruparContagemPorNomeNormalizado([], (t) => t.contact_name), []);
+});
+
+// F6 (auditoria de robustez): cliente não tem catálogo/resolveMetaId
+// próprio — resolveClienteFiltro é a mesma rede de segurança de ambiguidade
+// que status/área/operador/etc já tinham, aplicada ao texto livre de
+// contact_name.
+test("resolveClienteFiltro: duas pessoas distintas batendo no mesmo substring é ambíguo", () => {
+  const tickets = [
+    { contact_name: "Ana Silva" },
+    { contact_name: "Ana Paula Reis" },
+  ];
+
+  const resultado = resolveClienteFiltro(tickets, "ana");
+
+  assert.equal(resultado.naoEncontrado, true);
+  assert.equal(resultado.ambiguo, true);
+  assert.deepEqual(resultado.candidatos, ["Ana Silva", "Ana Paula Reis"]);
+});
+
+test("resolveClienteFiltro: variante de caixa/acento da MESMA pessoa não é ambígua", () => {
+  const tickets = [
+    { contact_name: "fabio gali" },
+    { contact_name: "Fabio Gali" },
+  ];
+
+  const resultado = resolveClienteFiltro(tickets, "fabio");
+
+  assert.equal(resultado.naoEncontrado, false);
+  assert.equal(resultado.nomeAlvo, "fabio");
+});
+
+test("resolveClienteFiltro: sem nenhum ticket batendo, não encontrado", () => {
+  const resultado = resolveClienteFiltro([{ contact_name: "Ana Silva" }], "zebedeu");
+  assert.equal(resultado.naoEncontrado, true);
+  assert.equal(resultado.ambiguo, undefined);
+});
+
+test("resolveClienteFiltro: sem query (cliente não informado), passa direto", () => {
+  assert.deepEqual(resolveClienteFiltro([{ contact_name: "Ana Silva" }], undefined), {
+    nomeAlvo: undefined,
+    naoEncontrado: false,
+  });
 });
 
 test("rankearResumo ordena decrescente por quantidade e calcula percentual (1 casa decimal)", () => {

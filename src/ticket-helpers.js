@@ -280,6 +280,48 @@ export function agruparContagemPorNomeNormalizado(tickets, obterNome) {
   });
 }
 
+// F6 (auditoria de robustez): resolveMetaId já detecta ambiguidade de nome
+// (ver "an" batendo com Ana/Mariana/Anderson acima) pra status/área/
+// departamento/operador/prioridade — todos esses têm catálogo próprio.
+// "cliente" não tem catálogo (só existe como texto livre em contact_name
+// dos tickets já buscados), então nenhum chamador tinha ESSA mesma rede de
+// segurança: duas pessoas distintas cujo nome bate no mesmo substring (ex.:
+// "Ana" batendo em "Ana Silva" E "Ana Paula Reis") tinham seus tickets
+// silenciosamente misturados num filtro só. Mesmo contrato de retorno de
+// resolveMetaId ({naoEncontrado, ambiguo, candidatos}), pra reaproveitar
+// describeNaoEncontrado/formatNaoEncontrados sem o resto do código aprender
+// um formato novo. Reusa a mesma normalização de nome de
+// agruparContagemPorNomeNormalizado (logo acima) pra tratar "fabio gali" e
+// "Fabio Gali" como a MESMA pessoa, não uma ambiguidade.
+export function resolveClienteFiltro(tickets, clienteQuery) {
+  if (clienteQuery === undefined) {
+    return { nomeAlvo: undefined, naoEncontrado: false };
+  }
+
+  const alvo = normalizeForMatch(clienteQuery);
+  const distintos = new Map();
+
+  for (const ticket of tickets) {
+    const normalizado = normalizeForMatch(ticket.contact_name ?? "");
+
+    if (normalizado.includes(alvo) && !distintos.has(normalizado)) {
+      distintos.set(normalizado, ticket.contact_name);
+    }
+  }
+
+  const candidatos = [...distintos.values()];
+
+  if (candidatos.length === 0) {
+    return { nomeAlvo: undefined, naoEncontrado: true };
+  }
+
+  if (candidatos.length > 1) {
+    return { nomeAlvo: undefined, naoEncontrado: true, ambiguo: true, candidatos };
+  }
+
+  return { nomeAlvo: alvo, naoEncontrado: false };
+}
+
 // Ordena um resumo (agrupamento por chave) do maior pro menor (ou do menor
 // pro maior, se ordem === "asc" — usado quando a pergunta é sobre "quem tem
 // MENOS", pra "top N com menos" cortar os N menores, não os N maiores),

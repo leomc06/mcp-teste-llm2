@@ -125,13 +125,22 @@ const TRAILING_CREATED_BY_CLAUSE_PATTERN = /\s+criad[oa]s?\s+(?:por|pel[oa])\s+.
 // atrasados"/"não passou do prazo" como negação de um estado, não só de uma
 // palavra solta. "fora do prazo"/"passou do prazo"/"venceu" (item 5) eram os
 // sinônimos que o próprio usuário citou no pedido original e que faltavam.
+// F5 (auditoria de robustez): "ultrapassou o prazo/SLA", "estourou o SLA" e
+// o idioma modal "já deveriam ter sido resolvidos" (que no uso natural
+// significa vencido — "deveria ter acontecido mas não aconteceu", não uma
+// afirmação de que já fechou) faltavam aqui.
+const SLA_MODAL_OVERDUE_SOURCE = `deveria(?:m)?\\s+(?:ja\\s+)?ter\\s+sido\\s+${CLOSURE_VERB_SOURCE}`;
 const OLDEST_PROXY_STATE_SOURCE =
   "(?:atrasad[oa]s?"
   + "|vencid[oa]s?"
   + "|estourad[oa]s?"
   + "|venc(?:eu|eram)"
   + "|fora\\s+do\\s+prazo"
-  + "|pass(?:ou|aram)\\s+do\\s+prazo)";
+  + "|fora\\s+do\\s+sla"
+  + "|estour(?:ou|aram)\\s+o\\s+sla"
+  + "|ultrapass(?:ou|aram)\\s+(?:o\\s+)?(?:prazo|sla)"
+  + "|pass(?:ou|aram)\\s+do\\s+prazo"
+  + `|${SLA_MODAL_OVERDUE_SOURCE})`;
 
 // Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
 // de "por X", aceita "em cada X", "por cada X", "de cada X" e "cada X" (ex.:
@@ -624,8 +633,30 @@ function extractByPatterns(value, patterns) {
 }
 
 // "ticket" tem sinônimos comuns no vocabulário de helpdesk (o próprio
-// OcoMon vem de "Ocorrência"); todos são aceitos antes do número.
-const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao)";
+// OcoMon vem de "Ocorrência"); todos são aceitos antes do número. "ordem(ns)
+// de serviço" (achado na auditoria de robustez — termo comum fora deste
+// sistema) entra como frase inteira, não como palavra solta "os": "os" sem
+// contexto colide com o artigo plural comuníssimo em português ("OS
+// atrasadas" normaliza igual a "os atrasadas"), então nunca é seguro aceitar
+// "os" sozinho como sinônimo de ticket.
+// "ordem" pluraliza irregular (ordem -&gt; ordens, "m" vira "ns", não é só
+// "+s") — mesmo cuidado já tomado com "solicitação/solicitações" logo
+// abaixo (TICKET_CONTEXT_SOURCE), erro que quase se repetiu aqui.
+const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao|(?:ordem|ordens)\\s+de\\s+servico)";
+
+// "área" tinha 3 listas de sinônimo quase-iguais, cada uma num lugar
+// diferente do arquivo (extractAreaName, mentionsDimension pro resumo, e o
+// portão de domínio mais abaixo) — cada uma foi ganhando uma palavra nova
+// (ex.: "equipe") sem as outras duas acompanharem, então uma pergunta como
+// "visualizar as OS por categoria" caía em "fora do domínio" só porque o
+// PORTÃO (não a extração) nunca tinha ganhado "categoria". Uma fonte única,
+// reaproveitada nos 3 lugares, evita essa dessincronia se repetir.
+const AREA_SYNONYM_SOURCE = "(?:[áa]rea|categoria|equipe)";
+
+// Mesma ideia, pro vocabulário de "cliente" — "solicitante" é sinônimo comum
+// fora do vocabulário interno do sistema, faltava tanto na extração quanto
+// no portão de domínio.
+const CLIENT_LOOKUP_NOUN_SOURCE = "(?:cliente|solicitante)";
 
 // Mesmo vocabulário acima, mas aceitando plural — "solicitação" tem plural
 // irregular ("solicitações" normaliza pra "solicitacoes", não
@@ -643,7 +674,7 @@ const TICKET_CONTEXT_SOURCE = `(?:${TICKET_NOUN_SOURCE}s?|solicitacoes)`;
 // declarados acima (fechado/aberto/vencido) em vez de duplicar sinônimos.
 const TICKET_DOMAIN_VOCABULARY_PATTERN = new RegExp(
   `\\b(?:${TICKET_CONTEXT_SOURCE}|resumo|historico|status|prioridade|urgente`
-    + `|critic[oa]s?|area|departamento|operador|responsavel|atendente|cliente`
+    + `|critic[oa]s?|${AREA_SYNONYM_SOURCE}s?|departamento|operador|responsavel|atendente|${CLIENT_LOOKUP_NOUN_SOURCE}`
     + `|pendente|${CLOSURE_VERB_SOURCE}|${OPEN_STATE_ADJECTIVE_SOURCE}|${OLDEST_PROXY_STATE_SOURCE})\\b`,
   "u",
 );
@@ -720,11 +751,11 @@ export function extractTicketComparisonNumbers(value) {
 // área/departamento/operador/cliente começa com "mais" ou "menos".
 export function extractAreaName(value) {
   return extractByPatterns(value, [
-    // "categoria" é sinônimo comum de "área" fora do vocabulário interno do
-    // sistema (quem pergunta não necessariamente sabe que a API chama isso
-    // de "área") — resolveMetaId falha graciosamente se não for um nome de
-    // área real, então o risco de falso positivo é baixo.
-    /(?<![\p{L}\p{N}])(?:[áa]rea|categoria|equipe)\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
+    // "categoria"/"equipe" são sinônimos comuns de "área" fora do
+    // vocabulário interno do sistema (quem pergunta não necessariamente sabe
+    // que a API chama isso de "área") — resolveMetaId falha graciosamente se
+    // não for um nome de área real, então o risco de falso positivo é baixo.
+    new RegExp(`(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(.+)$`, "iu"),
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
     // sem usar a palavra "área" — mesmo raciocínio acima.
     /\bpessoal\s+d[ao]\s+(?!(?:mais|menos)\b)(.+)$/iu,
@@ -778,9 +809,18 @@ export function extractDepartmentName(value) {
 // VENCIDOS tem o departamento Suporte...?" capturava operador: "vencidos" —
 // o padrão "quantos tickets <nome> tem" só verifica a PRIMEIRA palavra
 // contra a exclusão, e esse adjetivo de SLA nunca tinha entrado na lista).
+// "solicitante" (achado junto da consolidação de CLIENT_LOOKUP_NOUN_SOURCE):
+// sem essa exclusão, "tickets do solicitante Carlos" capturava cliente:
+// "Carlos" (certo, via extractClientName) E operador: "solicitante Carlos"
+// (errado, via o fallback genérico "do/da X" abaixo, que não sabia que
+// "solicitante" já tinha sido consumido por outro extrator) — os dois
+// filtros brigando entre si zerava o resultado.
+// "sla" (achado junto da ampliação do vocabulário de vencido, F5): "tickets
+// fora do SLA" capturava operador: "SLA" pelo mesmo motivo de "prazo" acima
+// (fallback genérico "do/da X" sem essa exclusão).
 const OPERATOR_BY_EXCLUSION_SOURCE =
-  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
-  + "|fornecedor\\b|prazo\\b"
+  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
+  + "|fornecedor\\b|prazo\\b|sla\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
@@ -818,7 +858,7 @@ const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram))"
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
-    /\b(?:operador|respons[áa]vel|atendente|usu[áa]rio)\s+(?!(?:mais|menos)\b)(.+)$/iu,
+    new RegExp(`\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?!(?:mais|menos)\\b)(.+)$`, "iu"),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
     new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
     // "Quantos tickets o Fábio Gali tem em aberto?" (achado testando o
@@ -843,7 +883,10 @@ export function extractOperatorName(value) {
 // silêncio, "nenhum ticket encontrado").
 export function extractClientName(value) {
   return extractByPatterns(value, [
-    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(?!(?:mais|menos|respons[áa]vel)\b)(.+)$/iu,
+    new RegExp(
+      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?!(?:mais|menos|respons[áa]vel)\\b)(.+)$`,
+      "iu",
+    ),
     // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
     // vivo — Img 12): quem abre um ticket é o cliente/contato, não precisa
     // da palavra "cliente" explícita — "que" como âncora evita capturar
@@ -972,7 +1015,11 @@ export function extractPriorityIntent(value) {
 // logo abaixo) — faltava aqui. Sem isso, "Quem é o operador Helpdesk?"
 // não batia em nenhum padrão e caía no fallback de listagem (devolvia
 // tickets filtrados por operador, não o cadastro da pessoa).
-const USER_LOOKUP_NOUN_SOURCE = "usu[áa]rio|operador|respons[áa]vel|atendente";
+// "técnico" (achado na auditoria de robustez): sinônimo comum de operador
+// fora do vocabulário interno do sistema, faltava aqui e em
+// extractOperatorName (que tinha uma 2ª cópia quase-igual desta mesma
+// lista, inline, sem "usuário" — consolidado numa fonte só agora).
+const USER_LOOKUP_NOUN_SOURCE = "usu[áa]rio|operador|respons[áa]vel|atendente|t[ée]cnico";
 
 export function extractUserName(value) {
   return extractByPatterns(value, [
@@ -1182,17 +1229,38 @@ function extractLooseNumberMatch(text) {
 // lado do "como mostrar" em vez do "como resumir". Lista de gatilhos
 // deliberadamente pequena: perder um caso só mantém o comportamento de hoje
 // (abre em texto), um falso positivo só troca a view inicial.
+// Achado na auditoria de robustez (lote de perguntas "OS/sinônimos"): faltavam
+// verbos comuns ("visualizar", "transformar", "gerar") e TABELA tinha uma
+// assimetria estrutural com GRÁFICO — GRÁFICO já aceitava "verbo + gráfico"
+// puro (sem "em"), mas TABELA só aceitava "verbo + EM tabela", nunca "verbo +
+// tabela" direto ("consegue gerar uma tabela com esses dados?" não batia em
+// nenhum dos dois). Adicionada uma alternativa nova pra TABELA espelhando essa
+// forma, em vez de mexer na que já funcionava.
+// "isso"/"isto" cobria só o pronome solto — "transforme ESSES DADOS em uma
+// tabela"/"faça um gráfico com ESSE RESULTADO" (jeito comum de se referir
+// aos dados já consultados) não batiam, só o pronome.
+const OBJECT_REFERENCE_SOURCE = "(?:isso|isto|esses?\\s+dados?|ess[ae]s?\\s+resultados?)\\s+";
+// "coloc[ae]" nunca bateria com "coloque" (o imperativo mais comum de
+// "colocar") — "c" vira "qu" antes de "e" pra manter o som (regra
+// ortográfica do português, mesma classe de troca de "fazer"/"faça" já
+// tratada acima), achado testando "Coloque isso em uma tabela.".
+const PLACE_VERB_SOURCE = "colo(?:c|qu)[ae]";
 const FORMATO_TABELA_SOURCE =
-  "(?:mostr[ae]|exib[ae]|apresent[ae]|coloc[ae]|p[oõ]e)\\w*\\s+(?:isso\\s+|isto\\s+)?em\\s+(?:uma\\s+)?tabela"
+  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|gera)\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?tabela`
+  + "|(?:mostr[ae]|exib[ae]|gera|monta|crie)\\w*\\s+(?:uma\\s+)?tabela\\b"
   + "|\\btabela\\s*,?\\s*por\\s+favor\\b"
   + "|\\bformato\\s+de\\s+tabela\\b";
 // "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
 // virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
 // gráfico" (bem comum) nunca bateria, só a forma "faz".
 const FORMATO_GRAFICO_SOURCE =
-  "\\b(?:fa[cz]|crie|gera|monta)\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
-  + "|\\bem\\s+(?:forma\\s+de\\s+)?gr[áa]fico\\b"
-  + "|\\bformato\\s+de\\s+gr[áa]fico\\b";
+  "\\b(?:fa[cz]|crie|gera|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
+  // "em um gráfico" (achado na mesma auditoria): o "um/uma" opcional faltava
+  // aqui — só "em gráfico"/"em forma de gráfico" batiam, sem artigo.
+  + "|\\bem\\s+(?:uma?\\s+)?(?:forma\\s+de\\s+)?gr[áa]fico\\b"
+  + "|\\bformato\\s+de\\s+gr[áa]fico\\b"
+  + "|\\bgraficamente\\b"
+  + "|\\bde\\s+forma\\s+(?:gr[áa]fica|visual)\\b";
 const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
 const FORMATO_GRAFICO_PATTERN = new RegExp(FORMATO_GRAFICO_SOURCE, "iu");
 
@@ -1206,6 +1274,19 @@ function detectFormatoPreferido(text) {
   }
 
   return undefined;
+}
+
+// F4 (auditoria de robustez): "Faça um gráfico." / "Coloque isso em uma
+// tabela." sozinhos (sem nenhuma outra palavra do domínio de tickets) não
+// tinham como ser roteados standalone — falham o portão de domínio
+// (TICKET_DOMAIN_VOCABULARY_PATTERN) e devolvem "não entendi", mesmo
+// quando é claramente um pedido de reformatar a resposta anterior. Usado
+// por agent/continuation.js como mais um sinal de continuação (ao lado dos
+// marcadores de texto livre), reaproveitando o mesmo vocabulário de
+// tabela/gráfico em vez de duplicá-lo numa 3ª lista.
+export function isBareFormatoRequest(pergunta) {
+  const text = normalizeText(pergunta);
+  return detectFormatoPreferido(text) !== undefined && !TICKET_DOMAIN_VOCABULARY_PATTERN.test(text);
 }
 
 // Nível de detalhe pedido explicitamente — só tem efeito nos branches de
@@ -1462,9 +1543,19 @@ function routeTicketQuestionCore(pergunta) {
     || cliente !== undefined
     || numero !== undefined;
 
+  // "já deveriam ter sido resolvidos" (achado na auditoria de robustez,
+  // F5): o verbo de fechamento aparece DENTRO do idioma modal de "vencido"
+  // (SLA_MODAL_OVERDUE_SOURCE, acima) — sem este guard, isFechadoIntent
+  // também bateria aqui e contaminaria `situacaoInequivoca` com "fechado"
+  // mais abaixo, restringindo a busca de vencidos só aos JÁ fechados (o
+  // oposto do sentido natural da frase, que é sobre os que CONTINUAM em
+  // aberto e já deveriam ter sido resolvidos).
+  const isModalVencido = new RegExp(`\\b${SLA_MODAL_OVERDUE_SOURCE}\\b`, "u").test(text);
+
   const isFechadoIntent =
     new RegExp(`\\b${CLOSURE_VERB_SOURCE}\\b`).test(text)
     && !isNegatedClosed
+    && !isModalVencido
     && hasTicketDomainContext;
 
   // Hoisted pra cima do que era a posição original (mais abaixo, cada um no
@@ -1676,6 +1767,40 @@ function routeTicketQuestionCore(pergunta) {
         ? "aberto"
         : undefined;
 
+  const mentionsStatusDimension = mentionsDimension(text, "status");
+  const mentionsPriorityDimension = mentionsDimension(text, "prioridades?");
+  const mentionsAreaDimension = mentionsDimension(text, `${AREA_SYNONYM_SOURCE}s?`);
+  const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
+  const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
+  const mentionsClienteDimension = mentionsDimension(text, `${CLIENT_LOOKUP_NOUN_SOURCE}s?`);
+
+  // F2 (auditoria de robustez): "Tickets por área."/"Tickets por status."
+  // (sem nenhuma palavra de resumo) caíam no fallback genérico de listagem
+  // em vez de resumo_tickets_por_X, porque hasResumoIntent exigia uma
+  // palavra-gatilho PRÓPRIA além da frase conectora "por X"/"em cada X" que
+  // mentionsDimension já reconhece. A forma de RANKING de mentionsDimension
+  // ("área com mais tickets") já era coberta por RANKING_CUE_SOURCE logo
+  // abaixo — só faltava a forma CONECTORA. Cada branch de resumo ainda exige
+  // também o mentionsXDimension específico (ex.: `hasResumoIntent &&
+  // mentionsAreaDimension`), então eles continuam mutuamente exclusivos por
+  // construção — isso só evita que a frase conectora precise de uma 2ª
+  // palavra-gatilho redundante.
+  //
+  // Guard necessário (achado rodando a suíte depois dessa mudança): "por X"
+  // é ambíguo em português — "tickets POR ÁREA" (sozinho) é pedido de
+  // distribuição, mas "tickets abertos POR ÁREA DE REDES" é um FILTRO
+  // nomeado (mesma preposição, sentido de "na área chamada Redes"), não
+  // pedido de resumo. A frase já extraiu "Redes" como `area` nesse 2º caso
+  // — por isso só conta o conector quando a dimensão NÃO capturou um nome
+  // específico junto (dimensão "solta" de verdade).
+  const mentionsAnyDimensionConnector =
+    (mentionsStatusDimension && status === undefined)
+    || (mentionsPriorityDimension && prioridade === undefined)
+    || (mentionsAreaDimension && area === undefined)
+    || (mentionsOperatorDimension && operador === undefined)
+    || (mentionsDepartmentDimension && departamento === undefined)
+    || (mentionsClienteDimension && cliente === undefined);
+
   // Achado ao vivo: "Faz um gráfico de tickets por departamento" não tinha
   // nenhuma palavra de resumo (resumo/quantos/distribuição/...) — caía
   // inteiro no fallback genérico (buscar_por_texto/listar_tickets), sem
@@ -1694,14 +1819,8 @@ function routeTicketQuestionCore(pergunta) {
     || /\bcontagem\b/.test(text)
     || /\btop\s+\d+\b/.test(text)
     || formatoPreferido !== undefined
-    || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text);
-
-  const mentionsStatusDimension = mentionsDimension(text, "status");
-  const mentionsPriorityDimension = mentionsDimension(text, "prioridades?");
-  const mentionsAreaDimension = mentionsDimension(text, "areas?|categorias?");
-  const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
-  const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
-  const mentionsClienteDimension = mentionsDimension(text, "clientes?|solicitantes?");
+    || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text)
+    || mentionsAnyDimensionConnector;
 
   // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
   // "Quem tem menos...?" já implicam ranking por operador nesse domínio,

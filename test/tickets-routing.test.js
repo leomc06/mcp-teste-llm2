@@ -2339,6 +2339,159 @@ test("'faça um gráfico de X' (verbo irregular) roteia igual a 'faz um gráfico
   assert.equal(route.formato, "grafico");
 });
 
+// F3 (auditoria de robustez): verbos/formas de pedido de tabela/gráfico que
+// faltavam — "gerar"/"visualizar"/"transformar", a forma "verbo + tabela"
+// sem "em" (espelhando a forma que gráfico já tinha), a forma adverbial
+// ("graficamente"/"de forma visual") e "em UM gráfico" (com artigo).
+test("'gerar'/'visualizar'/'transformar' e a forma 'verbo + tabela' sem 'em' são reconhecidos", () => {
+  assert.equal(
+    routeTicketQuestion("Consegue gerar uma tabela com os tickets abertos?").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("Quero visualizar os tickets em um gráfico.").formato,
+    "tabela", // listar_tickets não tem gráfico (kind "lista"), cai pra tabela
+  );
+  assert.equal(
+    routeTicketQuestion("Analise os tickets abertos. Transforme esses dados em uma tabela.").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("Mostre os tickets graficamente.").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("Faz um gráfico de tickets por área, de forma visual.").formato,
+    "grafico",
+  );
+});
+
+// Regressão: alternativas já existentes (sem "em") continuam intactas.
+test("formas de tabela/gráfico já existentes continuam funcionando depois do F3", () => {
+  assert.equal(
+    routeTicketQuestion("Resumo dos tickets por status, mostra em tabela.").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("Faz um gráfico do resumo por prioridade.").formato,
+    "grafico",
+  );
+});
+
+// F1 (auditoria de robustez): grupos de sinônimo que tinham listas
+// quase-iguais em lugares diferentes (área/cliente/operador/ticket) e
+// dessincronizavam — "categoria"/"equipe" faltavam no portão de domínio
+// (só existiam na extração), causando "fora do domínio" indevido.
+test("'categoria'/'equipe' (sinônimos de área) não caem mais em 'fora do domínio'", () => {
+  const porCategoria = routeTicketQuestion("Quero visualizar as OS por categoria.");
+  assert.notEqual(porCategoria.intent, "fora_do_dominio");
+  assert.equal(porCategoria.clarification, undefined);
+
+  const porEquipe = routeTicketQuestion("Tickets por equipe.");
+  assert.notEqual(porEquipe.intent, "fora_do_dominio");
+});
+
+test("'técnico' é reconhecido como sinônimo de operador", () => {
+  const route = routeTicketQuestion("tickets do tecnico Carlos");
+  assert.equal(route.entities.operador, "Carlos");
+});
+
+// Achado (dependência do item acima): sem excluir "solicitante" do
+// fallback genérico "do/da X" de extractOperatorName, "tickets do
+// solicitante Carlos" acertava cliente E também capturava
+// operador:"solicitante Carlos" por engano — os dois filtros brigando
+// zerava o resultado.
+test("'solicitante' é reconhecido como sinônimo de cliente, sem capturar operador por engano", () => {
+  const route = routeTicketQuestion("tickets do solicitante Carlos");
+  assert.equal(route.entities.cliente, "Carlos");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'ordem de serviço'/'ordens de serviço' são reconhecidas como sinônimo de ticket (singular e plural)", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Busque a ordem de serviço 1050").toolNames,
+    ["buscar_ticket_por_numero"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("ordem de serviço atrasada").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("ordens de serviço atrasadas").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+});
+
+// F2 (auditoria de robustez): "X por Y" sem palavra de resumo (resumo/
+// quantos/distribuição/...) caía no fallback genérico de listagem em vez
+// de resumo_tickets_por_Y — a frase conectora "por X" já é um sinal forte
+// o bastante por si só.
+test("'tickets por <dimensão>' sem palavra de resumo roteia pro resumo certo", () => {
+  assert.deepEqual(routeTicketQuestion("Tickets por área.").toolNames, ["resumo_tickets_por_area"]);
+  assert.deepEqual(routeTicketQuestion("Tickets por status.").toolNames, ["resumo_tickets_por_status"]);
+  assert.deepEqual(routeTicketQuestion("Tickets por operador.").toolNames, ["resumo_tickets_por_operador"]);
+});
+
+// Regressão negativa: "por <dimensão> DE <nome>" é um FILTRO nomeado (ex.:
+// "na área chamada Redes"), não um pedido de distribuição — mesma
+// preposição "por", sentido diferente. Sem o guard (dimensão só conta
+// quando não capturou nome junto), isso roteava errado pra resumo.
+test("'por <dimensão> de <nome>' continua sendo lido como filtro, não como pedido de resumo", () => {
+  const route = routeTicketQuestion("Liste os tickets abertos por área de Redes.");
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.area, "Redes");
+});
+
+test("'tickets da área Suporte'/'tickets com prioridade alta' continuam listagem simples (sem conector 'por')", () => {
+  assert.deepEqual(
+    routeTicketQuestion("tickets da área Suporte").toolNames,
+    ["listar_tickets"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("tickets com prioridade alta").toolNames,
+    ["listar_tickets"],
+  );
+});
+
+// F5 (auditoria de robustez): "ultrapassar"/"estourar" o prazo/SLA e o
+// idioma modal "já deveriam ter sido resolvidos" faltavam no vocabulário de
+// vencido — a 2ª e 3ª frases caíam fora do domínio ou em fechados
+// (respectivamente) antes dessa correção.
+test("'ultrapassou/estourou o prazo/SLA' é reconhecido como vencido", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quero ver as OS que ultrapassaram o SLA").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Os tickets estouraram o SLA?").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Tickets fora do SLA").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+  // "SLA" não pode vazar como nome de operador (mesma classe de bug já
+  // coberta pra "prazo").
+  assert.equal(routeTicketQuestion("Tickets fora do SLA").entities.operador, undefined);
+});
+
+// Achado mais sutil (não só a tool errada): mesmo corrigindo a seleção de
+// tool, o branch de vencidos também lê `situacao`, que ficaria "fechado"
+// sem o guard — contaminando a busca pra só os já fechados (o oposto do
+// sentido natural da frase, que é sobre os que CONTINUAM em aberto).
+test("'já deveriam ter sido resolvidos' roteia pra vencidos, sem contaminar 'situacao' com 'fechado'", () => {
+  const route = routeTicketQuestion("Existem tickets que já deveriam ter sido resolvidos?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_vencidos"]);
+  assert.equal(route.entities.situacao, undefined);
+});
+
+// Regressão: uma menção de fechamento SEM o idioma modal continua sendo
+// lida como fechado normalmente (o guard não desliga isFechadoIntent à toa).
+test("'o ticket foi resolvido' (sem o idioma modal) continua roteando pra fechados", () => {
+  const route = routeTicketQuestion("Quantos tickets foram resolvidos essa semana?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+});
+
 // Achado ao vivo: "mostrando o cliente responsável" (pedido genérico pra
 // incluir a coluna do cliente) virava filtro cliente:"responsável", que
 // nunca bate por substring com nenhum contact_name real — a listagem

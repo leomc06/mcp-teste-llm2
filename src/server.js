@@ -16,6 +16,7 @@ import {
   criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
   agruparContagemPorNomeNormalizado,
+  resolveClienteFiltro,
   rankearResumo,
   diasEmAberto,
   createTicketHelpers,
@@ -330,14 +331,20 @@ server.registerTool(
         paraQuando: criarParaQuandoAbertura(dataInicio),
       });
 
-      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvido = resolveClienteFiltro(todos, cliente);
+      const clienteNaoEncontrado = describeNaoEncontrado("cliente", cliente, clienteResolvido);
+
+      if (clienteNaoEncontrado) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontrado]) });
+      }
+
       const limiteFim = dataFim === undefined ? undefined : `${dataFim} 23:59:59`;
 
       const filtrados = todos.filter(
         (ticket) =>
           (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
           && (numero === undefined || ticket.number === numero)
-          && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo))
+          && (clienteResolvido.nomeAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteResolvido.nomeAlvo))
           && (dataInicio === undefined || ticket.opening_date >= dataInicio)
           && (limiteFim === undefined || ticket.opening_date <= limiteFim),
       );
@@ -1000,15 +1007,20 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const clienteAlvoSemOperador = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoSemOperador = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoSemOperador = describeNaoEncontrado("cliente", cliente, clienteResolvidoSemOperador);
+
+      if (clienteNaoEncontradoSemOperador) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoSemOperador]) });
+      }
 
       const semOperador = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             (!ticket.operator || !ticket.operator.trim())
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvoSemOperador === undefined
-              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoSemOperador)),
+            && (clienteResolvidoSemOperador.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoSemOperador.nomeAlvo)),
         ),
         dataInicio,
         dataFim,
@@ -1074,15 +1086,21 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const clienteAlvoMaisAntigos = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoAbertosMaisAntigos = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoAbertosMaisAntigos =
+        describeNaoEncontrado("cliente", cliente, clienteResolvidoAbertosMaisAntigos);
+
+      if (clienteNaoEncontradoAbertosMaisAntigos) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoAbertosMaisAntigos]) });
+      }
 
       const abertos = tickets
         .filter(
           (ticket) =>
             !ticket.closure_date
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvoMaisAntigos === undefined
-              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoMaisAntigos)),
+            && (clienteResolvidoAbertosMaisAntigos.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoAbertosMaisAntigos.nomeAlvo)),
         )
         .sort((a, b) => (a.opening_date < b.opening_date ? -1 : a.opening_date > b.opening_date ? 1 : 0));
 
@@ -1158,13 +1176,19 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoVencidos = resolveClienteFiltro(todos, cliente);
+      const clienteNaoEncontradoVencidos = describeNaoEncontrado("cliente", cliente, clienteResolvidoVencidos);
+
+      if (clienteNaoEncontradoVencidos) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoVencidos]) });
+      }
 
       const candidatos = filtrarPorPeriodo(
         todos.filter(
           (ticket) =>
             (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo))
+            && (clienteResolvidoVencidos.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoVencidos.nomeAlvo))
             && (situacao === undefined
               || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
         ),
@@ -1277,14 +1301,22 @@ server.registerTool(
       );
 
       const tickets = filtrarPorPeriodo(todosRecentes, dataInicio, dataFim);
-      const clienteAlvoRecentes = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoRecentes = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoRecentes = describeNaoEncontrado("cliente", cliente, clienteResolvidoRecentes);
+
+      if (clienteNaoEncontradoRecentes) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoRecentes]) });
+      }
 
       const porSituacao = tickets.filter((ticket) => {
         if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
           return false;
         }
 
-        if (clienteAlvoRecentes !== undefined && !normalizeForMatch(ticket.contact_name).includes(clienteAlvoRecentes)) {
+        if (
+          clienteResolvidoRecentes.nomeAlvo !== undefined
+          && !normalizeForMatch(ticket.contact_name).includes(clienteResolvidoRecentes.nomeAlvo)
+        ) {
           return false;
         }
 
@@ -1379,14 +1411,22 @@ server.registerTool(
       );
 
       const tickets = filtrarPorPeriodo(todosAntigos, dataInicio, dataFim);
-      const clienteAlvoMaisAntigos = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoMaisAntigos = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoMaisAntigos = describeNaoEncontrado("cliente", cliente, clienteResolvidoMaisAntigos);
+
+      if (clienteNaoEncontradoMaisAntigos) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoMaisAntigos]) });
+      }
 
       const porSituacao = tickets.filter((ticket) => {
         if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
           return false;
         }
 
-        if (clienteAlvoMaisAntigos !== undefined && !normalizeForMatch(ticket.contact_name).includes(clienteAlvoMaisAntigos)) {
+        if (
+          clienteResolvidoMaisAntigos.nomeAlvo !== undefined
+          && !normalizeForMatch(ticket.contact_name).includes(clienteResolvidoMaisAntigos.nomeAlvo)
+        ) {
           return false;
         }
 
@@ -1475,15 +1515,20 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const clienteAlvoCongelados = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoCongelados = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoCongelados = describeNaoEncontrado("cliente", cliente, clienteResolvidoCongelados);
+
+      if (clienteNaoEncontradoCongelados) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoCongelados]) });
+      }
 
       const congelados = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             ticket.is_frozen === true
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvoCongelados === undefined
-              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoCongelados)),
+            && (clienteResolvidoCongelados.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoCongelados.nomeAlvo)),
         ),
         dataInicio,
         dataFim,
@@ -1559,14 +1604,20 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const clienteAlvo = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoAbertos = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoAbertos = describeNaoEncontrado("cliente", cliente, clienteResolvidoAbertos);
+
+      if (clienteNaoEncontradoAbertos) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoAbertos]) });
+      }
 
       const abertos = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
             !ticket.closure_date
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvo === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvo)),
+            && (clienteResolvidoAbertos.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoAbertos.nomeAlvo)),
         ),
         dataInicio,
         dataFim,
@@ -1639,7 +1690,12 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const clienteAlvoFechados = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoFechados = resolveClienteFiltro(tickets, cliente);
+      const clienteNaoEncontradoFechados = describeNaoEncontrado("cliente", cliente, clienteResolvidoFechados);
+
+      if (clienteNaoEncontradoFechados) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoFechados]) });
+      }
 
       // Diferente de listar_tickets_abertos/congelados/sem_operador, aqui o
       // período filtra por data de FECHAMENTO, não de abertura — "fechados
@@ -1650,8 +1706,8 @@ server.registerTool(
           (ticket) =>
             Boolean(ticket.closure_date)
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvoFechados === undefined
-              || normalizeForMatch(ticket.contact_name).includes(clienteAlvoFechados)),
+            && (clienteResolvidoFechados.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoFechados.nomeAlvo)),
         ),
         dataInicio,
         dataFim,
@@ -1730,14 +1786,20 @@ server.registerTool(
       );
 
       const alvo = normalizeForMatch(texto);
-      const clienteAlvoTexto = cliente === undefined ? undefined : normalizeForMatch(cliente);
+      const clienteResolvidoTexto = resolveClienteFiltro(todos, cliente);
+      const clienteNaoEncontradoTexto = describeNaoEncontrado("cliente", cliente, clienteResolvidoTexto);
+
+      if (clienteNaoEncontradoTexto) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontradoTexto]) });
+      }
 
       const filtrados = filtrarPorPeriodo(
         todos.filter(
           (ticket) =>
             (normalizeForMatch(ticket.issue).includes(alvo) || normalizeForMatch(ticket.description).includes(alvo))
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
-            && (clienteAlvoTexto === undefined || normalizeForMatch(ticket.contact_name).includes(clienteAlvoTexto))
+            && (clienteResolvidoTexto.nomeAlvo === undefined
+              || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoTexto.nomeAlvo))
             && (situacao === undefined
               || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
         ),
@@ -1924,17 +1986,17 @@ server.registerTool(
         {},
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
-      const clienteAlvo = normalizeForMatch(cliente);
-      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
-        (ticket) => normalizeForMatch(ticket.contact_name).includes(clienteAlvo),
-      );
+      const porPeriodo = filtrarPorPeriodo(todos, dataInicio, dataFim);
+      const clienteResolvido = resolveClienteFiltro(porPeriodo, cliente);
+      const clienteNaoEncontrado = describeNaoEncontrado("cliente", cliente, clienteResolvido);
 
-      if (tickets.length === 0) {
-        return success({
-          encontrado: false,
-          motivo: `Não encontrado(s): cliente "${cliente}".`,
-        });
+      if (clienteNaoEncontrado) {
+        return success({ encontrado: false, motivo: formatNaoEncontrados([clienteNaoEncontrado]) });
       }
+
+      const tickets = porPeriodo.filter(
+        (ticket) => normalizeForMatch(ticket.contact_name).includes(clienteResolvido.nomeAlvo),
+      );
 
       const abertos = tickets.filter((ticket) => !ticket.closure_date);
       const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
