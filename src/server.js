@@ -15,6 +15,7 @@ import {
   filtrarPorPeriodoFechamento,
   criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
+  agruparContagemPorNomeNormalizado,
   rankearResumo,
   diasEmAberto,
   createTicketHelpers,
@@ -933,19 +934,12 @@ server.registerTool(
         (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
       );
 
-      const contagem = new Map();
-
-      for (const ticket of tickets) {
-        const chave = ticket.contact_name ?? "não informado";
-        contagem.set(chave, (contagem.get(chave) ?? 0) + 1);
-      }
-
       return success({
         filtros: { status, area, departamento, operador, prioridade, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         resumo: rankearResumo(
-          [...contagem.entries()].map(([chave, quantidade]) => ({ chave, quantidade })),
+          agruparContagemPorNomeNormalizado(tickets, (ticket) => ticket.contact_name ?? "não informado"),
           tickets.length,
           limite,
           ordem,
@@ -1232,7 +1226,7 @@ server.registerTool(
   "listar_tickets_mais_recentes",
   {
     title: "Listar tickets mais recentes",
-    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
+    description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -1241,11 +1235,13 @@ server.registerTool(
       cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(50).default(10),
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, cliente, prioridade, situacao, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -1270,13 +1266,17 @@ server.registerTool(
         });
       }
 
-      const { tickets, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      const { tickets: todosRecentes, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
+      const tickets = filtrarPorPeriodo(todosRecentes, dataInicio, dataFim);
       const clienteAlvoRecentes = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
       const porSituacao = tickets.filter((ticket) => {
@@ -1323,7 +1323,7 @@ server.registerTool(
   "listar_tickets_mais_antigos",
   {
     title: "Listar tickets mais antigos",
-    description: "Lista os tickets (chamados) cronologicamente mais antigos pela data de abertura, entre TODOS os tickets (abertos e fechados) — ao contrário de listar_tickets_abertos_mais_antigos, que é restrita aos ainda não encerrados. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade e situação (aberto/fechado). Suporta paginação (pagina) quando o total passa do limite.",
+    description: "Lista os tickets (chamados) cronologicamente mais antigos pela data de abertura, entre TODOS os tickets (abertos e fechados) — ao contrário de listar_tickets_abertos_mais_antigos, que é restrita aos ainda não encerrados. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -1332,11 +1332,13 @@ server.registerTool(
       cliente: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(50).default(10),
       pagina: z.number().int().min(1).default(1),
     },
   },
-  async ({ status, area, departamento, operador, cliente, prioridade, situacao, limite, pagina }) => {
+  async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] = await Promise.all([
         resolveMetaId(() => ticketsApi.listStatuses(), status),
@@ -1361,17 +1363,22 @@ server.registerTool(
         });
       }
 
-      // Sem `paraQuando` (não há data-limite conhecida — o objetivo aqui é
-      // justamente varrer até o fim pra achar os mais antigos de todos),
-      // igual mais_recentes: o teto de segurança de 400 páginas já cobre o
-      // catálogo atual inteiro (~98 páginas) com folga.
-      const { tickets, truncado } = await fetchAllTicketsSafe({
-        status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
-      });
+      // `paraQuando` só entra quando `dataInicio` foi informado (temos um
+      // piso real pra parar de paginar mais cedo) — sem ele, não há
+      // data-limite conhecida, e o objetivo é varrer até o fim pra achar os
+      // mais antigos de todos; o teto de segurança de 400 páginas já cobre
+      // o catálogo atual inteiro (~98 páginas) com folga.
+      const { tickets: todosAntigos, truncado } = await fetchAllTicketsSafe(
+        {
+          status: statusResolvido.id,
+          area: areaResolvida.id,
+          department: departamentoResolvido.id,
+          operator: operadorResolvido.id,
+        },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
+      const tickets = filtrarPorPeriodo(todosAntigos, dataInicio, dataFim);
       const clienteAlvoMaisAntigos = cliente === undefined ? undefined : normalizeForMatch(cliente);
 
       const porSituacao = tickets.filter((ticket) => {
@@ -1904,16 +1911,23 @@ server.registerTool(
   "analisar_atividade_cliente",
   {
     title: "Analisar atividade de um cliente",
-    description: "Retorna a atividade de um cliente/solicitante específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto). Use para perguntas como \"o cliente Acme abre muito chamado?\" ou comparações do tipo \"o cliente X abriu mais chamados que o cliente Y?\".",
+    description: "Retorna a atividade de um cliente/solicitante específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto), com filtro opcional por período de abertura (dataInicio/dataFim). Use para perguntas como \"o cliente Acme abre muito chamado?\", \"qual a atividade do cliente X nos últimos 30 dias?\" ou comparações do tipo \"o cliente X abriu mais chamados que o cliente Y?\".",
     inputSchema: {
       cliente: z.string().trim().min(1).max(100),
+      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
     },
   },
-  async ({ cliente }) => {
+  async ({ cliente, dataInicio, dataFim }) => {
     try {
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe({});
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        {},
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
       const clienteAlvo = normalizeForMatch(cliente);
-      const tickets = todos.filter((ticket) => normalizeForMatch(ticket.contact_name).includes(clienteAlvo));
+      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
+        (ticket) => normalizeForMatch(ticket.contact_name).includes(clienteAlvo),
+      );
 
       if (tickets.length === 0) {
         return success({

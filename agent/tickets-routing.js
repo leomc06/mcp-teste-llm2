@@ -407,6 +407,33 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "nos últimos N dias/semanas/meses/anos" — intervalo FECHADO (desse ponto
+  // no passado até hoje), diferente de "há mais de N ..." logo abaixo (só
+  // teto aberto, sem piso). Achado testando o lote de perguntas ao vivo: a
+  // frase não tinha reconhecimento nenhum — nem virava filtro de data (o
+  // período inteiro era ignorado em silêncio), nem era podada de nomes
+  // capturados em outros campos (ex.: "atividade do cliente X nos últimos 30
+  // dias e destaque..." vazava a cláusula inteira pro nome do cliente).
+  const ultimosMatch = text.match(/\bultim[oa]s\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu);
+
+  if (ultimosMatch) {
+    const quantidade = Number(ultimosMatch[1]);
+    const unidade = ultimosMatch[2].toLowerCase();
+    const inicio = new Date(agora);
+
+    if (unidade.startsWith("dia")) {
+      inicio.setDate(inicio.getDate() - quantidade);
+    } else if (unidade.startsWith("semana")) {
+      inicio.setDate(inicio.getDate() - quantidade * 7);
+    } else if (unidade.startsWith("mes")) {
+      inicio.setMonth(inicio.getMonth() - quantidade);
+    } else {
+      inicio.setFullYear(inicio.getFullYear() - quantidade);
+    }
+
+    return { dataInicio: formatIsoDate(inicio), dataFim: formatIsoDate(agora) };
+  }
+
   // "há mais de N dias/semanas/meses/anos" — período relativo EM ABERTO
   // (só teto na data de abertura, sem piso): tickets abertos antes desse
   // ponto no tempo. Achado testando o lote de perguntas ao vivo (Img 31):
@@ -487,6 +514,14 @@ const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
   /\s+h[áa]\s+mais\s+de\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
 
+// "nos últimos N dias/semanas/meses/anos" — mesma ideia, pro intervalo
+// fechado que extractRelativeDateRange também passou a reconhecer. ".*$" no
+// fim de propósito: a cláusula costuma vir seguida de mais texto solto
+// ("...nos últimos 30 dias e destaque os tickets mais antigos dele"), que
+// também não faz parte do nome capturado.
+const TRAILING_ULTIMOS_N_CLAUSE_PATTERN =
+  /\s+(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
+
 // "entre agosto e setembro" (intervalo de 2 meses soltos) — mesma ideia,
 // pro intervalo de meses que extractRelativeDateRange também reconhece.
 const TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN = new RegExp(
@@ -557,6 +592,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN, "")
     .replace(TRAILING_HA_MAIS_DE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_ULTIMOS_N_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
@@ -799,9 +835,15 @@ export function extractOperatorName(value) {
   ]);
 }
 
+// "mostrando o cliente responsável" (achado testando o lote de perguntas ao
+// vivo): "responsável" logo depois de "cliente" é descrição genérica (pedido
+// pra incluir a coluna do cliente no resultado), não um nome de cliente de
+// verdade — sem essa exclusão virava filtro cliente:"responsável", que nunca
+// bate por substring com nenhum contact_name real (resultado some em
+// silêncio, "nenhum ticket encontrado").
 export function extractClientName(value) {
   return extractByPatterns(value, [
-    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
+    /\bcliente\s+(?:chamado\s+|de\s+nome\s+)?(?!(?:mais|menos|respons[áa]vel)\b)(.+)$/iu,
     // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
     // vivo — Img 12): quem abre um ticket é o cliente/contato, não precisa
     // da palavra "cliente" explícita — "que" como âncora evita capturar
@@ -827,6 +869,12 @@ export function extractClientActivityName(value) {
       `^(?:o\\s+|a\\s+)?cliente\\s+(.+?)\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\s+muito[s]?\\s+(?:ticket|chamado|atendimento)`,
       "iu",
     ),
+    // "Analise a atividade do cliente X" (achado testando o lote de
+    // perguntas ao vivo): frase natural usando a própria palavra da tool
+    // ("atividade"), sem exigir "tem/está com muitos tickets" — ao
+    // contrário dos 3 padrões acima, não é anchored no início da frase
+    // ("analise"/"qual é" etc. podem vir antes).
+    /\batividade\s+(?:d[oa]\s+)?cliente\s+(.+)$/iu,
   ]);
 }
 
@@ -1112,6 +1160,22 @@ export function extractPage(value) {
     : undefined;
 }
 
+// Usado pelos branches de mais_antigos/mais_recentes/sla_vencido pra achar
+// um número solto na frase e usar como `limite` (ex.: "10 tickets mais
+// antigos"). Precisa descartar ANTES dois tipos de número que não são um
+// limite: "página N" (já tratado por extractPage) e "nos últimos N dias/
+// semanas/..." (achado testando o lote de perguntas ao vivo — esse número é
+// quantidade de um intervalo de DATA, já capturado por extractDateRange/
+// extractRelativeDateRange; sem descartar aqui, "nos últimos 30 dias"
+// também virava limite: 30, truncando a listagem em vez de só filtrar por
+// data).
+const LOOSE_NUMBER_NOISE_PATTERN =
+  /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/giu;
+
+function extractLooseNumberMatch(text) {
+  return text.replace(LOOSE_NUMBER_NOISE_PATTERN, "").match(/\b(\d+)\b/);
+}
+
 // Pedido explícito de visualização — troca a visão padrão da resposta
 // (texto/tabela/gráfico) no FRONTEND, sem mudar qual tool é chamada nem o
 // texto que o backend gera; mesmo padrão de decision.synthesize, só que pro
@@ -1122,8 +1186,11 @@ const FORMATO_TABELA_SOURCE =
   "(?:mostr[ae]|exib[ae]|apresent[ae]|coloc[ae]|p[oõ]e)\\w*\\s+(?:isso\\s+|isto\\s+)?em\\s+(?:uma\\s+)?tabela"
   + "|\\btabela\\s*,?\\s*por\\s+favor\\b"
   + "|\\bformato\\s+de\\s+tabela\\b";
+// "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
+// virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
+// gráfico" (bem comum) nunca bateria, só a forma "faz".
 const FORMATO_GRAFICO_SOURCE =
-  "\\b(?:faz|crie|gera|monta)\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
+  "\\b(?:fa[cz]|crie|gera|monta)\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
   + "|\\bem\\s+(?:forma\\s+de\\s+)?gr[áa]fico\\b"
   + "|\\bformato\\s+de\\s+gr[áa]fico\\b";
 const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
@@ -1890,7 +1957,7 @@ export function routeTicketQuestion(pergunta) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
     // como limite (ex.: "10 tickets mais antigos, página 2" não pode virar
     // limite: 2).
-    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
+    const numeroSolto = extractLooseNumberMatch(text);
 
     return createTicketDecision(
       "listar_abertos_mais_antigos",
@@ -1908,7 +1975,7 @@ export function routeTicketQuestion(pergunta) {
   }
 
   if (isSlaVencidoIntent) {
-    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
+    const numeroSolto = extractLooseNumberMatch(text);
 
     return createTicketDecision(
       "listar_vencidos",
@@ -1947,7 +2014,7 @@ export function routeTicketQuestion(pergunta) {
     return createTicketDecision(
       "analisar_atividade_cliente",
       "analisar_atividade_cliente",
-      { cliente: clienteAtividade },
+      compactEntities({ cliente: clienteAtividade, dataInicio, dataFim }),
     );
   }
 
@@ -1992,15 +2059,25 @@ export function routeTicketQuestion(pergunta) {
   // item 8 (cortesia/discurso não é nome), confirmado ao vivo: "Por último,
   // me diz quantos tickets tem no total" roteava pra mais_recentes, ignorando
   // a pergunta real (quantidade total).
+  // "ultimo(s)" sozinho pede ordenação por recência, mas "nos ÚLTIMOS 30
+  // DIAS" é um intervalo de data (já coberto por extractDateRange), não um
+  // pedido de ordenação — achado testando o lote de perguntas ao vivo:
+  // "atividade do cliente X nos últimos 30 dias" disparava mais_recentes e
+  // ainda lia o "30" como limite de resultados (ver extractLooseNumberMatch),
+  // quando o pedido real era só filtrar por data.
+  const mentionsUltimoComoRecencia =
+    /\bultimos?\b/.test(text)
+    && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text);
+
   const isMostRecentIntent =
     (/\brecent/.test(text)
-      || /\bultimos?\b/.test(text)
+      || mentionsUltimoComoRecencia
       || /\bmais\s+nov[oa]/.test(text)
       || /\brecem\b/.test(text))
     && !/\bpor\s+ultimo\b/.test(text);
 
   if (isOldestOverallIntent) {
-    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
+    const numeroSolto = extractLooseNumberMatch(text);
 
     return createTicketDecision(
       "listar_mais_antigos",
@@ -2013,6 +2090,8 @@ export function routeTicketQuestion(pergunta) {
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
+        dataInicio,
+        dataFim,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : (isBareOldestOverallIntent ? 1 : undefined)),
         pagina,
       }),
@@ -2022,7 +2101,7 @@ export function routeTicketQuestion(pergunta) {
   if (isMostRecentIntent) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
     // como limite (mesmo cuidado do branch de mais antigos).
-    const numeroSolto = text.replace(/\bpagina\s+\d+\b/g, "").match(/\b(\d+)\b/);
+    const numeroSolto = extractLooseNumberMatch(text);
 
     return createTicketDecision(
       "listar_mais_recentes",
@@ -2035,6 +2114,8 @@ export function routeTicketQuestion(pergunta) {
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
+        dataInicio,
+        dataFim,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
         pagina,
       }),

@@ -13,6 +13,7 @@ import {
   filtrarPorPeriodoFechamento,
   criarParaQuandoAbertura,
   contarPrioridadeAltaOuUrgente,
+  agruparContagemPorNomeNormalizado,
   rankearResumo,
   diasEmAberto,
   createTicketHelpers,
@@ -220,6 +221,33 @@ test("contarPrioridadeAltaOuUrgente conta só 'Alta' e 'Urgente', ignora as dema
   ];
 
   assert.equal(contarPrioridadeAltaOuUrgente(tickets), 2);
+});
+
+// Achado ao vivo: resumo_tickets_por_cliente mostrava "fabio gali" e "Fabio
+// Gali" como 2 linhas separadas (mesmo cliente, capitalização diferente no
+// cadastro) — agruparContagemPorNomeNormalizado funde essas variantes numa
+// linha só, usando como rótulo a grafia mais frequente entre elas.
+test("agruparContagemPorNomeNormalizado funde variantes de acento/caixa do mesmo nome", () => {
+  const tickets = [
+    { contact_name: "fabio gali" },
+    { contact_name: "Fabio Gali" },
+    { contact_name: "Fabio Gali" },
+    { contact_name: "Diego Mota" },
+  ];
+
+  const result = agruparContagemPorNomeNormalizado(tickets, (t) => t.contact_name);
+
+  assert.deepEqual(
+    [...result].sort((a, b) => b.quantidade - a.quantidade),
+    [
+      { chave: "Fabio Gali", quantidade: 3 },
+      { chave: "Diego Mota", quantidade: 1 },
+    ],
+  );
+});
+
+test("agruparContagemPorNomeNormalizado: sem tickets, devolve lista vazia", () => {
+  assert.deepEqual(agruparContagemPorNomeNormalizado([], (t) => t.contact_name), []);
 });
 
 test("rankearResumo ordena decrescente por quantidade e calcula percentual (1 casa decimal)", () => {

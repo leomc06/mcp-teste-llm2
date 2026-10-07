@@ -245,6 +245,41 @@ export function contarPrioridadeAltaOuUrgente(tickets) {
   return tickets.filter((ticket) => ticket.priority === "Alta" || ticket.priority === "Urgente").length;
 }
 
+// Agrupa tickets por um nome de texto livre (hoje só contact_name/cliente,
+// que não tem catálogo/ID próprio) tolerando variação de acento/caixa —
+// achado ao vivo: o mesmo cliente aparecia cadastrado como "fabio gali" e
+// "Fabio Gali" (strings diferentes, mesma pessoa), duplicando a contagem em
+// 2 linhas do resumo. Agrupa pela forma normalizada (normalizeForMatch),
+// mas mostra como rótulo a variante de escrita mais usada entre os tickets
+// daquele grupo (não a normalizada, que perderia a capitalização original).
+export function agruparContagemPorNomeNormalizado(tickets, obterNome) {
+  const grupos = new Map();
+
+  for (const ticket of tickets) {
+    const nomeOriginal = obterNome(ticket);
+    const chave = normalizeForMatch(nomeOriginal);
+    const grupo = grupos.get(chave) ?? { quantidade: 0, rotulos: new Map() };
+
+    grupo.quantidade += 1;
+    grupo.rotulos.set(nomeOriginal, (grupo.rotulos.get(nomeOriginal) ?? 0) + 1);
+    grupos.set(chave, grupo);
+  }
+
+  return [...grupos.values()].map(({ quantidade, rotulos }) => {
+    let rotulo;
+    let maiorContagem = -1;
+
+    for (const [candidato, vezes] of rotulos) {
+      if (vezes > maiorContagem) {
+        rotulo = candidato;
+        maiorContagem = vezes;
+      }
+    }
+
+    return { chave: rotulo, quantidade };
+  });
+}
+
 // Ordena um resumo (agrupamento por chave) do maior pro menor (ou do menor
 // pro maior, se ordem === "asc" — usado quando a pergunta é sobre "quem tem
 // MENOS", pra "top N com menos" cortar os N menores, não os N maiores),

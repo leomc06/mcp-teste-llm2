@@ -861,6 +861,27 @@ test("datas relativas: essa semana, semana passada, hoje, ontem, esse mês, mês
   assert.equal(extractRelativeDateRange("nenhuma data aqui", agora), undefined);
 });
 
+// Achado ao vivo testando o lote de perguntas: "nos últimos N dias/semanas/
+// meses/anos" (intervalo FECHADO, do ponto no passado até hoje) não tinha
+// reconhecimento nenhum antes — diferente de "há mais de N ..." (só teto
+// aberto, sem piso), coberto no teste de Img 31 acima.
+test("datas relativas: nos últimos N dias/semanas/meses/anos (intervalo fechado até hoje)", () => {
+  const agora = new Date(2026, 8, 2); // quarta-feira, 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("ultimos 30 dias", agora), {
+    dataInicio: "2026-08-03",
+    dataFim: "2026-09-02",
+  });
+  assert.deepEqual(extractRelativeDateRange("ultimas 2 semanas", agora), {
+    dataInicio: "2026-08-19",
+    dataFim: "2026-09-02",
+  });
+  assert.deepEqual(extractRelativeDateRange("ultimos 3 meses", agora), {
+    dataInicio: "2026-06-02",
+    dataFim: "2026-09-02",
+  });
+});
+
 test("datas relativas: esse ano, ano passado", () => {
   const agora = new Date(2026, 8, 2); // 2026-09-02
 
@@ -2271,6 +2292,67 @@ test("'faz um gráfico de X por Y' sem palavra de resumo ainda roteia pro resumo
   const route = routeTicketQuestion("Faz um gráfico de tickets por departamento");
   assert.deepEqual(route.toolNames, ["resumo_tickets_por_departamento"]);
   assert.equal(route.formato, "grafico");
+});
+
+// Achado ao vivo: "faça" (imperativo, raiz irregular "faç-") não batia no
+// padrão, só "faz"/"fazer" (raiz "faz-") — "Faça um gráfico..." caía pra
+// listar_tickets genérico, ignorando tanto o pedido de resumo por
+// prioridade quanto o formato gráfico.
+test("'faça um gráfico de X' (verbo irregular) roteia igual a 'faz um gráfico de X'", () => {
+  const route = routeTicketQuestion("Faça um gráfico de tickets por prioridade.");
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_prioridade"]);
+  assert.equal(route.formato, "grafico");
+});
+
+// Achado ao vivo: "mostrando o cliente responsável" (pedido genérico pra
+// incluir a coluna do cliente) virava filtro cliente:"responsável", que
+// nunca bate por substring com nenhum contact_name real — a listagem
+// voltava vazia mesmo havendo tickets de verdade pro resto dos filtros.
+test("'cliente responsável' não é lido como nome de cliente", () => {
+  const route = routeTicketQuestion("Tickets urgentes mais antigos, mostrando o cliente responsável.");
+  assert.equal(route.entities.cliente, undefined);
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+// Achado ao vivo: "nos últimos N dias/semanas/..." não tinha reconhecimento
+// nenhum — o intervalo era ignorado em silêncio, o "N" era lido como
+// limite de resultados (truncando a listagem), e a própria presença de
+// "ultimos" disparava a rota de "mais recentes" (ordenação), mesmo quando
+// a frase só queria filtrar por data.
+test("'nos últimos N dias' vira filtro de data, não limite de resultados nem ordenação por recência", () => {
+  const route = routeTicketQuestion("Tickets abertos nos últimos 30 dias na área Suporte");
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.limite, undefined);
+  assert.ok(route.entities.dataInicio);
+  assert.ok(route.entities.dataFim);
+});
+
+// Achado ao vivo: "analise a atividade do cliente X" (frase natural, usando
+// a própria palavra da tool) não tinha rota nenhuma — só "cliente X tem/está
+// com muitos tickets" disparava analisar_atividade_cliente. A frase inteira
+// caía no fallback de listagem, e "nos últimos 30 dias e destaque..." vazava
+// pro nome do cliente capturado por engano.
+test("'atividade do cliente X nos últimos N dias e <resto da frase>' roteia pra analisar_atividade_cliente, sem vazar pro nome", () => {
+  const route = routeTicketQuestion(
+    "Analise a atividade do cliente cesar nos últimos 30 dias e destaque os tickets mais antigos dele",
+  );
+  assert.deepEqual(route.toolNames, ["analisar_atividade_cliente"]);
+  assert.equal(route.entities.cliente, "cesar");
+  assert.ok(route.entities.dataInicio);
+  assert.ok(route.entities.dataFim);
+});
+
+test("'atividade do cliente X' sem período continua funcionando (sem dataInicio/dataFim)", () => {
+  const route = routeTicketQuestion("Qual a atividade do cliente Diego Mota?");
+  assert.deepEqual(route.toolNames, ["analisar_atividade_cliente"]);
+  assert.equal(route.entities.cliente, "Diego Mota");
+  assert.equal(route.entities.dataInicio, undefined);
+  assert.equal(route.entities.dataFim, undefined);
+});
+
+test("'mais recentes' combinado com 'nos últimos N dias' continua dando a rota de recência", () => {
+  const route = routeTicketQuestion("Tickets mais recentes nos últimos 30 dias");
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
 });
 
 test("busca textual reconhece 'mencionem'/'mencione' (conjugações de mencionar), não só 'mencionando'", () => {
