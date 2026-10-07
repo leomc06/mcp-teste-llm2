@@ -5,10 +5,40 @@
 // detecção é uma reimplementação pequena e independente, não um import de
 // agent/response-formatter.js.
 
+// listar_areas_tickets/listar_prioridades_tickets/listar_canais_tickets/
+// listar_status_tickets/listar_departamentos_tickets/listar_usuarios_tickets/
+// buscar_usuarios_por_nome — todos devolvem {quantidade, <chave>: [{id,
+// name, ...}]}, mesmo par id/name em todos (confirmado contra a API real).
+const CATALOG_ARRAY_KEYS = ["areas", "prioridades", "canais", "status", "departamentos", "usuarios"];
+
+// analisar_carga_operador/analisar_atividade_cliente — mesmo conjunto de
+// contadores pra UM operador/cliente só (não um breakdown por categoria,
+// por isso não é "resumo", e não tem sem_operador/abertos_com_mais_de_7_dias,
+// por isso não é "operacional").
+function isIndividualShape(dados) {
+  return Boolean(dados)
+    && Number.isFinite(dados.total)
+    && Number.isFinite(dados.abertos)
+    && Number.isFinite(dados.fechados)
+    && Number.isFinite(dados.congelados)
+    && Number.isFinite(dados.prioridade_alta_ou_urgente);
+}
+
 export function detectTabularShape(dadosConsultados) {
   if (!Array.isArray(dadosConsultados)) {
     return null;
   }
+
+  // "Compare X e Y" chama a MESMA tool 2x (uma pra cada lado) — tanto a
+  // forma "individual" quanto um ticket único aparecem duplicados em
+  // dadosConsultados nesse caso. Mostrar tabela/gráfico só do primeiro lado
+  // (o que o loop abaixo faria sem essa contagem prévia), descartando o
+  // segundo em silêncio, seria pior que não oferecer nada — o texto da
+  // resposta (formatComparison) já cobre os dois lados.
+  const individualCount = dadosConsultados.filter((item) => isIndividualShape(item?.dados)).length;
+  const ticketUnicoCount = dadosConsultados.filter(
+    (item) => item?.dados?.ticket && typeof item.dados.ticket === "object",
+  ).length;
 
   for (const item of dadosConsultados) {
     const dados = item?.dados;
@@ -58,6 +88,31 @@ export function detectTabularShape(dadosConsultados) {
       };
     }
 
+    if (individualCount === 1 && isIndividualShape(dados)) {
+      return {
+        kind: "individual",
+        tool: item.tool,
+        nome: dados.operador ?? dados.cliente,
+        rows: [
+          { label: "Total", value: dados.total },
+          { label: "Abertos", value: dados.abertos },
+          { label: "Fechados", value: dados.fechados },
+          { label: "Congelados", value: dados.congelados },
+          { label: "Prioridade alta ou urgente", value: dados.prioridade_alta_ou_urgente },
+        ],
+      };
+    }
+
+    const catalogKey = CATALOG_ARRAY_KEYS.find((chave) => Array.isArray(dados[chave]));
+
+    if (catalogKey !== undefined) {
+      return {
+        kind: "catalogo",
+        tool: item.tool,
+        rows: dados[catalogKey],
+      };
+    }
+
     // Listagens paginadas (`listar_tickets` e afins) só trazem a página
     // atual — já pré-paginado no servidor MCP — então nunca representam o
     // conjunto completo. `isPartial` marca isso pra quem consome a forma
@@ -68,6 +123,18 @@ export function detectTabularShape(dadosConsultados) {
         tool: item.tool,
         isPartial: true,
         rows: dados.tickets,
+      };
+    }
+
+    // buscar_ticket_por_numero — reaproveita a forma "lista" com 1 linha só
+    // (mesmas colunas, mesma tabela/CSV/PDF), já que é o mesmo tipo de
+    // registro (ticket), só que um único resultado completo, não paginado.
+    if (ticketUnicoCount === 1 && dados.ticket && typeof dados.ticket === "object") {
+      return {
+        kind: "lista",
+        tool: item.tool,
+        isPartial: false,
+        rows: [dados.ticket],
       };
     }
   }
@@ -90,6 +157,13 @@ export function buildTableRows(shape) {
         ticket.operator,
         ticket.opening_date,
       ]),
+    };
+  }
+
+  if (shape.kind === "catalogo") {
+    return {
+      headers: ["ID", "Nome"],
+      rows: shape.rows.map((entrada) => [entrada.id, entrada.name]),
     };
   }
 

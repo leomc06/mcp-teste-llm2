@@ -74,12 +74,171 @@ test("detectTabularShape: forma 'lista' (tools de listagem paginadas) marca isPa
 
 test("detectTabularShape: forma não reconhecida retorna null", () => {
   assert.equal(
-    detectTabularShape([{ tool: "buscar_ticket_por_numero", dados: { encontrado: true, ticket: {} } }]),
+    detectTabularShape([{ tool: "qualquer_coisa", dados: { mensagem: "sem forma tabular" } }]),
     null,
   );
   assert.equal(detectTabularShape([]), null);
   assert.equal(detectTabularShape(null), null);
   assert.equal(detectTabularShape(undefined), null);
+});
+
+// Achado ao vivo: pedidos de tabela/gráfico só funcionavam pras tools de
+// resumo/operacional/listagem — catálogos (áreas/prioridades/canais/status/
+// departamentos/usuários), ticket único e carga/atividade individual não
+// tinham forma nenhuma reconhecida, então nunca ofereciam tabela/gráfico,
+// mesmo pedindo explicitamente.
+test("detectTabularShape: forma 'catalogo' (listar_areas_tickets e afins)", () => {
+  const shape = detectTabularShape([
+    {
+      tool: "listar_areas_tickets",
+      dados: {
+        quantidade: 2,
+        areas: [
+          { id: 10, name: "Suporte", active: true },
+          { id: 7, name: "Redes e Segurança", active: true },
+        ],
+      },
+    },
+  ]);
+
+  assert.deepEqual(shape, {
+    kind: "catalogo",
+    tool: "listar_areas_tickets",
+    rows: [
+      { id: 10, name: "Suporte", active: true },
+      { id: 7, name: "Redes e Segurança", active: true },
+    ],
+  });
+});
+
+test("detectTabularShape: forma 'catalogo' reconhece todas as 6 chaves (areas/prioridades/canais/status/departamentos/usuarios)", () => {
+  const chaves = ["areas", "prioridades", "canais", "status", "departamentos", "usuarios"];
+
+  for (const chave of chaves) {
+    const shape = detectTabularShape([
+      { tool: `listar_${chave}_tickets`, dados: { quantidade: 1, [chave]: [{ id: 1, name: "X" }] } },
+    ]);
+
+    assert.equal(shape?.kind, "catalogo", `chave "${chave}" deveria ser reconhecida como catálogo`);
+  }
+});
+
+test("detectTabularShape: forma 'lista' também reconhece ticket único (buscar_ticket_por_numero)", () => {
+  const shape = detectTabularShape([
+    {
+      tool: "buscar_ticket_por_numero",
+      dados: {
+        encontrado: true,
+        ticket: {
+          number: 1050,
+          status: "ENCERRADA",
+          priority: "Baixa",
+          area: "Suporte",
+          operator: "Fabio Gali",
+          opening_date: "2026-01-01 10:00:00",
+        },
+      },
+    },
+  ]);
+
+  assert.equal(shape.kind, "lista");
+  assert.equal(shape.isPartial, false);
+  assert.deepEqual(shape.rows, [
+    {
+      number: 1050,
+      status: "ENCERRADA",
+      priority: "Baixa",
+      area: "Suporte",
+      operator: "Fabio Gali",
+      opening_date: "2026-01-01 10:00:00",
+    },
+  ]);
+});
+
+test("detectTabularShape: buscar_ticket_por_numero não encontrado (ticket: null) não vira forma nenhuma", () => {
+  assert.equal(
+    detectTabularShape([{ tool: "buscar_ticket_por_numero", dados: { encontrado: false, ticket: null } }]),
+    null,
+  );
+});
+
+test("detectTabularShape: forma 'individual' (analisar_carga_operador/analisar_atividade_cliente)", () => {
+  const porOperador = detectTabularShape([
+    {
+      tool: "analisar_carga_operador",
+      dados: {
+        operador: "Fabio Gali",
+        total: 10,
+        abertos: 4,
+        fechados: 6,
+        congelados: 1,
+        prioridade_alta_ou_urgente: 2,
+        mais_antigo_aberto: null,
+      },
+    },
+  ]);
+
+  assert.deepEqual(porOperador, {
+    kind: "individual",
+    tool: "analisar_carga_operador",
+    nome: "Fabio Gali",
+    rows: [
+      { label: "Total", value: 10 },
+      { label: "Abertos", value: 4 },
+      { label: "Fechados", value: 6 },
+      { label: "Congelados", value: 1 },
+      { label: "Prioridade alta ou urgente", value: 2 },
+    ],
+  });
+
+  const porCliente = detectTabularShape([
+    {
+      tool: "analisar_atividade_cliente",
+      dados: {
+        cliente: "Acme",
+        total: 3,
+        abertos: 1,
+        fechados: 2,
+        congelados: 0,
+        prioridade_alta_ou_urgente: 0,
+      },
+    },
+  ]);
+
+  assert.equal(porCliente.kind, "individual");
+  assert.equal(porCliente.nome, "Acme");
+});
+
+// "Compare o operador X com o Y" chama analisar_carga_operador 2x — mostrar
+// tabela/gráfico só do primeiro lado (descartando o segundo em silêncio)
+// seria enganoso, então nenhuma forma é oferecida nesse caso (o texto da
+// resposta já compara os dois).
+test("detectTabularShape: comparação (2 chamadas da mesma tool individual) não vira forma nenhuma", () => {
+  const dadosBase = {
+    total: 10,
+    abertos: 4,
+    fechados: 6,
+    congelados: 1,
+    prioridade_alta_ou_urgente: 2,
+  };
+
+  assert.equal(
+    detectTabularShape([
+      { tool: "analisar_carga_operador", dados: { ...dadosBase, operador: "Fabio Gali" } },
+      { tool: "analisar_carga_operador", dados: { ...dadosBase, operador: "Diego Mota" } },
+    ]),
+    null,
+  );
+});
+
+test("detectTabularShape: comparação de 2 tickets (buscar_ticket_por_numero 2x) não vira forma nenhuma", () => {
+  assert.equal(
+    detectTabularShape([
+      { tool: "buscar_ticket_por_numero", dados: { encontrado: true, ticket: { number: 1 } } },
+      { tool: "buscar_ticket_por_numero", dados: { encontrado: true, ticket: { number: 2 } } },
+    ]),
+    null,
+  );
 });
 
 test("detectTabularShape: resumo_operacional_tickets com todos os contadores zerados ainda é reconhecido", () => {

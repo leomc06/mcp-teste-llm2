@@ -193,7 +193,7 @@ function renderTableView(shape) {
 function renderChartView(shape) {
   viewChart.replaceChildren();
 
-  if (!shape || shape.kind === "lista") {
+  if (!shape || shape.kind === "lista" || shape.kind === "catalogo") {
     return;
   }
 
@@ -253,7 +253,7 @@ function renderViewToggle(shape) {
     return;
   }
 
-  chartButton.hidden = shape.kind === "lista";
+  chartButton.hidden = shape.kind === "lista" || shape.kind === "catalogo";
   viewToggle.hidden = false;
   csvExportButton.hidden = false;
   pdfExportButton.hidden = false;

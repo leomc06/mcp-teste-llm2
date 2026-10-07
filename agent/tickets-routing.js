@@ -1339,7 +1339,7 @@ function createCompareDecision(intent, comparisons) {
   };
 }
 
-export function routeTicketQuestion(pergunta) {
+function routeTicketQuestionCore(pergunta) {
   const text = normalizeText(pergunta);
 
   const numero = extractTicketNumber(pergunta);
@@ -1759,10 +1759,6 @@ export function routeTicketQuestion(pergunta) {
       decision.synthesize = "resumo_executivo";
     }
 
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
-
     return decision;
   }
 
@@ -1773,10 +1769,6 @@ export function routeTicketQuestion(pergunta) {
       compactEntities({ area, departamento, operador, prioridade, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
 
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
-
     return decision;
   }
 
@@ -1786,10 +1778,6 @@ export function routeTicketQuestion(pergunta) {
       "resumo_tickets_por_prioridade",
       compactEntities({ status, area, departamento, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
-
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
 
     return decision;
   }
@@ -1809,10 +1797,6 @@ export function routeTicketQuestion(pergunta) {
         ordem: ordemRanking,
       }),
     );
-
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
 
     return decision;
   }
@@ -1834,10 +1818,6 @@ export function routeTicketQuestion(pergunta) {
       }),
     );
 
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
-
     return decision;
   }
 
@@ -1852,10 +1832,6 @@ export function routeTicketQuestion(pergunta) {
       // repassa a data extraída no topo da função.
       compactEntities({ status, area, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
     );
-
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
 
     return decision;
   }
@@ -1876,10 +1852,6 @@ export function routeTicketQuestion(pergunta) {
         ordem: ordemRanking,
       }),
     );
-
-    if (formatoPreferido) {
-      decision.formato = formatoPreferido;
-    }
 
     return decision;
   }
@@ -2283,4 +2255,80 @@ export function routeTicketQuestion(pergunta) {
   }
 
   return decisaoListar;
+}
+
+// Achado ao vivo: "pedido explícito de visualização" (detectFormatoPreferido,
+// mais acima) só era aplicado nos 7 branches de resumo/operacional — mas
+// web/shapes.js (frontend) passou a reconhecer tabela/gráfico pra TODAS as
+// tools (catálogos, listagens, ticket único, carga/atividade individual),
+// então "liste os tickets em tabela" ou "mostra as áreas em tabela" não
+// abriam a view certa, mesmo a view existindo. Em vez de espalhar mais um
+// "if (formatoPreferido) decision.formato = ..." em cada um dos ~20 branches
+// que faltavam (era exatamente esse tipo de duplicação que os 7 branches de
+// resumo/operacional já tinham), aplica num lugar só, depois do roteamento
+// decidir qual tool usar.
+const TOOLS_SEM_GRAFICO = new Set([
+  "listar_tickets",
+  "listar_tickets_sem_operador",
+  "listar_tickets_abertos_mais_antigos",
+  "listar_tickets_vencidos",
+  "listar_tickets_mais_recentes",
+  "listar_tickets_mais_antigos",
+  "listar_tickets_congelados",
+  "listar_tickets_abertos",
+  "listar_tickets_fechados",
+  "buscar_tickets_por_texto",
+  "buscar_ticket_por_numero",
+  "listar_areas_tickets",
+  "listar_prioridades_tickets",
+  "listar_canais_tickets",
+  "listar_status_tickets",
+  "listar_departamentos_tickets",
+  "listar_usuarios_tickets",
+  "buscar_usuarios_por_nome",
+]);
+
+const TOOLS_COM_GRAFICO = new Set([
+  "resumo_tickets_por_status",
+  "resumo_tickets_por_prioridade",
+  "resumo_tickets_por_area",
+  "resumo_tickets_por_operador",
+  "resumo_tickets_por_departamento",
+  "resumo_tickets_por_cliente",
+  "resumo_operacional_tickets",
+  "analisar_carga_operador",
+  "analisar_atividade_cliente",
+]);
+
+function applyFormatoPreferido(decision, pergunta) {
+  // "compare X e Y" chama a mesma tool 2x — o frontend intencionalmente não
+  // oferece tabela/gráfico nesse caso (ver web/shapes.js), então não há
+  // view nenhuma pra abrir por padrão. Esclarecimento (toolNames: []) também
+  // não tem o que mostrar.
+  if (decision.formato !== undefined || decision.compare || decision.toolNames.length !== 1) {
+    return decision;
+  }
+
+  const formatoPreferido = detectFormatoPreferido(normalizeText(pergunta));
+
+  if (!formatoPreferido) {
+    return decision;
+  }
+
+  const [toolName] = decision.toolNames;
+
+  if (TOOLS_COM_GRAFICO.has(toolName)) {
+    decision.formato = formatoPreferido;
+  } else if (TOOLS_SEM_GRAFICO.has(toolName)) {
+    // Pediu "gráfico" de algo que só tem tabela (listagem/catálogo/ticket
+    // único, sem quantidade nenhuma pra plotar) — cai pra tabela em vez de
+    // ignorar o pedido em silêncio: ainda é uma view a mais que texto puro.
+    decision.formato = "tabela";
+  }
+
+  return decision;
+}
+
+export function routeTicketQuestion(pergunta) {
+  return applyFormatoPreferido(routeTicketQuestionCore(pergunta), pergunta);
 }

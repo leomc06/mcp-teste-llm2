@@ -44,3 +44,28 @@ test("buildCsv: forma 'operacional' sem rows ainda exporta só o cabeçalho", ()
 
   assert.equal(csv, "Categoria,Quantidade");
 });
+
+test("buildCsv: forma 'catalogo' exporta ID e Nome", () => {
+  const csv = buildCsv({
+    kind: "catalogo",
+    rows: [
+      { id: 10, name: "Suporte", active: true },
+      { id: 7, name: "Redes e Segurança", active: true },
+    ],
+  });
+
+  assert.equal(csv, "ID,Nome\r\n10,Suporte\r\n7,Redes e Segurança");
+});
+
+test("buildCsv: forma 'individual' (carga/atividade) usa o mesmo cabeçalho genérico de Categoria/Quantidade", () => {
+  const csv = buildCsv({
+    kind: "individual",
+    nome: "Fabio Gali",
+    rows: [
+      { label: "Total", value: 10 },
+      { label: "Abertos", value: 4 },
+    ],
+  });
+
+  assert.equal(csv, "Categoria,Quantidade\r\nTotal,10\r\nAbertos,4");
+});

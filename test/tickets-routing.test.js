@@ -2199,8 +2199,43 @@ test("pergunta sem gatilho de formato não marca decision.formato", () => {
   assert.equal(route.formato, undefined);
 });
 
-test("pedido de gráfico numa listagem paginada não marca decision.formato (não é uma forma 'resumo'/'operacional')", () => {
+// Achado ao vivo (lote de perguntas sobre tabelas/gráficos em todas as
+// tools): pedir "gráfico" de uma listagem paginada (sem quantidade nenhuma
+// pra plotar) ignorava o pedido por completo, sem abrir view nenhuma — cai
+// pra "tabela" agora (ainda uma view a mais que texto puro), em vez de
+// undefined.
+test("pedido de gráfico numa listagem paginada cai pra 'tabela' (não é uma forma 'resumo'/'operacional', que tem gráfico de verdade)", () => {
   const route = routeTicketQuestion("Lista os tickets abertos em formato de gráfico.");
+  assert.equal(route.formato, "tabela");
+});
+
+// Achado ao vivo: catálogos (listar_areas_tickets e afins), ticket único
+// (buscar_ticket_por_numero) e carga/atividade individual (analisar_carga_
+// operador/analisar_atividade_cliente) nunca setavam decision.formato, só os
+// 7 branches de resumo/operacional — mesmo depois do frontend passar a
+// reconhecer tabela/gráfico pra essas tools também (web/shapes.js).
+test("'formato preferido' agora também se aplica a catálogos, ticket único e carga/atividade individual", () => {
+  assert.equal(
+    routeTicketQuestion("Quais os usuarios existem? Mostra em tabela.").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("Busque o ticket 1050. Mostra em tabela.").formato,
+    "tabela",
+  );
+  assert.equal(
+    routeTicketQuestion("O Fábio Gali está sobrecarregado? Faz um gráfico.").formato,
+    "grafico",
+  );
+  assert.equal(
+    routeTicketQuestion("Qual a atividade do cliente Acme? Em formato de gráfico.").formato,
+    "grafico",
+  );
+});
+
+test("'formato preferido' não é aplicado numa comparação (2 chamadas da mesma tool)", () => {
+  const route = routeTicketQuestion("Compare a carga do Fábio Gali com a do Cesar Augusto de Mello, em formato de gráfico.");
+  assert.equal(route.compare !== undefined, true);
   assert.equal(route.formato, undefined);
 });
 
