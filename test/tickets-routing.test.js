@@ -2199,6 +2199,23 @@ test("pergunta sem gatilho de formato não marca decision.formato", () => {
   assert.equal(route.formato, undefined);
 });
 
+// Achado ao vivo: "mostre <conteúdo> em tabela/gráfico" com texto no meio
+// (bem comum, ex.: "quantos tickets tem por departamento") não batia em
+// nenhuma alternativa de tabela — todas exigiam o verbo IMEDIATAMENTE antes
+// de "em tabela", diferente de gráfico, que já tinha uma forma solta ("em
+// gráfico", sem verbo). Plural ("tabelas"/"gráficos") também faltava.
+test("'em tabela(s)'/'em gráfico(s)' com texto entre o verbo e o pedido de formato ainda marca decision.formato", () => {
+  const tabelaComFiltro = routeTicketQuestion("me mostre quantos tickets tem por departamento em tabelas");
+  assert.deepEqual(tabelaComFiltro.toolNames, ["resumo_tickets_por_departamento"]);
+  assert.equal(tabelaComFiltro.formato, "tabela");
+
+  const graficoComFiltro = routeTicketQuestion("me mostre quantos tickets tem por departamento em gráficos");
+  assert.equal(graficoComFiltro.formato, "grafico");
+
+  const tabelaSingular = routeTicketQuestion("me mostre quantos tickets tem por departamento em tabela");
+  assert.equal(tabelaSingular.formato, "tabela");
+});
+
 // Achado ao vivo (lote de perguntas sobre tabelas/gráficos em todas as
 // tools): pedir "gráfico" de uma listagem paginada (sem quantidade nenhuma
 // pra plotar) ignorava o pedido por completo, sem abrir view nenhuma — cai

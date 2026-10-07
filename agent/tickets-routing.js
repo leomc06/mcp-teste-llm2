@@ -1246,19 +1246,25 @@ const OBJECT_REFERENCE_SOURCE = "(?:isso|isto|esses?\\s+dados?|ess[ae]s?\\s+resu
 // tratada acima), achado testando "Coloque isso em uma tabela.".
 const PLACE_VERB_SOURCE = "colo(?:c|qu)[ae]";
 const FORMATO_TABELA_SOURCE =
-  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|gera)\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?tabela`
-  + "|(?:mostr[ae]|exib[ae]|gera|monta|crie)\\w*\\s+(?:uma\\s+)?tabela\\b"
-  + "|\\btabela\\s*,?\\s*por\\s+favor\\b"
-  + "|\\bformato\\s+de\\s+tabela\\b";
+  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|gera)\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?tabelas?`
+  + "|(?:mostr[ae]|exib[ae]|gera|monta|crie)\\w*\\s+(?:uma\\s+)?tabelas?\\b"
+  // Espelha a forma solta de gráfico logo abaixo ("em gráfico" sem verbo
+  // logo antes): achado ao vivo que "mostre quantos tickets tem por
+  // departamento em tabelas" não batia em nenhuma alternativa acima porque
+  // todas exigem o verbo IMEDIATAMENTE antes de "em tabela" — qualquer
+  // texto no meio (bem comum: "mostre <conteúdo> em tabela") já quebrava.
+  + "|\\bem\\s+(?:uma\\s+)?(?:formato\\s+de\\s+)?tabelas?\\b"
+  + "|\\btabelas?\\s*,?\\s*por\\s+favor\\b"
+  + "|\\bformato\\s+de\\s+tabelas?\\b";
 // "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
 // virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
 // gráfico" (bem comum) nunca bateria, só a forma "faz".
 const FORMATO_GRAFICO_SOURCE =
-  "\\b(?:fa[cz]|crie|gera|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]fico\\b"
+  "\\b(?:fa[cz]|crie|gera|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]ficos?\\b"
   // "em um gráfico" (achado na mesma auditoria): o "um/uma" opcional faltava
   // aqui — só "em gráfico"/"em forma de gráfico" batiam, sem artigo.
-  + "|\\bem\\s+(?:uma?\\s+)?(?:forma\\s+de\\s+)?gr[áa]fico\\b"
-  + "|\\bformato\\s+de\\s+gr[áa]fico\\b"
+  + "|\\bem\\s+(?:uma?\\s+)?(?:forma\\s+de\\s+)?gr[áa]ficos?\\b"
+  + "|\\bformato\\s+de\\s+gr[áa]ficos?\\b"
   + "|\\bgraficamente\\b"
   + "|\\bde\\s+forma\\s+(?:gr[áa]fica|visual)\\b";
 const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
