@@ -6,6 +6,8 @@ import {
   ticketsFailure,
   normalizeForMatch,
   findClosedStatus,
+  findCancelledStatus,
+  isTicketAberto,
   resolveMetaId,
   describeNaoEncontrado,
   formatNaoEncontrados,
@@ -563,6 +565,65 @@ test("contarAbertosFechados funciona corretamente mesmo se o status fechado do c
   const result = await contarAbertosFechados({ area: 10 }, statuses, undefined);
 
   assert.deepEqual(result, { totalGeral: 100, abertos: 75, fechados: 25 });
+});
+
+// --- Achado testando o lote de perguntas ao vivo: CANCELADO nunca preenche
+// closure_date (igual a qualquer status que não seja ENCERRADA), mas também
+// não é "aberto" em nenhum sentido útil — antes "aberto" era só "!closure_date",
+// então tickets cancelados eram contados como abertos (ex.: "Liste os
+// tickets abertos" trazia status CANCELADO misturado). ---
+
+test("isTicketAberto exclui CANCELADO, mesmo sem closure_date", () => {
+  assert.equal(isTicketAberto({ closure_date: null, status: "CANCELADO" }), false);
+  assert.equal(isTicketAberto({ closure_date: null, status: "EM ATENDIMENTO" }), true);
+  assert.equal(isTicketAberto({ closure_date: "2026-01-01", status: "ENCERRADA" }), false);
+  // Variação de caixa/acento, mesmo raciocínio de normalizeForMatch usado em
+  // todo o resto do arquivo.
+  assert.equal(isTicketAberto({ closure_date: null, status: "Cancelado" }), false);
+});
+
+test("findCancelledStatus reconhece 'cancelado' (e a variante feminina), não bate com outros status", () => {
+  assert.equal(findCancelledStatus([{ id: 7, name: "CANCELADO" }])?.id, 7);
+  assert.equal(findCancelledStatus([{ id: 8, name: "Cancelada" }])?.id, 8);
+  assert.equal(findCancelledStatus([{ id: 9, name: "ENCERRADA" }]), undefined);
+});
+
+test("contarAbertosFechados: CANCELADO não conta como aberto nem como fechado (sem status já filtrado)", async () => {
+  const ticketsApi = fakeTicketsApi({
+    async listTickets(filtros) {
+      if (filtros.status === 99) return { results: 40 }; // ENCERRADA
+      if (filtros.status === 7) return { results: 10 }; // CANCELADO
+      return { results: 100 }; // total geral
+    },
+  });
+
+  const statuses = [
+    { id: 99, name: "ENCERRADA" },
+    { id: 7, name: "CANCELADO" },
+    { id: 2, name: "EM ATENDIMENTO" },
+  ];
+  const { contarAbertosFechados } = createTicketHelpers(ticketsApi);
+
+  const result = await contarAbertosFechados({ area: 10 }, statuses, undefined);
+
+  // 100 no total, 40 fechados (ENCERRADA), 10 cancelados (nem aberto nem
+  // fechado) — abertos é só o resto: 100 - 40 - 10 = 50, não 60.
+  assert.deepEqual(result, { totalGeral: 100, abertos: 50, fechados: 40 });
+});
+
+test("contarAbertosFechados: com status já filtrado igual a CANCELADO, abertos é 0 (não é 100% aberto como qualquer outro status não-fechado)", async () => {
+  const ticketsApi = fakeTicketsApi({
+    async listTickets() {
+      return { results: 10 };
+    },
+  });
+
+  const statuses = [{ id: 99, name: "ENCERRADA" }, { id: 7, name: "CANCELADO" }];
+  const { contarAbertosFechados } = createTicketHelpers(ticketsApi);
+
+  const result = await contarAbertosFechados({ status: 7 }, statuses, 7);
+
+  assert.deepEqual(result, { totalGeral: 10, abertos: 0, fechados: 0 });
 });
 
 // --- mapWithConcurrency ---

@@ -11,6 +11,7 @@ import {
   extractClientComparisonNames,
   extractOperatorName,
   extractOperatorWorkloadName,
+  isOperadorContidoNoCliente,
   extractPage,
   extractPriorityIntent,
   extractPriorityName,
@@ -1169,6 +1170,30 @@ test("extractOperatorWorkloadName remove a palavra 'operador' antes do nome", ()
 test("extractOperatorWorkloadName reconhece 'quantos tickets <nome> tem?' (ordem de pergunta)", () => {
   assert.equal(extractOperatorWorkloadName("Quantos tickets a Ana Costa tem?"), "Ana Costa");
   assert.equal(extractOperatorWorkloadName("Quantos chamados o Fábio Gali tem?"), "Fábio Gali");
+});
+
+// Achado ao vivo: "carga de trabalho do operador X" dita diretamente (em
+// vez de "sobrecarregado"/"tem muitos") caía no filtro genérico de
+// listagem (listar_tickets) em vez da análise de carga.
+test("extractOperatorWorkloadName reconhece 'carga (de trabalho) do/da operador/técnico <nome>'", () => {
+  assert.equal(
+    extractOperatorWorkloadName("Me diga a carga de trabalho do operador Helpdesk."),
+    "Helpdesk",
+  );
+  assert.equal(
+    extractOperatorWorkloadName("Qual a carga de trabalho do operador Helpdesk?"),
+    "Helpdesk",
+  );
+  assert.equal(
+    extractOperatorWorkloadName("qual a carga do operador Fábio Gali?"),
+    "Fábio Gali",
+  );
+});
+
+test("'carga de trabalho do operador X' roteia para analisar_carga_operador, não listar_tickets", () => {
+  const decisao = routeTicketQuestion("Me diga a carga de trabalho do operador Helpdesk.");
+  assert.deepEqual(decisao.toolNames, ["analisar_carga_operador"]);
+  assert.equal(decisao.entities.operador, "Helpdesk");
 });
 
 test("'quantos tickets <nome> tem?' não atropela outra dimensão já coberta por marcador próprio", () => {
@@ -2424,6 +2449,34 @@ test("'solicitante' é reconhecido como sinônimo de cliente, sem capturar opera
   assert.equal(route.entities.operador, undefined);
 });
 
+// Achado testando o lote de perguntas ao vivo: "Quantos tickets o cliente
+// Daniel Guimarães DO LAGO tem?" capturava cliente certo E operador: "Lago"
+// inventado (o fallback genérico "do/da X" de extractOperatorName roda sobre
+// a frase inteira, sem saber que "do Lago" já é parte do nome do cliente) —
+// isso fazia listar_tickets falhar tudo com "operador 'Lago' não encontrado",
+// ignorando o cliente (certo) que tinha sido encontrado.
+test("isOperadorContidoNoCliente detecta quando o operador capturado é um trecho do nome do cliente", () => {
+  assert.equal(isOperadorContidoNoCliente("Lago", "Daniel Guimarães do Lago"), true);
+  assert.equal(isOperadorContidoNoCliente("Silva E Souza", "Rogerio Da Silva E Souza"), true);
+  assert.equal(isOperadorContidoNoCliente("Rodrigo", "Ana"), false);
+  assert.equal(isOperadorContidoNoCliente(undefined, "Ana"), false);
+  assert.equal(isOperadorContidoNoCliente("Rodrigo", undefined), false);
+});
+
+test("nome de cliente com 'do'/'da' no meio não gera um operador fantasma que quebra a consulta", () => {
+  const lago = routeTicketQuestion("Quantos tickets o cliente Daniel Guimarães do Lago tem?");
+  assert.deepEqual(lago.entities, { cliente: "Daniel Guimarães do Lago" });
+
+  const silva = routeTicketQuestion("Liste os tickets do cliente Rogerio Da Silva E Souza.");
+  assert.deepEqual(silva.entities, { cliente: "Rogerio Da Silva E Souza" });
+
+  // Regressão: um operador genuinamente independente (depois do nome do
+  // cliente já ter sido fechado em "Ana") continua funcionando.
+  const ambos = routeTicketQuestion("Liste os tickets do cliente Ana do operador Rodrigo.");
+  assert.equal(ambos.entities.cliente, "Ana");
+  assert.equal(ambos.entities.operador, "Rodrigo");
+});
+
 test("'ordem de serviço'/'ordens de serviço' são reconhecidas como sinônimo de ticket (singular e plural)", () => {
   assert.deepEqual(
     routeTicketQuestion("Busque a ordem de serviço 1050").toolNames,
@@ -2468,6 +2521,31 @@ test("'tickets da área Suporte'/'tickets com prioridade alta' continuam listage
     routeTicketQuestion("tickets com prioridade alta").toolNames,
     ["listar_tickets"],
   );
+});
+
+// Achado testando o lote de perguntas ao vivo: "Quantos tickets estão em
+// atendimento?" (um FILTRO de status simples, sem nenhum conector "por X"/
+// "em cada X") caía no fallback de resumo_tickets_por_área/status só porque
+// a palavra solta "quantos" já bastava pra hasResumoIntent — a pergunta não
+// pede nenhuma quebra por dimensão, só uma contagem com 1 filtro, que
+// listar_tickets já dá certo no cabeçalho da resposta ("N ticket(s)
+// encontrado(s)"). Regressão negativa: a frase explícita "resumo da área X"
+// (sem conector) continua indo pro resumo, como já documentado no comentário
+// do branch em tickets-routing.js.
+test("'quantos tickets [filtro simples]?' sem conector 'por X' não vira resumo por dimensão não pedida", () => {
+  const emAtendimento = routeTicketQuestion("Quantos tickets estão em atendimento?");
+  assert.deepEqual(emAtendimento.toolNames, ["listar_tickets"]);
+  assert.equal(emAtendimento.entities.status, "Em atendimento");
+
+  const areaWeb = routeTicketQuestion("Quantos tickets a área WEB tem?");
+  assert.deepEqual(areaWeb.toolNames, ["listar_tickets"]);
+  assert.equal(areaWeb.entities.area, "WEB");
+
+  // Regressão negativa: a palavra explícita "resumo" continua acionando o
+  // fallback por filtro-sem-conector.
+  const resumoArea = routeTicketQuestion("Resumo dos tickets da área Suporte.");
+  assert.deepEqual(resumoArea.toolNames, ["resumo_tickets_por_status"]);
+  assert.equal(resumoArea.entities.area, "Suporte");
 });
 
 // F5 (auditoria de robustez): "ultrapassar"/"estourar" o prazo/SLA e o

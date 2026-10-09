@@ -111,6 +111,32 @@ export function findClosedStatus(statuses) {
   return encontrado;
 }
 
+// Achado testando o lote de perguntas ao vivo: "cancelado" nunca preenche
+// closure_date (mesmo fato empírico documentado acima pra CLOSED_STATUS_
+// NAME_SYNONYMS), então todo lugar que define "aberto" como "!closure_date"
+// contava ticket cancelado como se estivesse em aberto — ex.: "Liste os
+// tickets abertos" trazia tickets com status CANCELADO misturados. Sem
+// sinônimo de gênero (igual ao de fechado) porque o catálogo real só usa a
+// forma masculina ("CANCELADO"); mantido como Set, não string única, pra
+// já aceitar a forma feminina caso o catálogo um dia tenha as duas.
+const CANCELLED_STATUS_NAME_SYNONYMS = new Set(["cancelado", "cancelada"]);
+
+export function findCancelledStatus(statuses) {
+  return statuses.find((item) => CANCELLED_STATUS_NAME_SYNONYMS.has(normalizeForMatch(item.name)));
+}
+
+// Única definição de "ticket aberto" usada em todo src/server.js — "aberto"
+// não é só "ainda não tem closure_date", é "ainda está em andamento de
+// verdade": um ticket CANCELADO nunca ganha closure_date (mesmo fato citado
+// acima), mas também não está "em aberto" em nenhum sentido útil pra quem
+// pergunta ("liste os abertos", "quantos estão abertos há mais de 7 dias",
+// "qual o ticket mais antigo em aberto"). Antes cada tool reimplementava
+// "!ticket.closure_date" individualmente — consolidado aqui pra toda
+// correção futura desse conceito valer pra todas as tools de uma vez.
+export function isTicketAberto(ticket) {
+  return !ticket.closure_date && normalizeForMatch(ticket.status) !== "cancelado";
+}
+
 // Achado P9 da auditoria end-to-end: os níveis 2 (substring) e 3 (sem
 // sufixo de gênero) são deliberadamente flexíveis, então mais de um item do
 // catálogo pode bater com o mesmo nome informado (ex.: operador "an" bate
@@ -465,25 +491,34 @@ export function createTicketHelpers(ticketsApi) {
   // empiricamente contra a API: nenhum outro status, incluindo CANCELADO,
   // fecha o ticket) — dá pra contar abertos/fechados com 1-2 chamadas baratas
   // em vez de baixar o corpo de todos os tickets, sem risco de truncamento
-  // mesmo em filtros com milhares de tickets (ex.: área "Suporte").
+  // mesmo em filtros com milhares de tickets (ex.: área "Suporte"). CANCELADO
+  // também nunca fecha, mas não é "aberto" em nenhum sentido útil (mesmo
+  // raciocínio de isTicketAberto) — por isso entra como uma 3ª contagem
+  // separada, subtraída de "abertos" sem afetar "fechados".
   async function contarAbertosFechados(filtrosBase, statuses, statusFiltradoId) {
     const statusEncerrado = findClosedStatus(statuses);
+    const statusCancelado = findCancelledStatus(statuses);
 
     if (statusFiltradoId !== undefined) {
       const totalGeral = await contarTicketsExato(filtrosBase);
-      const fechados = statusEncerrado && statusFiltradoId === statusEncerrado.id ? totalGeral : 0;
+      const ehFechado = statusEncerrado !== undefined && statusFiltradoId === statusEncerrado.id;
+      const ehCancelado = statusCancelado !== undefined && statusFiltradoId === statusCancelado.id;
+      const fechados = ehFechado ? totalGeral : 0;
 
-      return { totalGeral, abertos: totalGeral - fechados, fechados };
+      return { totalGeral, abertos: ehFechado || ehCancelado ? 0 : totalGeral, fechados };
     }
 
-    const [totalGeral, fechados] = await Promise.all([
+    const [totalGeral, fechados, cancelados] = await Promise.all([
       contarTicketsExato(filtrosBase),
       statusEncerrado === undefined
         ? Promise.resolve(0)
         : contarTicketsExato({ ...filtrosBase, status: statusEncerrado.id }),
+      statusCancelado === undefined
+        ? Promise.resolve(0)
+        : contarTicketsExato({ ...filtrosBase, status: statusCancelado.id }),
     ]);
 
-    return { totalGeral, abertos: totalGeral - fechados, fechados };
+    return { totalGeral, abertos: totalGeral - fechados - cancelados, fechados };
   }
 
   return { fetchAllTicketsSafe, listTicketsSafe, contarTicketsExato, contarAbertosFechados };

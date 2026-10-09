@@ -895,6 +895,30 @@ export function extractClientName(value) {
   ]);
 }
 
+// Achado testando o lote de perguntas ao vivo: "Quantos tickets o cliente
+// Daniel Guimarães DO LAGO tem?" capturava cliente: "Daniel Guimarães do
+// Lago" (certo, via extractClientName) E operador: "Lago" (inventado), porque
+// o fallback genérico "do/da X" de extractOperatorName roda sobre a frase
+// inteira sem saber que "do Lago" já é parte do nome do cliente capturado
+// por outro extrator — resultado: listar_tickets falhava tudo com "operador
+// 'Lago' não encontrado", ignorando o cliente (certo) que tinha sido
+// encontrado. Mesmo problema com qualquer nome de cliente/usuário que tenha
+// "do"/"da" no meio (ex.: "Rogerio Da Silva E Souza", do catálogo real).
+// Heurística: se o valor capturado como operador é, ele mesmo, um trecho
+// contido dentro do valor capturado como cliente, é sinal de que os dois
+// vieram do mesmo pedaço de texto (o do cliente) — descarta o operador
+// fantasma em vez de deixar os 2 filtros brigarem. Não suprime um operador
+// genuinamente independente (ex.: "tickets do cliente Ana do operador
+// Rodrigo" já fecha o nome do cliente em "Ana" antes de chegar em "operador
+// Rodrigo", então "Rodrigo" não é um trecho de "Ana").
+export function isOperadorContidoNoCliente(operador, cliente) {
+  if (operador === undefined || cliente === undefined) {
+    return false;
+  }
+
+  return normalizeText(cliente).includes(normalizeText(operador));
+}
+
 // "O cliente X abre muito(s) chamado(s)/ticket(s)?" / "...tem muitos
 // tickets?" / "...está com muitos chamados?" (achado testando o lote de
 // perguntas ao vivo — Img 7): a tool analisar_atividade_cliente já existia
@@ -1068,6 +1092,17 @@ export function extractOperatorWorkloadName(value) {
     // departamento) com uma carga de operador incompleta.
     new RegExp(
       `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
+      "iu",
+    ),
+    // "Me diga a carga de trabalho do operador Helpdesk." / "Qual a carga
+    // do operador X?" — achado ao vivo: pedir a carga usando a palavra
+    // "carga" diretamente (em vez de "sobrecarregado"/"tem muitos") caía
+    // no filtro genérico de listagem (listar_tickets com operador: X), não
+    // na análise de carga. Unanchored (sem "^") porque "carga de trabalho"
+    // quase sempre vem depois de um prefixo de pergunta ("me diga a",
+    // "qual a") que as outras alternativas acima não têm.
+    new RegExp(
+      `\\bcarga\\s+(?:de\\s+trabalho\\s+)?d[oa]\\s+(?:${USER_LOOKUP_NOUN_SOURCE}\\s+)?(.+?)[?!.]*$`,
       "iu",
     ),
   ]);
@@ -1438,8 +1473,9 @@ function routeTicketQuestionCore(pergunta) {
     ?? extractLiteralStatus(text);
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
-  const operador = extractOperatorName(pergunta);
+  const operadorExtraido = extractOperatorName(pergunta);
   const cliente = extractClientName(pergunta);
+  const operador = isOperadorContidoNoCliente(operadorExtraido, cliente) ? undefined : operadorExtraido;
   const prioridade = extractPriorityIntent(pergunta);
   const limite = extractLimit(pergunta);
   const pagina = extractPage(pergunta);
@@ -2305,7 +2341,26 @@ function routeTicketQuestionCore(pergunta) {
   // mais informativa por padrão), filtrado pelo que foi extraído — exceto
   // quando o único filtro extraído já é o próprio status (nesse caso
   // agrupar por status seria degenerado, então agrupamos por área).
-  if (hasResumoIntent && (area || departamento || prioridade || status)) {
+  //
+  // Achado testando o lote de perguntas ao vivo: usar hasResumoIntent aqui
+  // (em vez de uma palavra explícita de resumo) over-triggerava — "Quantos
+  // tickets estão em atendimento?" e "Quantos tickets a área WEB tem?" não
+  // pedem NENHUMA quebra por dimensão, só uma contagem com um filtro simples,
+  // mas hasResumoIntent já vira true com a palavra solta "quantos" (gatilho
+  // legítimo quando combinado com um conector "por X"/"em cada X", mas não
+  // sozinho). Resultado: toda pergunta "quantos tickets [filtro] tem/estão em
+  // [status]?" devolvia uma quebra por área/status que ninguém pediu, em vez
+  // da contagem direta que listar_tickets/listar_tickets_abertos já dão no
+  // cabeçalho da resposta. Esse fallback específico (filtro sem conector)
+  // só deveria disparar pela palavra explícita de resumo citada no comentário
+  // acima — os outros gatilhos de hasResumoIntent (quantos/ranking/formato)
+  // não têm essa frase de filtro-sem-conector como alvo.
+  const hasExplicitResumoWord =
+    /\bresumo\b/.test(text)
+    || /\bdistribuicao\b/.test(text)
+    || /\bcontagem\b/.test(text);
+
+  if (hasExplicitResumoWord && (area || departamento || prioridade || status)) {
     if (!area && !departamento && !prioridade && status) {
       return createTicketDecision(
         "resumo_por_area",

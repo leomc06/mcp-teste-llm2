@@ -8,6 +8,8 @@ import {
   ticketsFailure,
   normalizeForMatch,
   findClosedStatus,
+  findCancelledStatus,
+  isTicketAberto,
   resolveMetaId,
   describeNaoEncontrado,
   formatNaoEncontrados,
@@ -435,14 +437,16 @@ server.registerTool(
         }
 
         const statusEncerrado = findClosedStatus(statuses);
+        const statusCancelado = findCancelledStatus(statuses);
         const fechados = porStatus.find((item) => item.chave === statusEncerrado?.name)?.quantidade ?? 0;
+        const cancelados = porStatus.find((item) => item.chave === statusCancelado?.name)?.quantidade ?? 0;
 
         return success({
           filtros: { area, departamento, operador, prioridade, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
           ...(falhas > 0 ? { itensComErro: falhas } : {}),
-          abertos: totalGeral - fechados,
+          abertos: totalGeral - fechados - cancelados,
           fechados,
           resumo: rankearResumo(resumo, totalGeral, limite, ordem),
         });
@@ -465,7 +469,7 @@ server.registerTool(
 
         if (ticket.closure_date) {
           fechados += 1;
-        } else {
+        } else if (isTicketAberto(ticket)) {
           abertos += 1;
         }
       }
@@ -551,7 +555,7 @@ server.registerTool(
 
         if (ticket.closure_date) {
           fechados += 1;
-        } else {
+        } else if (isTicketAberto(ticket)) {
           abertos += 1;
         }
       }
@@ -671,7 +675,7 @@ server.registerTool(
 
         if (ticket.closure_date) {
           fechados += 1;
-        } else {
+        } else if (isTicketAberto(ticket)) {
           abertos += 1;
         }
       }
@@ -780,7 +784,7 @@ server.registerTool(
         }
 
         if (situacao === "aberto") {
-          return !ticket.closure_date;
+          return isTicketAberto(ticket);
         }
 
         if (situacao === "fechado") {
@@ -1097,7 +1101,7 @@ server.registerTool(
       const abertos = tickets
         .filter(
           (ticket) =>
-            !ticket.closure_date
+            isTicketAberto(ticket)
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
             && (clienteResolvidoAbertosMaisAntigos.nomeAlvo === undefined
               || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoAbertosMaisAntigos.nomeAlvo)),
@@ -1190,7 +1194,7 @@ server.registerTool(
             && (clienteResolvidoVencidos.nomeAlvo === undefined
               || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoVencidos.nomeAlvo))
             && (situacao === undefined
-              || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
+              || (situacao === "aberto" ? isTicketAberto(ticket) : Boolean(ticket.closure_date))),
         ),
         dataInicio,
         dataFim,
@@ -1321,7 +1325,7 @@ server.registerTool(
         }
 
         if (situacao === "aberto") {
-          return !ticket.closure_date;
+          return isTicketAberto(ticket);
         }
 
         if (situacao === "fechado") {
@@ -1431,7 +1435,7 @@ server.registerTool(
         }
 
         if (situacao === "aberto") {
-          return !ticket.closure_date;
+          return isTicketAberto(ticket);
         }
 
         if (situacao === "fechado") {
@@ -1614,7 +1618,7 @@ server.registerTool(
       const abertos = filtrarPorPeriodo(
         tickets.filter(
           (ticket) =>
-            !ticket.closure_date
+            isTicketAberto(ticket)
             && (prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico)
             && (clienteResolvidoAbertos.nomeAlvo === undefined
               || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoAbertos.nomeAlvo)),
@@ -1801,7 +1805,7 @@ server.registerTool(
             && (clienteResolvidoTexto.nomeAlvo === undefined
               || normalizeForMatch(ticket.contact_name).includes(clienteResolvidoTexto.nomeAlvo))
             && (situacao === undefined
-              || (situacao === "aberto" ? !ticket.closure_date : Boolean(ticket.closure_date))),
+              || (situacao === "aberto" ? isTicketAberto(ticket) : Boolean(ticket.closure_date))),
         ),
         dataInicio,
         dataFim,
@@ -1864,7 +1868,7 @@ server.registerTool(
       );
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim);
-      const abertos = tickets.filter((ticket) => !ticket.closure_date);
+      const abertos = tickets.filter((ticket) => isTicketAberto(ticket));
       const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
       const semOperador = tickets.filter((ticket) => !ticket.operator || !ticket.operator.trim());
       const congelados = tickets.filter((ticket) => ticket.is_frozen === true);
@@ -1926,7 +1930,7 @@ server.registerTool(
         operator: operadorResolvido.id,
       });
 
-      const abertos = tickets.filter((ticket) => !ticket.closure_date);
+      const abertos = tickets.filter((ticket) => isTicketAberto(ticket));
       const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
       const congelados = tickets.filter((ticket) => ticket.is_frozen === true);
 
@@ -1998,7 +2002,7 @@ server.registerTool(
         (ticket) => normalizeForMatch(ticket.contact_name).includes(clienteResolvido.nomeAlvo),
       );
 
-      const abertos = tickets.filter((ticket) => !ticket.closure_date);
+      const abertos = tickets.filter((ticket) => isTicketAberto(ticket));
       const fechados = tickets.filter((ticket) => Boolean(ticket.closure_date));
       const congelados = tickets.filter((ticket) => ticket.is_frozen === true);
 
