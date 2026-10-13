@@ -482,6 +482,36 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataFim: formatIsoDate(limite) };
   }
 
+  // "N dias/semanas/meses/anos abertos" — mesma ideia de "há mais de N ..."
+  // acima, só que com "aberto(s)" vindo DEPOIS do número, não antes de "há
+  // mais de" (achado testando o lote de perguntas ao vivo — Complexas 1,
+  // pergunta 6): "tickets têm mais de 30 dias abertos" não batia em
+  // haMaisDeMatch (que exige "há mais de N ..." como prefixo), e o "mais de
+  // 30 dias" inteiro era ignorado em silêncio — a resposta só "acertava" por
+  // coincidência quando nenhum outro ticket mais novo também batia no resto
+  // dos filtros.
+  const maisDeDiasAbertosMatch = text.match(
+    /\bmais\s+de\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\s+(?:em\s+)?abert[oa]s?\b/iu,
+  );
+
+  if (maisDeDiasAbertosMatch) {
+    const quantidade = Number(maisDeDiasAbertosMatch[1]);
+    const unidade = maisDeDiasAbertosMatch[2].toLowerCase();
+    const limite = new Date(agora);
+
+    if (unidade.startsWith("dia")) {
+      limite.setDate(limite.getDate() - quantidade);
+    } else if (unidade.startsWith("semana")) {
+      limite.setDate(limite.getDate() - quantidade * 7);
+    } else if (unidade.startsWith("mes")) {
+      limite.setMonth(limite.getMonth() - quantidade);
+    } else {
+      limite.setFullYear(limite.getFullYear() - quantidade);
+    }
+
+    return { dataFim: formatIsoDate(limite) };
+  }
+
   return undefined;
 }
 

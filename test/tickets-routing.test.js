@@ -195,6 +195,20 @@ test("'há mais de N dias/semanas/meses/anos' vira dataFim (teto de abertura) e 
   assert.ok(anos.entities.dataFim !== undefined);
 });
 
+// Achado testando o lote de perguntas ao vivo — Complexas 1, pergunta 6:
+// "N dias abertos" (aberto DEPOIS do número) não tinha suporte, só "há mais
+// de N ..." (aberto antes, via "há"). Sem isso, "mais de 30 dias" inteiro
+// era ignorado em silêncio e a resposta só "acertava" por coincidência.
+test("'mais de N dias/semanas/meses/anos abertos' (aberto depois do número) também vira dataFim", () => {
+  const dias = routeTicketQuestion("Quais tickets têm mais de 30 dias abertos e são de prioridade alta?");
+  assert.equal(dias.entities.prioridade, "alta");
+  assert.ok(dias.entities.dataFim !== undefined);
+  assert.equal(dias.entities.dataInicio, undefined);
+
+  const meses = routeTicketQuestion("Tickets com mais de 6 meses abertos.");
+  assert.ok(meses.entities.dataFim !== undefined);
+});
+
 test("'há mais tempo' (proxy de mais antigos) continua funcionando sem ser capturado como 'há mais de N'", () => {
   // "atrasados" não é "aberto" — por decisão do usuário, "mais antigos" SEM
   // a palavra "aberto" não força mais o proxy cronológico restrito aos
