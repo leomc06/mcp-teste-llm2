@@ -66,6 +66,19 @@ test("normalizeForMatch remove acento, caixa e espaços nas pontas", () => {
   assert.equal(normalizeForMatch(undefined), "");
 });
 
+// Achado testando o lote de perguntas ao vivo (Complexas 1, pergunta 3):
+// contact_name de alguns tickets vem com entidade HTML do cadastro de origem
+// ("Jo&atilde;o Pedro Guimar&atilde;es") em vez do texto decodificado — sem
+// decodificar antes de comparar, essa pessoa virava uma 2ª "fantasma" em
+// todo resumo/filtro por cliente, com a contagem dividida entre as duas.
+test("normalizeForMatch decodifica entidade HTML antes de comparar (mesma pessoa com e sem entidade casam)", () => {
+  assert.equal(
+    normalizeForMatch("Jo&atilde;o Pedro Guimar&atilde;es"),
+    normalizeForMatch("João Pedro Guimarães"),
+  );
+  assert.equal(normalizeForMatch("F&aacute;bio"), normalizeForMatch("Fábio"));
+});
+
 test("resolveMetaId: sem nome informado, não filtra (id/nomeCanonico undefined, naoEncontrado false)", async () => {
   const result = await resolveMetaId(async () => [{ id: 1, name: "Suporte" }], undefined);
   assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: false });
@@ -272,6 +285,21 @@ test("agruparContagemPorNomeNormalizado funde variantes de acento/caixa do mesmo
 
 test("agruparContagemPorNomeNormalizado: sem tickets, devolve lista vazia", () => {
   assert.deepEqual(agruparContagemPorNomeNormalizado([], (t) => t.contact_name), []);
+});
+
+// Achado testando o lote de perguntas ao vivo (Complexas 1, pergunta 3): a
+// mesma fusão acima precisa funcionar também quando a variante vem com
+// entidade HTML do cadastro de origem, não só diferença de acento/caixa.
+test("agruparContagemPorNomeNormalizado funde variante com entidade HTML do mesmo nome", () => {
+  const tickets = [
+    { contact_name: "João Pedro Guimarães" },
+    { contact_name: "João Pedro Guimarães" },
+    { contact_name: "Jo&atilde;o Pedro Guimar&atilde;es" },
+  ];
+
+  const result = agruparContagemPorNomeNormalizado(tickets, (t) => t.contact_name);
+
+  assert.deepEqual(result, [{ chave: "João Pedro Guimarães", quantidade: 3 }]);
 });
 
 // F6 (auditoria de robustez): cliente não tem catálogo/resolveMetaId

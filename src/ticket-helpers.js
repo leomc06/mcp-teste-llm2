@@ -55,10 +55,55 @@ export function ticketsFailure(error) {
   };
 }
 
+// Achado testando o lote de perguntas ao vivo (Complexas 1, pergunta 3):
+// alguns tickets têm contact_name já vindo com entidade HTML do cadastro de
+// origem (ex.: "Jo&atilde;o Pedro Guimar&atilde;es" em vez de "João Pedro
+// Guimarães") — sem decodificar antes de comparar, isso virava uma pessoa
+// "fantasma" diferente em todo resumo/filtro por cliente (ex.: "resumo de
+// tickets por cliente" mostrando "João Pedro Guimarães" duas vezes, uma com
+// a contagem certa e outra com só os tickets com entidade HTML, ao
+// invés de somar as duas). Duplicado aqui (em vez de importado de
+// agent/response-formatter.js, que já tem a mesma tabela só que pra
+// EXIBIÇÃO) porque src/ e agent/ são camadas desacopladas de propósito — src/
+// não depende de agent/ em nenhum lugar hoje.
+const HTML_ENTITY_NAMES_FOR_MATCH = {
+  aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú",
+  Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú",
+  atilde: "ã", otilde: "õ", Atilde: "Ã", Otilde: "Õ",
+  acirc: "â", ecirc: "ê", ocirc: "ô", Acirc: "Â", Ecirc: "Ê", Ocirc: "Ô",
+  agrave: "à", Agrave: "À", egrave: "è", Egrave: "È",
+  ccedil: "ç", Ccedil: "Ç", ntilde: "ñ", Ntilde: "Ñ",
+  uuml: "ü", Uuml: "Ü",
+  amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ",
+};
+
+function decodeHtmlEntitiesForMatch(value) {
+  if (!value.includes("&")) {
+    return value;
+  }
+
+  let text = value;
+
+  for (let pass = 0; pass < 3 && text.includes("&"); pass += 1) {
+    const decoded = text
+      .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+      .replace(/&([a-zA-Z]+);/g, (match, name) => HTML_ENTITY_NAMES_FOR_MATCH[name] ?? match);
+
+    if (decoded === text) {
+      break;
+    }
+
+    text = decoded;
+  }
+
+  return text;
+}
+
 // Casa nomes ignorando maiúscula/minúscula e acentuação (ex.: "supercomputacao"
 // == "Supercomputação"), já que quem pergunta raramente digita acentos.
 export function normalizeForMatch(value) {
-  return String(value ?? "")
+  return decodeHtmlEntitiesForMatch(String(value ?? ""))
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
