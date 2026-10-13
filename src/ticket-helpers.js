@@ -71,6 +71,25 @@ function stripGenderSuffix(value) {
   return value.replace(/(os|as|o|a)$/u, "");
 }
 
+// Acha se "alvo" casa com "candidatoNormalizado" numa posição ANCORADA —
+// no início da string inteira, ou logo depois de um espaço — ou seja, no
+// início de alguma palavra (nome/sobrenome) do candidato. Diferente de um
+// match solto no MEIO de uma palavra (ex.: "ana" dentro de "luana" bate só
+// no meio, não é o início de nenhuma palavra do nome).
+function isAnchoredSubstringMatch(candidatoNormalizado, alvo) {
+  let indice = candidatoNormalizado.indexOf(alvo);
+
+  while (indice !== -1) {
+    if (indice === 0 || candidatoNormalizado[indice - 1] === " ") {
+      return true;
+    }
+
+    indice = candidatoNormalizado.indexOf(alvo, indice + 1);
+  }
+
+  return false;
+}
+
 // Achado P8 da auditoria end-to-end: os caminhos rápidos de contagem
 // (contarAbertosFechados abaixo, e o fast path equivalente de
 // resumo_tickets_por_status em server.js) evitam baixar o corpo dos
@@ -156,9 +175,24 @@ export async function resolveMetaId(listFn, nome) {
   const normalizados = itens.map((candidato) => normalizeForMatch(candidato.name));
 
   const porIgualdade = itens.filter((candidato, i) => normalizados[i] === alvo);
-  const porSubstring = porIgualdade.length > 0
+  const porSubstringBruto = porIgualdade.length > 0
     ? []
     : itens.filter((candidato, i) => normalizados[i].includes(alvo));
+
+  // Achado testando o lote de perguntas ao vivo: com 2+ candidatos por
+  // substring a ambiguidade já avisa o usuário (ok ficar "solto" nesse caso —
+  // é o que o teste "mais de 1 candidato por substring" exercita de
+  // propósito, com "an" batendo em "Ana Paula"/"Mariana"/"Anderson" de
+  // jeitos diferentes). Mas com 1 candidato só, um match que não ancora no
+  // início de nenhuma palavra do nome (ex.: "ana" caindo no meio de "Luana
+  // Sabara") é só coincidência de caracteres — resolvia com confiança pra
+  // pessoa errada, sem nenhum candidato concorrente pra acionar o aviso de
+  // ambiguidade. Descartado só quando é o ÚNICO candidato, caindo pro
+  // próximo nível (sufixo de gênero) ou pra "não encontrado".
+  const porSubstring =
+    porSubstringBruto.length === 1 && !isAnchoredSubstringMatch(normalizeForMatch(porSubstringBruto[0].name), alvo)
+      ? []
+      : porSubstringBruto;
   const porSufixo = porIgualdade.length > 0 || porSubstring.length > 0
     ? []
     : itens.filter((candidato, i) => stripGenderSuffix(normalizados[i]) === stripGenderSuffix(alvo));

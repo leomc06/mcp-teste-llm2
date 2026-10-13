@@ -131,6 +131,27 @@ test("resolveMetaId: igualdade exata continua resolvendo direto, mesmo se outros
   assert.deepEqual(result, { id: 1, nomeCanonico: "Suporte", naoEncontrado: false });
 });
 
+// Achado testando o lote de perguntas ao vivo: "Ana" resolvia com confiança
+// pro operador "Luana Sabara" (único candidato no catálogo real cujo nome
+// contém "ana"), mesmo não existindo nenhuma "Ana" de verdade — porque o
+// match caía no MEIO da palavra "Luana", não no início de nenhuma palavra do
+// nome. Com 1 candidato só (sem outro concorrente pra acionar a ambiguidade
+// do teste acima), isso resolvia silenciosamente pra pessoa errada.
+test("resolveMetaId: 1 candidato só por substring, mas o match cai no meio de uma palavra (não no início) — não resolve com confiança", async () => {
+  const listFn = async () => [{ id: 1, name: "Luana Sabara" }];
+  const result = await resolveMetaId(listFn, "Ana");
+
+  assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: true });
+});
+
+test("resolveMetaId: 1 candidato por substring ancorado no início de uma palavra (nome, sobrenome ou meio) continua resolvendo normalmente", async () => {
+  const listFn = async () => [{ id: 1, name: "Cesar Augusto de Mello" }];
+
+  assert.equal((await resolveMetaId(listFn, "cesar")).id, 1);
+  assert.equal((await resolveMetaId(listFn, "augusto")).id, 1);
+  assert.equal((await resolveMetaId(listFn, "mello")).id, 1);
+});
+
 // --- P9 da auditoria end-to-end (parte 2): a mensagem de erro devolvida pra
 // quem pergunta precisa distinguir "não encontrado" (nome não existe) de
 // "ambíguo" (nome existe mas bate com vários candidatos ao mesmo tempo),
