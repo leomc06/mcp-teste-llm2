@@ -2788,3 +2788,47 @@ test("'mais antigos' sem 'aberto' varre todos os status; com 'aberto', continua 
     ["listar_tickets_abertos_mais_antigos"],
   );
 });
+
+// Achados testando o lote de perguntas ao vivo — Complexas 1.
+
+test("pergunta 11: 'mais de N dias sem operador atribuído' também vira dataFim (igual 'N dias abertos')", () => {
+  const route = routeTicketQuestion("Tem algum ticket que ficou mais de 90 dias sem operador atribuído?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_sem_operador"]);
+  assert.ok(route.entities.dataFim !== undefined);
+  assert.equal(route.entities.dataInicio, undefined);
+});
+
+test("pergunta 13: erro de digitação 'fexados' (ch/x) é reconhecido como 'fechados'", () => {
+  const route = routeTicketQuestion("tickts fexados essa semana pelo helpdesk");
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.operador, "helpdesk");
+});
+
+test("pergunta 14: 'sem prioridade definida/atribuída/informada/especificada' não vira exclusão de valor nem captura garbage como prioridade", () => {
+  const route = routeTicketQuestion("Quantos tickets sem prioridade definida existem?");
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_prioridade"]);
+  assert.equal(route.entities.prioridade, undefined);
+  assert.equal(route.clarification, undefined);
+
+  assert.deepEqual(
+    routeTicketQuestion("Tickets sem prioridade atribuída.").toolNames,
+    ["resumo_tickets_por_prioridade"],
+  );
+});
+
+test("pergunta 17: 'qual a diferença entre os status/prioridades/áreas/departamentos X e Y' pede esclarecimento (pergunta conceitual, não consulta de dados)", () => {
+  const route = routeTicketQuestion('Qual a diferença entre os status "Em atendimento" e "Em estudo"?');
+  assert.deepEqual(route.toolNames, []);
+  assert.match(route.clarification, /não consigo explicar/iu);
+
+  // não colide com comparação de carga de verdade (continua funcionando)
+  const cargaReal = routeTicketQuestion("Qual a diferença de carga entre Bruno e João Pedro?");
+  assert.equal(cargaReal.compare?.length, 2);
+});
+
+test("pergunta 18: verbo 'fechou'/'fecharam' captura o operador, igual 'tem'/'tratou'/'atendeu'", () => {
+  const route = routeTicketQuestion("Quantos tickets o Helpdesk fechou no departamento Coids esse ano?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(route.entities.operador, "Helpdesk");
+  assert.equal(route.entities.departamento, "Coids");
+});

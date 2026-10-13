@@ -97,8 +97,15 @@ const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(
 // intenção, negação, ou corte de cláusula final ao extrair nomes).
 // "solucionado/solucionou" (item 5 do plano de correção) é sinônimo comum de
 // "resolvido" que faltava.
+// "fex-" (achado testando o lote de perguntas ao vivo — Complexas 1,
+// pergunta 13): "ch"/"x" soam igual em português, e é um erro de digitação
+// comum o suficiente pra tratar como sinônimo mesmo (não é um typo
+// aleatório qualquer) — "tickts fexados essa semana" perdia o filtro de
+// status inteiro, virando uma listagem genérica (abertos+fechados
+// misturados). Só o radical "fech"/"fex" ganha a variante; os outros 5
+// sinônimos de fechamento não têm esse padrão de troca fonética comum.
 const CLOSURE_VERB_SOURCE =
-  "(?:fech(?:ad[oa]s?|ou|aram)"
+  "(?:fe(?:ch|x)(?:ad[oa]s?|ou|aram)"
   + "|encerr(?:ad[oa]s?|ou|aram)"
   + "|conclu(?:[íi]d[oa]s?|iu|[íi]ram)"
   + "|finaliz(?:ad[oa]s?|ou|aram)"
@@ -482,16 +489,17 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataFim: formatIsoDate(limite) };
   }
 
-  // "N dias/semanas/meses/anos abertos" — mesma ideia de "há mais de N ..."
-  // acima, só que com "aberto(s)" vindo DEPOIS do número, não antes de "há
-  // mais de" (achado testando o lote de perguntas ao vivo — Complexas 1,
-  // pergunta 6): "tickets têm mais de 30 dias abertos" não batia em
-  // haMaisDeMatch (que exige "há mais de N ..." como prefixo), e o "mais de
-  // 30 dias" inteiro era ignorado em silêncio — a resposta só "acertava" por
-  // coincidência quando nenhum outro ticket mais novo também batia no resto
-  // dos filtros.
+  // "N dias/semanas/meses/anos abertos" (ou "... sem operador atribuído") —
+  // mesma ideia de "há mais de N ..." acima, só que com o estado vindo
+  // DEPOIS do número, não antes de "há mais de" (achado testando o lote de
+  // perguntas ao vivo — Complexas 1, perguntas 6 e 11): "tickets têm mais de
+  // 30 dias abertos"/"ticket que ficou mais de 90 dias sem operador
+  // atribuído" não batiam em haMaisDeMatch (que exige "há mais de N ..."
+  // como prefixo), e o "mais de N ..." inteiro era ignorado em silêncio — a
+  // resposta só "acertava" por coincidência quando nenhum outro ticket mais
+  // novo também batia no resto dos filtros.
   const maisDeDiasAbertosMatch = text.match(
-    /\bmais\s+de\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\s+(?:em\s+)?abert[oa]s?\b/iu,
+    /\bmais\s+de\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\s+(?:(?:em\s+)?abert[oa]s?|sem\s+operador(?:\s+atribu[ií]do)?)\b/iu,
   );
 
   if (maisDeDiasAbertosMatch) {
@@ -893,7 +901,12 @@ const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
 // "Quantos tickets o Fábio Moreira TRATOU...?" não capturava o operador,
 // porque só "tem" fechava esse padrão — o nome inteiro se perdia, mesmo
 // antes de qualquer problema de negação na cláusula seguinte.
-const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram))";
+// "fechou"/"fecharam" (achado testando o lote de perguntas ao vivo —
+// Complexas 1, pergunta 18): "Quantos tickets o Helpdesk FECHOU no
+// departamento X?" não capturava o operador (só tem/tratou/atendeu
+// fechavam esse padrão) — o filtro de operador se perdia por completo, e a
+// resposta mostrava o departamento inteiro, não só os tickets do Helpdesk.
+const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))";
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
@@ -1073,9 +1086,19 @@ const PRIORITY_LEVEL_UNIAO_PATTERNS = [
   [/\be\s+(?:de\s+)?alta\s+prioridade\b|\balta\s+prioridade\s+e\b/, "Alta"],
 ];
 
+// Achado testando o lote de perguntas ao vivo — Complexas 1, pergunta 14:
+// "sem prioridade DEFINIDA" não é um nome de prioridade de verdade, é um
+// jeito de perguntar se o campo está vazio — mas a captura (.+) gananciosa
+// pegava "definida existem" como se fosse um valor real, fazendo o guard de
+// negação (mais abaixo) disparar achando que era "sem prioridade Alta" (uma
+// EXCLUSÃO de valor, não suportada) e devolvendo um esclarecimento errado. A
+// pergunta certa (prioridade sempre preenchida nos dados reais — 0 tickets
+// bateriam esse filtro) nem chega a ser uma exclusão.
+const PRIORITY_UNSET_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especificad)[ao]s?";
+
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
-    /\bprioridade\s+(?:de\s+)?(.+)$/iu,
+    new RegExp(`\\bprioridade\\s+(?:de\\s+)?(?!${PRIORITY_UNSET_ADJECTIVE_SOURCE}\\b)(.+)$`, "iu"),
   ]);
 }
 
@@ -1647,6 +1670,31 @@ function routeTicketQuestionCore(pergunta) {
     ]);
   }
 
+  // "Qual a diferença entre os status/prioridades/áreas/departamentos X e
+  // Y?" (achado testando o lote de perguntas ao vivo — Complexas 1,
+  // pergunta 17): pergunta CONCEITUAL (pede pra EXPLICAR o que cada valor
+  // de catálogo significa), não uma consulta de dados — checado aqui, DEPOIS
+  // das comparações de verdade acima (que exigem "carga"/"atividade"/"mais
+  // tickets", nunca essa frase), pra não colidir com elas. Sem esse guard, a
+  // extração de status tentava colar os dois nomes numa string só ("Em
+  // atendimento e Em estudo"), que falhava a busca no catálogo e devolvia
+  // "não encontrado" (confuso e duplicado) em vez de reconhecer
+  // honestamente que o sistema não explica conceitos, só consulta dados.
+  const isConceptualDimensionDiffQuestion = new RegExp(
+    `\\bdiferen[cç]a\\s+entre\\s+(?:os\\s+|as\\s+)?(?:status|prioridades?|departamentos?|${AREA_SYNONYM_SOURCE}s?)\\b`,
+    "u",
+  ).test(text);
+
+  if (isConceptualDimensionDiffQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_pergunta_conceitual",
+      "Não consigo explicar o significado ou a diferença entre valores de catálogo (status, prioridade, área, departamento) — só consulto dados de tickets já existentes. Pode perguntar sobre tickets com um desses valores específicos?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets estão com status Em atendimento?\n"
+        + "- Tickets com status Em estudo.",
+    );
+  }
+
   // "ainda não fechado"/"não encerrado"/"não resolveu"/"não fechou" (formas
   // adjetiva e verbal) significam aberto, mas contêm palavras que indicariam
   // fechado — tratadas à parte, negando isFechadoIntent e alimentando
@@ -1952,8 +2000,19 @@ function routeTicketQuestionCore(pergunta) {
         ? "aberto"
         : undefined;
 
+  // "sem prioridade definida/atribuída/informada/especificada" (achado
+  // testando o lote de perguntas ao vivo — Complexas 1, pergunta 14): não é
+  // "por X"/"cada X" nem ranking, então mentionsDimension (abaixo) não
+  // reconhecia — a pergunta caía num listar_tickets genérico sem filtro
+  // nenhum, em vez do resumo por prioridade (que mostraria o balde "não
+  // informada", 0 nos dados reais de hoje — todo ticket já tem prioridade).
+  const mentionsPriorityUnsetPhrase = new RegExp(
+    `\\bsem\\s+prioridade\\s+${PRIORITY_UNSET_ADJECTIVE_SOURCE}\\b`,
+    "u",
+  ).test(text);
+
   const mentionsStatusDimension = mentionsDimension(text, "status");
-  const mentionsPriorityDimension = mentionsDimension(text, "prioridades?");
+  const mentionsPriorityDimension = mentionsDimension(text, "prioridades?") || mentionsPriorityUnsetPhrase;
   const mentionsAreaDimension = mentionsDimension(text, `${AREA_SYNONYM_SOURCE}s?`);
   const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
