@@ -18,6 +18,12 @@ export function extractLimit(value) {
     /\bprimeir(?:o|os|a|as)\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\bate\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\btop\s+(\d+)\b/,
+    // "os 3 operadores com mais tickets"/"as 5 áreas com menos chamados"
+    // (achado testando o lote de perguntas ao vivo — Complexas 1, pergunta
+    // 1): jeito comum de pedir um "top N" sem usar a palavra "top" — sem
+    // isso, "Quais os 3 operadores com mais tickets fechados..." ignorava o
+    // "3" e devolvia TODOS os operadores do resumo, não só os 3 pedidos.
+    /\b(\d+)\s+\p{L}+\s+com\s+(?:mais|menos)\b/u,
   ];
 
   for (const pattern of patterns) {

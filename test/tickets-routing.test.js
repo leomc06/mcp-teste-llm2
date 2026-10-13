@@ -1316,6 +1316,22 @@ test("'top N' aplica limite nas tools de resumo", () => {
   assert.equal(route.entities.limite, 5);
 });
 
+// Achado testando o lote de perguntas ao vivo — Complexas 1, pergunta 1:
+// "Quais os 3 operadores com mais tickets..." é um jeito comum de pedir um
+// "top N" sem a palavra "top" — sem reconhecer isso, o "3" era ignorado e a
+// resposta trazia TODOS os operadores, não só os 3 pedidos.
+test("'os N <dimensão> com mais/menos' aplica limite, mesmo sem a palavra 'top'", () => {
+  const maisOperadores = routeTicketQuestion(
+    "Quais os 3 operadores com mais tickets fechados na área de Suporte esse ano?",
+  );
+  assert.deepEqual(maisOperadores.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(maisOperadores.entities.limite, 3);
+
+  const menosAreas = routeTicketQuestion("Quais as 2 áreas com menos tickets?");
+  assert.deepEqual(menosAreas.toolNames, ["resumo_tickets_por_area"]);
+  assert.equal(menosAreas.entities.limite, 2);
+});
+
 test("bug: prioridade não se perde em 'tickets urgentes sem operador'", () => {
   const route = routeTicketQuestion("Tickets urgentes sem operador.");
 
