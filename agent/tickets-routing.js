@@ -78,7 +78,16 @@ const OPEN_STATE_ADJECTIVE_SOURCE =
 // sem a preposição que normalmente vem antes ("está EM aberto"), e o "em"
 // dangling impedia TRAILING_BARE_VERB_PATTERN de reconhecer "tem" como
 // último token da frase logo depois).
-const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(`\\s+(?:em\\s+)?${OPEN_STATE_ADJECTIVE_SOURCE}\\b.*$`, "iu");
+// "ainda"/"já" opcionais antes do "em" (achado testando o lote de perguntas
+// ao vivo): "Tickets do cliente X AINDA EM aberto." deixava "ainda" sobrando
+// no nome capturado (cliente: "X ainda"), porque o corte só reconhecia
+// "em aberto"/"aberto" direto, sem o advérbio que costuma vir antes — mesmo
+// vocabulário de advérbio já aceito por TRAILING_STATE_CLAUSE_PATTERN acima
+// (que/ainda/não/já), aqui só os 2 que fazem sentido antes de um adjetivo.
+const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:ainda\\s+|j[áa]\\s+)?(?:em\\s+)?${OPEN_STATE_ADJECTIVE_SOURCE}\\b.*$`,
+  "iu",
+);
 
 // Vocabulário de "fechado" em toda forma verbal (3ª pessoa do singular/
 // plural no passado) e adjetiva (singular/plural) dos 6 sinônimos aceitos —
@@ -972,6 +981,13 @@ export function extractSearchText(value) {
 // API (não corresponde a tickets reais), por isso também fica de fora.
 const STATUS_LITERAL_PATTERNS = [
   [/\baguardando\s+atendimento\b/, "Aguardando atendimento"],
+  // "ainda não foram atendidos"/"não atendidos" (achado testando o lote de
+  // perguntas ao vivo): jeito comum de pedir "aguardando atendimento" sem
+  // usar esse nome literal — sem isso, "Tickets urgentes que ainda não
+  // foram atendidos." perdia a cláusula inteira e listava TODOS os urgentes
+  // (inclusive já ENCERRADOS, o oposto do que foi pedido).
+  [/\b(?:ainda\s+)?nao\s+(?:foi|foram|esta\s+sendo|estao\s+sendo)\s+atendid[oa]s?\b/, "Aguardando atendimento"],
+  [/\bnao\s+atendid[oa]s?\b/, "Aguardando atendimento"],
   [/\bem\s+andamento\b/, "Em atendimento"],
   [/\bem\s+atendimento\b/, "Em atendimento"],
   [/\bem\s+estudo\b/, "Em estudo"],

@@ -744,6 +744,23 @@ test("bug: 'aguardando atendimento' reconhecido como status literal (não mistur
   assert.equal(route.entities.status, "Aguardando atendimento");
 });
 
+// Achado testando o lote de perguntas ao vivo: "ainda não foram atendidos"/
+// "não atendidos" é um jeito comum de pedir "aguardando atendimento" sem
+// usar o nome literal do status — sem isso, "Tickets urgentes que ainda não
+// foram atendidos." perdia a cláusula inteira e listava TODOS os urgentes
+// (inclusive já ENCERRADOS, o oposto do pedido).
+test("'ainda não foram atendidos'/'não atendidos' é reconhecido como sinônimo de 'aguardando atendimento'", () => {
+  const comPrioridade = routeTicketQuestion("Tickets urgentes que ainda não foram atendidos.");
+  assert.equal(comPrioridade.entities.status, "Aguardando atendimento");
+  assert.equal(comPrioridade.entities.prioridade, "Urgente");
+
+  assert.equal(routeTicketQuestion("Tickets não atendidos.").entities.status, "Aguardando atendimento");
+  assert.equal(
+    routeTicketQuestion("Quais tickets ainda não foram atendidos?").entities.status,
+    "Aguardando atendimento",
+  );
+});
+
 test("todos os status reais são reconhecidos sem a palavra 'status' na frase", () => {
   const casos = [
     ["Tickets em estudo.", "Em estudo"],
@@ -2003,6 +2020,23 @@ test("adjetivo de situação solto ('abertos'/'pendentes'/'congelados'/'travados
   assert.equal(extractAreaName("Tickets da área Suporte pendentes"), "Suporte");
   assert.equal(extractAreaName("Tickets da área Suporte congelados"), "Suporte");
   assert.equal(extractAreaName("Tickets da área Suporte travados"), "Suporte");
+});
+
+// Achado testando o lote de perguntas ao vivo: "ainda"/"já" antes do
+// adjetivo de situação ("ainda em aberto", "já aberto") não era reconhecido
+// pelo corte acima — "Tickets do cliente Cesar Augusto de Mello ainda em
+// aberto." deixava "ainda" sobrando no nome capturado (cliente: "Cesar
+// Augusto de Mello ainda"), que então não batia com nenhum cliente real.
+test("'ainda'/'já' antes do adjetivo de situação solto também é podado, sem deixar o advérbio sobrando", () => {
+  assert.equal(
+    extractClientName("Tickets do cliente Cesar Augusto de Mello ainda em aberto."),
+    "Cesar Augusto de Mello",
+  );
+  assert.equal(extractClientName("Tickets do cliente Fábio Gali já aberto."), "Fábio Gali");
+
+  const route = routeTicketQuestion("Tickets do cliente Cesar Augusto de Mello ainda em aberto.");
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.cliente, "Cesar Augusto de Mello");
 });
 
 test("'foram abertos <período>' continua sendo podado inteiro (não deixa 'foram' órfão)", () => {
