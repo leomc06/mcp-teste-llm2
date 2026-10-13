@@ -1214,6 +1214,51 @@ export function extractClientComparisonNames(value) {
   return undefined;
 }
 
+// Mesma ideia de extractOperatorComparisonNames/extractClientComparisonNames,
+// mas pra 2 ÁREAS (achado testando o lote de perguntas ao vivo — Médias 1,
+// pergunta 14): "Quem tem mais tickets: a área de Suporte ou a área WEB?"
+// não tinha nenhum suporte — isOperatorRankingIntent assumia cegamente que
+// "quem tem mais" era sobre operador, mesmo a frase citando "área" duas
+// vezes, e extractAreaName capturava a string inteira quebrada "Suporte ou
+// a área WEB" como um nome só. Exige a palavra de área (AREA_SYNONYM_SOURCE)
+// explícita nos dois lados, igual extractClientComparisonNames exige
+// "cliente" — evita colidir com comparação de operador/cliente.
+export function extractAreaComparisonNames(value) {
+  const text = String(value ?? "");
+
+  const patterns = [
+    new RegExp(
+      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)\\s*:?\\s*`
+        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+ou\\s+`
+        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+tem\\s+mais\\s+`
+        + `(?:tickets?|chamados?|atendimentos?)\\s+(?:do\\s+)?que\\s+`
+        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    const nome1 = cleanFreeText(match[1]);
+    const nome2 = cleanFreeText(match[2]);
+
+    if (nome1 !== undefined && nome2 !== undefined) {
+      return [nome1, nome2];
+    }
+  }
+
+  return undefined;
+}
+
 export function extractDateRange(value) {
   const text = String(value ?? "");
 
@@ -1555,6 +1600,20 @@ function routeTicketQuestionCore(pergunta) {
     return createCompareDecision("comparar_atividade_cliente", [
       { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[0] } },
       { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[1] } },
+    ]);
+  }
+
+  // Não existe uma tool de "carga da área" equivalente a analisar_carga_
+  // operador/analisar_atividade_cliente — listar_tickets com só o filtro de
+  // área já dá o total certo (não afetado por paginação, ver comentário na
+  // tool), então é reaproveitada aqui; limite:1 evita buscar tickets demais
+  // à toa, já que só o total importa pra comparação.
+  const comparacaoAreas = extractAreaComparisonNames(pergunta);
+
+  if (comparacaoAreas !== undefined) {
+    return createCompareDecision("comparar_tickets_area", [
+      { toolName: "listar_tickets", args: { area: comparacaoAreas[0], limite: 1 } },
+      { toolName: "listar_tickets", args: { area: comparacaoAreas[1], limite: 1 } },
     ]);
   }
 

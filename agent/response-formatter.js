@@ -755,6 +755,23 @@ function formatClientActivity(data) {
   return linhas.join("\n");
 }
 
+// Não existe uma tool de "carga da área" equivalente a analisar_carga_
+// operador/analisar_atividade_cliente (ver comentário em
+// routeTicketQuestionCore) — listar_tickets com só o filtro de área é
+// reaproveitada pra comparação, e só o total importa aqui (não a lista de
+// tickets em si, que o "compare" nem exibe).
+function formatAreaTicketCount(data) {
+  if (data.encontrado === false) {
+    return data.motivo ?? "Não foi possível aplicar os filtros informados.";
+  }
+
+  const truncadoAviso = data.truncado
+    ? " (resultado parcial: consulta truncada por volume de tickets)"
+    : "";
+
+  return `Área ${decodeHtmlEntities(data.filtros?.area ?? "?")}: ${data.total} ticket(s) no total${truncadoAviso}.`;
+}
+
 // "Compare X e Y" chama a MESMA tool duas vezes (uma por lado) — só faz
 // sentido pra tools cujo resultado já é auto-contido (carga de 1 operador,
 // detalhe de 1 ticket); reaproveita o formatter de cada uma individualmente
@@ -764,6 +781,7 @@ const COMPARISON_FORMATTERS = {
   analisar_carga_operador: formatOperatorWorkload,
   buscar_ticket_por_numero: formatTicketDetail,
   analisar_atividade_cliente: formatClientActivity,
+  listar_tickets: formatAreaTicketCount,
 };
 
 export function formatComparison(toolName, dadosArray) {

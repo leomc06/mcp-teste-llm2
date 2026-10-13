@@ -9,6 +9,7 @@ import {
   extractDepartmentName,
   extractOperatorComparisonNames,
   extractClientComparisonNames,
+  extractAreaComparisonNames,
   extractOperatorName,
   extractOperatorWorkloadName,
   isOperadorContidoNoCliente,
@@ -1438,6 +1439,35 @@ test("comparação de clientes roteia pra 2 chamadas de analisar_atividade_clien
   assert.deepEqual(route.compare, [
     { toolName: "analisar_atividade_cliente", args: { cliente: "Cesar Augusto de Mello" } },
     { toolName: "analisar_atividade_cliente", args: { cliente: "Diego Mota Siqueira" } },
+  ]);
+});
+
+// Achado testando o lote de perguntas ao vivo — Médias 1, pergunta 14: "Quem
+// tem mais tickets: a área de Suporte ou a área WEB?" não tinha nenhum
+// suporte (isOperatorRankingIntent assumia cegamente que "quem tem mais" era
+// sobre operador, e extractAreaName capturava a string quebrada "Suporte ou
+// a área WEB" como um nome só).
+test("extractAreaComparisonNames extrai os 2 nomes de 'quem tem mais... área X ou área Y' ou 'área X tem mais que área Y'", () => {
+  assert.deepEqual(
+    extractAreaComparisonNames("Quem tem mais tickets: a área de Suporte ou a área WEB?"),
+    ["Suporte", "WEB"],
+  );
+  assert.deepEqual(
+    extractAreaComparisonNames("A área de Redes e Segurança tem mais chamados que a área de Governança?"),
+    ["Redes e Segurança", "Governança"],
+  );
+  // sem a palavra de área (AREA_SYNONYM_SOURCE) nos dois lados, não extrai
+  // (evita colidir com comparação de operador/cliente)
+  assert.equal(extractAreaComparisonNames("O Fábio atende mais chamados que o Cesar?"), undefined);
+});
+
+test("comparação de áreas roteia pra 2 chamadas de listar_tickets (Médias 1, pergunta 14)", () => {
+  const route = routeTicketQuestion("Quem tem mais tickets: a área de Suporte ou a área WEB?");
+
+  assert.deepEqual(route.toolNames, ["listar_tickets"]);
+  assert.deepEqual(route.compare, [
+    { toolName: "listar_tickets", args: { area: "Suporte", limite: 1 } },
+    { toolName: "listar_tickets", args: { area: "WEB", limite: 1 } },
   ]);
 });
 
