@@ -1026,6 +1026,23 @@ const PRIORITY_LEVEL_LITERAL_PATTERNS = [
   [/\balta\s+prioridade\b/, "Alta"],
 ];
 
+// Achado testando o lote de perguntas ao vivo: "tickets urgentes E de alta
+// prioridade" batia na mesma checagem de PRIORITY_LEVEL_LITERAL_PATTERNS
+// acima (2 níveis diferentes na mesma frase) e levava a mesma mensagem de
+// "contradição" de "tickets urgentes DE baixa prioridade" — mas os dois
+// casos não são iguais: com "de", o segundo nível modifica o MESMO ticket
+// (contradição de verdade, impossível). Com "e", a frase pede a UNIÃO de 2
+// categorias (tickets urgentes + tickets de alta prioridade), não descreve
+// 1 ticket com 2 prioridades. Esses padrões (com conector "e" de qualquer
+// lado) identificam esse segundo caso pra dar uma mensagem que explica a
+// limitação real (só filtra 1 prioridade por consulta), em vez de dizer que
+// o pedido é logicamente impossível quando não é.
+const PRIORITY_LEVEL_UNIAO_PATTERNS = [
+  [/\be\s+(?:de\s+)?baixa\s+prioridade\b|\bbaixa\s+prioridade\s+e\b/, "Baixa"],
+  [/\be\s+(?:de\s+)?media\s+prioridade\b|\bmedia\s+prioridade\s+e\b/, "Media"],
+  [/\be\s+(?:de\s+)?alta\s+prioridade\b|\balta\s+prioridade\s+e\b/, "Alta"],
+];
+
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
     /\bprioridade\s+(?:de\s+)?(.+)$/iu,
@@ -1760,11 +1777,22 @@ function routeTicketQuestionCore(pergunta) {
   // prioridade", "tickets encerrados que estão em atendimento") eram
   // resolvidas silenciosamente pra um dos dois lados, sem avisar da
   // contradição — confirmado ao vivo nos dois casos.
+  function detectaUniaoDePrioridades() {
+    if (prioridade === undefined) {
+      return false;
+    }
+
+    return PRIORITY_LEVEL_UNIAO_PATTERNS.some(
+      ([pattern, nivel]) => pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade),
+    );
+  }
+
   function detectaContradicao() {
     // Prioridade: o valor já resolvido (via "urgente"/"crítico" solto ou
     // "prioridade X" direto) conflita com uma menção explícita "<nível>
-    // prioridade" de nível diferente na mesma frase.
-    if (prioridade !== undefined) {
+    // prioridade" de nível diferente na mesma frase — mas só quando não é o
+    // caso de união (conector "e", tratado antes, à parte).
+    if (prioridade !== undefined && !detectaUniaoDePrioridades()) {
       for (const [pattern, nivel] of PRIORITY_LEVEL_LITERAL_PATTERNS) {
         if (pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade)) {
           return true;
@@ -1782,6 +1810,16 @@ function routeTicketQuestionCore(pergunta) {
     }
 
     return false;
+  }
+
+  if (detectaUniaoDePrioridades()) {
+    return createClarificationDecision(
+      "esclarecimento_uniao_prioridades",
+      "Essa pergunta parece pedir tickets de mais de uma prioridade ao mesmo tempo (ex.: \"urgentes e de alta prioridade\") — hoje só consigo filtrar por uma prioridade de cada vez, não várias juntas. Pode perguntar sobre cada prioridade separadamente?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com prioridade Urgente.\n"
+        + "- Tickets com prioridade Alta.",
+    );
   }
 
   if (detectaContradicao()) {

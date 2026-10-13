@@ -1668,6 +1668,23 @@ test("prioridades diferentes na mesma pergunta ('urgentes de baixa prioridade') 
   assert.equal(typeof outraCombinacao.clarification, "string");
 });
 
+// Achado testando o lote de perguntas ao vivo: diferente do caso acima (2
+// prioridades ligadas por "de", modificando o MESMO ticket — contradição de
+// verdade), "urgentes E de alta prioridade" pede a UNIÃO de 2 categorias, não
+// descreve 1 ticket com 2 prioridades. A mensagem de esclarecimento precisa
+// deixar isso claro (limitação de só filtrar 1 prioridade por consulta), em
+// vez de dizer que o pedido é logicamente impossível.
+test("prioridades diferentes ligadas por 'e' ('urgentes e de alta prioridade') pedem esclarecimento com mensagem de união, não de contradição", () => {
+  const uniao = routeTicketQuestion("Quantos tickets urgentes e de alta prioridade foram abertos essa semana?");
+  assert.deepEqual(uniao.toolNames, []);
+  assert.match(uniao.clarification, /mais de uma prioridade/u);
+  assert.doesNotMatch(uniao.clarification, /não podem ser verdade ao mesmo tempo/u);
+
+  const uniaoInvertida = routeTicketQuestion("Tickets de alta prioridade e urgentes.");
+  assert.deepEqual(uniaoInvertida.toolNames, []);
+  assert.match(uniaoInvertida.clarification, /mais de uma prioridade/u);
+});
+
 test("status literal (não fechado) junto com intenção de fechado ('encerrados que estão em atendimento') pede esclarecimento", () => {
   const route = routeTicketQuestion("Tickets encerrados que estão em atendimento.");
   assert.deepEqual(route.toolNames, []);
