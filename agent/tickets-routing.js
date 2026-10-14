@@ -174,9 +174,14 @@ const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cad
 // "quem tem menos" é respondido lendo o fim da lista; só não vale combinar
 // isso com um "top N" numérico (nesse caso o corte pegaria os N maiores, não
 // os N menores — limitação conhecida, não implementada).
+// "teve"/"tiveram" (passado simples de "ter", achado testando o lote de
+// perguntas ao vivo — Lote extra 3, pergunta 15): "tem" só cobre o presente;
+// "Qual cliente TEVE mais tickets nos últimos 30 dias?" não batia em nenhum
+// gatilho de ranking, e a frase inteira acabava capturada por engano como
+// nome de cliente ("teve mais tickets") por extractClientName.
 const RANKING_CUE_SOURCE =
-  "(?:(?:possu(?:i|em)|tem|abr(?:e|em|iu)|com)\\s+(?:mais|menos)(?!\\s+de\\b)"
-  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|abr(?:e|em|iu)))";
+  "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|com)\\s+(?:mais|menos)(?!\\s+de\\b)"
+  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)))";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
 // pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes).
@@ -623,6 +628,18 @@ const TRAILING_SINGLE_DATE_CLAUSE_PATTERN = new RegExp(
 // semana" virava area: "web atendeu" sem isso).
 const TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN = /\s+(?:trat(?:ou|aram)|atend(?:eu|eram))\s*$/iu;
 
+// "O operador Fulano TRATOU quantos tickets urgentes esse mês?" (achado
+// testando o lote de perguntas ao vivo — Lote extra 2, pergunta 15): mesma
+// ideia do pattern acima, mas o verbo vem seguido de mais pergunta
+// ("quantos tickets...") em vez de fechar a frase — sem isso, "operador
+// Fulano" capturava a cláusula inteira colada ("Fulano tratou quantos
+// tickets urgentes esse mês"), que nunca bate com nenhum nome real.
+// Vocabulário de verbo inline (não referencia OPERATOR_WORKLOAD_VERB_SOURCE,
+// declarado mais abaixo no arquivo) pelo mesmo motivo do pattern irmão
+// acima: ordem de declaração.
+const TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN =
+  /\s+(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))\s+quant[oa]s?\b.*$/iu;
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -653,6 +670,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
     .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
     .trim();
 
@@ -1273,6 +1291,18 @@ export function extractClientComparisonNames(value) {
   const text = String(value ?? "");
 
   const patterns = [
+    // "Compare a atividade do cliente X com a do cliente Y" (achado testando
+    // o lote de perguntas ao vivo — Lote extra 2, pergunta 13): mesmo jeito
+    // de pedir comparação já aceito pra carga de operador ("compare a carga
+    // do X com a do Y", ver extractOperatorComparisonNames), só que não
+    // existia versão pra atividade de cliente — a frase caía sem suporte
+    // nenhum em extractClientActivityName (pensado pra 1 cliente só), que
+    // capturava "Acme com a do cliente Beta" inteiro e, depois de uma
+    // limpeza de cláusula final que não esperava um 2º "cliente" no meio,
+    // sobrava só "Acme com a" — o "Beta" sumia por completo. Captura não
+    // gulosa (.+?) pra nome1 parar exatamente no conector "com"/"e", igual
+    // ao padrão irmão de carga de operador.
+    /\bcompar[ae]\s+a\s+atividade\s+(?:d[oa]\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:a\s+)?(?:atividade\s+)?(?:d[oa]\s+)?cliente\s+(.+)$/iu,
     /\bquem\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s*:?\s*(?:o\s+)?cliente\s+(.+?)\s+ou\s+(?:o\s+)?cliente\s+(.+)$/iu,
     /^(?:o\s+)?cliente\s+(.+?)\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?cliente\s+(.+)$/iu,
   ];
@@ -1707,6 +1737,35 @@ function routeTicketQuestionCore(pergunta) {
     ]);
   }
 
+  // "Compare a carga de tickets entre dois operadores à sua escolha." (achado
+  // testando o lote de perguntas ao vivo — Lote extra 3, pergunta 13): pedido
+  // de comparação sem nomear ninguém de verdade ("à sua escolha" pede pro
+  // sistema decidir sozinho) — nenhum extrator de comparação acima bate
+  // (não há nome nenhum pra capturar), e sem este guard a pergunta caía no
+  // fallback genérico de listagem sem filtro nenhum (despejando o banco
+  // inteiro), em vez de pedir honestamente pra nomear quem comparar — o
+  // sistema é 100% determinístico, não "escolhe" ninguém sozinho.
+  const mencionaComparacaoSemNome =
+    /\bcompar[ae]\b/.test(text)
+    && new RegExp(
+      // "es?" em vez de "s?" solto: USER_LOOKUP_NOUN_SOURCE tem "operador"
+      // (plural "operadorES", não "operadors") misturado com palavras que já
+      // terminam em vogal ("usuário"/"técnico", plural com só "s") — "es?"
+      // cobre as duas famílias ao mesmo tempo sem precisar separar.
+      `\\b(?:carga|atividade)\\b.*\\b(?:${USER_LOOKUP_NOUN_SOURCE}|${CLIENT_LOOKUP_NOUN_SOURCE}|${AREA_SYNONYM_SOURCE})(?:es|s)?\\b`,
+      "u",
+    ).test(text);
+
+  if (mencionaComparacaoSemNome) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_sem_nome",
+      "Pra comparar, preciso que você diga quem comparar — não escolho por conta própria."
+        + "\n\nExemplos:\n"
+        + "- Compare a carga do operador Fulano com a do operador Beltrano.\n"
+        + "- Compare a atividade do cliente X com a do cliente Y.",
+    );
+  }
+
   // "Qual a diferença entre os status/prioridades/áreas/departamentos X e
   // Y?" (achado testando o lote de perguntas ao vivo — Complexas 1,
   // pergunta 17): pergunta CONCEITUAL (pede pra EXPLICAR o que cada valor
@@ -1933,6 +1992,23 @@ function routeTicketQuestionCore(pergunta) {
 
     if (isSlaVencidoIntent) {
       const match = new RegExp(`\\b${OLDEST_PROXY_STATE_SOURCE}\\b`, "u").exec(text);
+
+      if (match && hasNegationBefore(text, match[0])) {
+        return true;
+      }
+    }
+
+    // "tirando os congelados" (achado testando o lote de perguntas ao vivo —
+    // Lote extra 3, pergunta 14): diferente de fechado (que tem complemento
+    // binário limpo — negar vira "aberto") e diferente de prioridade/status/
+    // área/operador (já cobertos acima via valorNormalizado), "congelado" não
+    // tem catálogo próprio nem complemento óbvio, e isCongeladoIntent reage
+    // só à palavra solta, sem olhar se tem negação antes — "tirando os
+    // congelados" virava o filtro POSITIVO de congelados (o oposto exato do
+    // pedido), em vez de recusar honestamente como as outras exclusões sem
+    // inversão segura.
+    if (isCongeladoIntent) {
+      const match = /\b(?:congelad\w*|travad\w*|paralisad\w*|emperrad\w*)\b/u.exec(text);
 
       if (match && hasNegationBefore(text, match[0])) {
         return true;
@@ -2172,7 +2248,17 @@ function routeTicketQuestionCore(pergunta) {
     const decision = createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
-      compactEntities({ area, departamento, operador, prioridade, limite, dataInicio, dataFim, ordem: ordemRanking }),
+      compactEntities({
+        area,
+        departamento,
+        operador,
+        prioridade,
+        situacao: situacaoInequivoca,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
 
     return decision;
@@ -2182,7 +2268,17 @@ function routeTicketQuestionCore(pergunta) {
     const decision = createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
-      compactEntities({ status, area, departamento, operador, limite, dataInicio, dataFim, ordem: ordemRanking }),
+      compactEntities({
+        status,
+        area,
+        departamento,
+        operador,
+        situacao: situacaoInequivoca,
+        limite,
+        dataInicio,
+        dataFim,
+        ordem: ordemRanking,
+      }),
     );
 
     return decision;
@@ -2197,6 +2293,7 @@ function routeTicketQuestionCore(pergunta) {
         departamento,
         operador,
         prioridade,
+        situacao: situacaoInequivoca,
         limite,
         dataInicio,
         dataFim,
@@ -2252,6 +2349,7 @@ function routeTicketQuestionCore(pergunta) {
         departamento,
         operador,
         prioridade,
+        situacao: situacaoInequivoca,
         limite,
         dataInicio,
         dataFim,

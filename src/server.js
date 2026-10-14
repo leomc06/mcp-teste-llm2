@@ -372,19 +372,20 @@ server.registerTool(
   "resumo_tickets_por_status",
   {
     title: "Resumo de tickets por status",
-    description: "Agrupa os tickets (chamados) por status e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por área, departamento, operador, prioridade, período de abertura (dataInicio/dataFim) e limite (top N).",
+    description: "Agrupa os tickets (chamados) por status e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
       ordem: z.enum(["asc", "desc"]).optional(),
     },
   },
-  async ({ area, departamento, operador, prioridade, dataInicio, dataFim, limite, ordem }) => {
+  async ({ area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
       const statuses = await ticketsApi.listStatuses();
 
@@ -415,10 +416,10 @@ server.registerTool(
         operator: operadorResolvido.id,
       };
 
-      // status é filtrável no servidor: sem prioridade nem período de
-      // abertura (só locais), dá pra contar cada status com chamadas
+      // status é filtrável no servidor: sem prioridade/situação nem período
+      // de abertura (só locais), dá pra contar cada status com chamadas
       // baratas e nunca truncar, mesmo em filtros com milhares de tickets.
-      if (prioridade === undefined && dataInicio === undefined && dataFim === undefined) {
+      if (prioridade === undefined && situacao === undefined && dataInicio === undefined && dataFim === undefined) {
         const { resultados: porStatus, falhas } = await contarPorCatalogo(statuses, (item) =>
           contarTicketsExato({ ...filtrosBase, status: item.id }),
         );
@@ -442,7 +443,7 @@ server.registerTool(
         const cancelados = porStatus.find((item) => item.chave === statusCancelado?.name)?.quantidade ?? 0;
 
         return success({
-          filtros: { area, departamento, operador, prioridade, dataInicio, dataFim },
+          filtros: { area, departamento, operador, prioridade, situacao, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
           ...(falhas > 0 ? { itensComErro: falhas } : {}),
@@ -455,9 +456,21 @@ server.registerTool(
       const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
         paraQuando: criarParaQuandoAbertura(dataInicio),
       });
-      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
-        (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
-      );
+      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
+        if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
+          return false;
+        }
+
+        if (situacao === "aberto") {
+          return isTicketAberto(ticket);
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
 
       const contagem = new Map();
       let abertos = 0;
@@ -475,7 +488,7 @@ server.registerTool(
       }
 
       return success({
-        filtros: { area, departamento, operador, prioridade, dataInicio, dataFim },
+        filtros: { area, departamento, operador, prioridade, situacao, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         abertos,
@@ -497,19 +510,20 @@ server.registerTool(
   "resumo_tickets_por_prioridade",
   {
     title: "Resumo de tickets por prioridade",
-    description: "Agrupa os tickets (chamados) por prioridade e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, área, departamento, operador, período de abertura (dataInicio/dataFim) e limite (top N).",
+    description: "Agrupa os tickets (chamados) por prioridade e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, área, departamento, operador, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
       ordem: z.enum(["asc", "desc"]).optional(),
     },
   },
-  async ({ status, area, departamento, operador, dataInicio, dataFim, limite, ordem }) => {
+  async ({ status, area, departamento, operador, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido] =
         await Promise.all([
@@ -543,7 +557,17 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim);
+      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
+        if (situacao === "aberto") {
+          return isTicketAberto(ticket);
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
 
       const contagem = new Map();
       let abertos = 0;
@@ -561,7 +585,7 @@ server.registerTool(
       }
 
       return success({
-        filtros: { status, area, departamento, operador, dataInicio, dataFim },
+        filtros: { status, area, departamento, operador, situacao, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         abertos,
@@ -583,19 +607,20 @@ server.registerTool(
   "resumo_tickets_por_area",
   {
     title: "Resumo de tickets por área",
-    description: "Agrupa os tickets (chamados) por área e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, departamento, operador, prioridade, período de abertura (dataInicio/dataFim) e limite (top N).",
+    description: "Agrupa os tickets (chamados) por área e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).optional(),
       ordem: z.enum(["asc", "desc"]).optional(),
     },
   },
-  async ({ status, departamento, operador, prioridade, dataInicio, dataFim, limite, ordem }) => {
+  async ({ status, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
       const [statuses, areas] = await Promise.all([
         ticketsApi.listStatuses(),
@@ -629,10 +654,10 @@ server.registerTool(
         operator: operadorResolvido.id,
       };
 
-      // área é filtrável no servidor: sem prioridade nem período de
-      // abertura (só locais), dá pra contar cada área com chamadas baratas
-      // e nunca truncar, mesmo em filtros com milhares de tickets.
-      if (prioridade === undefined && dataInicio === undefined && dataFim === undefined) {
+      // área é filtrável no servidor: sem prioridade/situação nem período
+      // de abertura (só locais), dá pra contar cada área com chamadas
+      // baratas e nunca truncar, mesmo em filtros com milhares de tickets.
+      if (prioridade === undefined && situacao === undefined && dataInicio === undefined && dataFim === undefined) {
         const [{ resultados: porArea, falhas }, { totalGeral, abertos, fechados }] = await Promise.all([
           contarPorCatalogo(areas, (item) => contarTicketsExato({ ...filtrosBase, area: item.id })),
           contarAbertosFechados(filtrosBase, statuses, statusResolvido.id),
@@ -648,7 +673,7 @@ server.registerTool(
         }
 
         return success({
-          filtros: { status, departamento, operador, prioridade, dataInicio, dataFim },
+          filtros: { status, departamento, operador, prioridade, situacao, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
           ...(falhas > 0 ? { itensComErro: falhas } : {}),
@@ -661,9 +686,21 @@ server.registerTool(
       const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
         paraQuando: criarParaQuandoAbertura(dataInicio),
       });
-      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
-        (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
-      );
+      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
+        if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
+          return false;
+        }
+
+        if (situacao === "aberto") {
+          return isTicketAberto(ticket);
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
 
       const contagem = new Map();
       let abertos = 0;
@@ -681,7 +718,7 @@ server.registerTool(
       }
 
       return success({
-        filtros: { status, departamento, operador, prioridade, dataInicio, dataFim },
+        filtros: { status, departamento, operador, prioridade, situacao, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         abertos,
@@ -822,7 +859,7 @@ server.registerTool(
   "resumo_tickets_por_departamento",
   {
     title: "Resumo de tickets por departamento",
-    description: "Conta os tickets (chamados) de cada departamento cadastrado e informa o percentual de cada um (ordenado do maior pro menor), com filtros opcionais por status, área, operador e limite (top N). Use para perguntas como \"quantos tickets existem em cada departamento?\". Não aceita prioridade nem período de abertura (custaria trocar N chamadas baratas por N buscas completas, já que o nome do departamento não vem na listagem em lote — só filtra no servidor).",
+    description: "Conta os tickets (chamados) de cada departamento cadastrado e informa o percentual de cada um (ordenado do maior pro menor), com filtros opcionais por status, área, operador e limite (top N). Use para perguntas como \"quantos tickets existem em cada departamento?\". Não aceita prioridade, situação (aberto/fechado) nem período de abertura (custaria trocar N chamadas baratas por N buscas completas, já que o nome do departamento não vem na listagem em lote — só filtra no servidor).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
@@ -892,20 +929,21 @@ server.registerTool(
   "resumo_tickets_por_cliente",
   {
     title: "Resumo de tickets por cliente",
-    description: "Agrupa os tickets (chamados) por cliente/solicitante (contact_name) e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador, prioridade e período de abertura (dataInicio/dataFim). Diferente das outras dimensões (status/área/prioridade/operador/departamento), cliente não é um catálogo pequeno e fechado, por isso o resumo já vem limitado aos 20 primeiros por padrão (ajustável via limite).",
+    description: "Agrupa os tickets (chamados) por cliente/solicitante (contact_name) e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Diferente das outras dimensões (status/área/prioridade/operador/departamento), cliente não é um catálogo pequeno e fechado, por isso o resumo já vem limitado aos 20 primeiros por padrão (ajustável via limite).",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
       operador: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
+      situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       limite: z.number().int().min(1).max(100).default(20),
       ordem: z.enum(["asc", "desc"]).optional(),
     },
   },
-  async ({ status, area, departamento, operador, prioridade, dataInicio, dataFim, limite, ordem }) => {
+  async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
       const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
         await Promise.all([
@@ -941,12 +979,24 @@ server.registerTool(
         { paraQuando: criarParaQuandoAbertura(dataInicio) },
       );
 
-      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter(
-        (ticket) => prioridade === undefined || ticket.priority === prioridadeResolvida.nomeCanonico,
-      );
+      const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
+        if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
+          return false;
+        }
+
+        if (situacao === "aberto") {
+          return isTicketAberto(ticket);
+        }
+
+        if (situacao === "fechado") {
+          return Boolean(ticket.closure_date);
+        }
+
+        return true;
+      });
 
       return success({
-        filtros: { status, area, departamento, operador, prioridade, dataInicio, dataFim },
+        filtros: { status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         resumo: rankearResumo(

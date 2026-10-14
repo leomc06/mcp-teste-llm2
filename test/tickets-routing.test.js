@@ -2881,3 +2881,114 @@ test("'sobre' sozinho não sequestra a pergunta pra busca textual quando o resí
   assert.deepEqual(buscaReal.toolNames, ["buscar_tickets_por_texto"]);
   assert.equal(buscaReal.entities.texto, "impressora com defeito");
 });
+
+// --- Lote extra 2 (testado ao vivo) ---
+
+test("'operador Fulano TRATOU quantos tickets...' não cola a cláusula de pergunta inteira no nome capturado", () => {
+  const route = routeTicketQuestion("O operador Roberto tratou quantos tickets urgentes esse mês?");
+  assert.equal(route.entities.operador, "Roberto");
+  assert.equal(route.entities.prioridade, "Urgente");
+
+  // Mesmo padrão com os outros verbos de carga (tem/atendeu/fechou)
+  assert.equal(
+    extractOperatorName("O operador Ana atendeu quantos chamados hoje?"),
+    "Ana",
+  );
+});
+
+test("'Compare a atividade do cliente X com a do cliente Y' é reconhecido como comparação de 2 clientes", () => {
+  const route = routeTicketQuestion("Compare a atividade do cliente Acme com a do cliente Beta.");
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Acme" } },
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Beta" } },
+  ]);
+
+  // Variante com conector "e" em vez de "com a"
+  assert.deepEqual(
+    extractClientComparisonNames("Compare a atividade do cliente Acme e do cliente Beta."),
+    ["Acme", "Beta"],
+  );
+
+  // Variante repetindo "atividade" dos dois lados
+  assert.deepEqual(
+    extractClientComparisonNames(
+      "Compare a atividade do cliente Cesar com a atividade do cliente Diego Mota Siqueira.",
+    ),
+    ["Cesar", "Diego Mota Siqueira"],
+  );
+
+  // Pergunta de 1 cliente só continua funcionando normalmente (não vira comparação)
+  const umSoCliente = routeTicketQuestion("O cliente Amanda Carolina abre muitos chamados?");
+  assert.equal(umSoCliente.compare, undefined);
+  assert.equal(umSoCliente.entities.cliente, "Amanda Carolina");
+});
+
+// --- Lote extra 3 (testado ao vivo) ---
+
+test("'tirando os congelados' recusa honestamente em vez de inverter o filtro (congelados vira o oposto do pedido)", () => {
+  const route = routeTicketQuestion(
+    "Quais os 5 tickets mais antigos ainda sem solução na área de Redes, tirando os congelados?",
+  );
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Mesma ideia com "sem contar"
+  const route2 = routeTicketQuestion("Tickets da área Suporte, sem contar os congelados.");
+  assert.deepEqual(route2.toolNames, []);
+
+  // Pergunta normal (sem negação) continua funcionando
+  const normal = routeTicketQuestion("Quais tickets estão congelados?");
+  assert.deepEqual(normal.toolNames, ["listar_tickets_congelados"]);
+});
+
+test("'cliente TEVE mais tickets' (passado de 'ter') é reconhecido como ranking, não vira nome de cliente", () => {
+  const route = routeTicketQuestion(
+    "Qual cliente teve mais tickets nos últimos 30 dias, e como está o SLA dele?",
+  );
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_cliente"]);
+  assert.equal(route.entities.cliente, undefined);
+  assert.equal(route.entities.dataInicio, "2026-09-14");
+});
+
+test("'compare ... entre dois operadores/clientes à sua escolha' (sem nomear ninguém) pede esclarecimento em vez de despejar tudo sem filtro", () => {
+  const semNomeOperador = routeTicketQuestion("Compare a carga de tickets entre dois operadores à sua escolha.");
+  assert.deepEqual(semNomeOperador.toolNames, []);
+  assert.equal(semNomeOperador.intent, "esclarecimento_comparacao_sem_nome");
+
+  const semNomeCliente = routeTicketQuestion("Compare a atividade entre dois clientes à sua escolha.");
+  assert.deepEqual(semNomeCliente.toolNames, []);
+
+  // Comparação com nomes reais continua funcionando normalmente
+  const comNome = routeTicketQuestion(
+    "Compare a carga do operador Fabio Gali com a do operador Rodrigo Fernandes.",
+  );
+  assert.equal(comNome.compare?.length, 2);
+});
+
+// Achado F13 (gap maior, confirmado testando o lote de perguntas ao vivo —
+// Lote extra 3, pergunta 9): "sem contar os fechados"/"tirando os fechados"
+// (via isNegatedClosed → situacaoInequivoca) chegava em resumo_tickets_por_
+// operador, mas era descartado em silêncio nos outros 4 resumos por
+// dimensão (status/prioridade/área/cliente) — o filtro de situação nunca
+// era passado adiante, então "quais clientes mais tickets, sem contar os
+// fechados" incluía TODOS os tickets (inclusive fechados) sem avisar nada.
+// resumo_tickets_por_departamento fica de fora de propósito (não tem
+// fallback de busca completa — "department" não vem na listagem em lote,
+// mesmo motivo já documentado pra prioridade/período nesse resumo).
+test("'situação' (aberto/fechado) chega nos resumos por status/prioridade/área/cliente, não só por operador", () => {
+  const porStatus = routeTicketQuestion("Resumo por status, sem contar os fechados.");
+  assert.equal(porStatus.toolNames[0], "resumo_tickets_por_status");
+  assert.equal(porStatus.entities.situacao, "aberto");
+
+  const porPrioridade = routeTicketQuestion("Quantos tickets por prioridade, sem contar os fechados?");
+  assert.equal(porPrioridade.toolNames[0], "resumo_tickets_por_prioridade");
+  assert.equal(porPrioridade.entities.situacao, "aberto");
+
+  const porArea = routeTicketQuestion("Resumo de tickets por área, sem contar os fechados.");
+  assert.equal(porArea.toolNames[0], "resumo_tickets_por_area");
+  assert.equal(porArea.entities.situacao, "aberto");
+
+  const porCliente = routeTicketQuestion("Quais os clientes com mais tickets, sem contar os fechados?");
+  assert.equal(porCliente.toolNames[0], "resumo_tickets_por_cliente");
+  assert.equal(porCliente.entities.situacao, "aberto");
+});
