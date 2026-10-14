@@ -719,10 +719,22 @@ const TICKET_CONTEXT_SOURCE = `(?:${TICKET_NOUN_SOURCE}s?|solicitacoes)`;
 // tickets caíam silenciosamente em listar_tickets sem filtro, devolvendo uma
 // listagem como se fosse resposta válida). Reaproveita os vocabulários já
 // declarados acima (fechado/aberto/vencido) em vez de duplicar sinônimos.
+// Deliberadamente SEM ${CLOSURE_VERB_SOURCE} (achado testando o lote de
+// perguntas ao vivo — Lote extra 1, pergunta 19, teste de falso positivo
+// proposital do usuário): "resolveu"/"concluiu"/"finalizou" são verbos
+// genéricos do dia a dia (mesmo raciocínio do item 7/achado B10, que já
+// existe para isFechadoIntent via hasTicketDomainContext) — "O time
+// resolveu adiar a manutenção programada" não tem nada a ver com tickets,
+// mas bastava a palavra "resolveu" pra esse portão aceitar a frase como "é
+// sobre tickets" e cair no fallback de listar_tickets SEM NENHUM FILTRO,
+// despejando o banco inteiro como se fosse resposta válida — falha pior
+// que simplesmente recusar. "Chamados solucionados"/"tickets resolvidos"
+// continuam funcionando normalmente: TICKET_CONTEXT_SOURCE (chamado/
+// ticket/...) já cobre esses casos independente do verbo de fechamento.
 const TICKET_DOMAIN_VOCABULARY_PATTERN = new RegExp(
   `\\b(?:${TICKET_CONTEXT_SOURCE}|resumo|historico|status|prioridade|urgente`
     + `|critic[oa]s?|${AREA_SYNONYM_SOURCE}s?|departamento|operador|responsavel|atendente|${CLIENT_LOOKUP_NOUN_SOURCE}`
-    + `|pendente|${CLOSURE_VERB_SOURCE}|${OPEN_STATE_ADJECTIVE_SOURCE}|${OLDEST_PROXY_STATE_SOURCE})\\b`,
+    + `|pendente|${OPEN_STATE_ADJECTIVE_SOURCE}|${OLDEST_PROXY_STATE_SOURCE})\\b`,
   "u",
 );
 
@@ -1009,10 +1021,26 @@ export function extractTicketStatusName(value) {
 const SEARCH_TEXT_CONNECTOR_SOURCE =
   "sobre|relacionad[oa]s?\\s+(?:a|com)|mencionando|mencion(?:a|am|e|em|ar)|contendo|falando\\s+(?:de|sobre)|que\\s+fal(?:a|am|e)\\s+(?:de|sobre)";
 
+// Depois que os outros recortes de cleanFreeText comem a frase inteira
+// (status/área/operador/data/etc.), pode sobrar só a palavra genérica do
+// domínio ("tickets"/"chamados"/...) — não é um termo de busca de verdade,
+// só o resíduo de "sobre OS TICKETS abertos pela Fulana" (achado testando o
+// lote de perguntas ao vivo — Lote extra 1, pergunta 21): "sobre" sozinho
+// sequestrava a intenção pra busca textual mesmo quando a frase já tinha
+// filtros reais (operador/situação), e o texto residual virava "tickets",
+// que nunca bate em nenhuma descrição real — resultado sempre vazio.
+const BARE_TICKET_NOUN_PATTERN = new RegExp(`^${TICKET_CONTEXT_SOURCE}$`, "iu");
+
 export function extractSearchText(value) {
-  return extractByPatterns(value, [
+  const texto = extractByPatterns(value, [
     new RegExp(`\\b(?:${SEARCH_TEXT_CONNECTOR_SOURCE})\\s+(.+)$`, "iu"),
   ]);
+
+  if (texto !== undefined && BARE_TICKET_NOUN_PATTERN.test(normalizeText(texto))) {
+    return undefined;
+  }
+
+  return texto;
 }
 
 // Nomes de status reais do sistema (confirmados ao vivo via
@@ -1606,6 +1634,15 @@ function routeTicketQuestionCore(pergunta) {
   const departamento = extractDepartmentName(pergunta);
   const operadorExtraido = extractOperatorName(pergunta);
   const cliente = extractClientName(pergunta);
+  // Todo branch abaixo que monta `entities` deve usar ESTA variável (não
+  // chamar extractOperatorName(pergunta) de novo) — achado testando o lote
+  // de perguntas ao vivo (Lote extra 1, pergunta 21): vários branches
+  // recomputavam o operador bruto direto, sem passar pelo guard abaixo, e
+  // "tickets abertos pela Wanilene Cassiano" (cliente, não operador) virava
+  // operador E cliente com o MESMO nome brigando no filtro (zerava o
+  // resultado) — mesma classe do bug "Daniel Guimarães DO LAGO" já
+  // documentado em isOperadorContidoNoCliente, só que não aplicado aqui
+  // ainda.
   const operador = isOperadorContidoNoCliente(operadorExtraido, cliente) ? undefined : operadorExtraido;
   const prioridade = extractPriorityIntent(pergunta);
   const limite = extractLimit(pergunta);
@@ -1779,6 +1816,12 @@ function routeTicketQuestionCore(pergunta) {
     /\bcongelad/.test(text)
     || /\btravad/.test(text)
     || /\bparalisad/.test(text)
+    // "emperrado" (achado testando o lote de perguntas ao vivo — Lote extra
+    // 1, pergunta 23): mesma família coloquial de "travado"/"parado" pra
+    // dizer que um ticket está sem progresso — sem esse sinônimo, "Tickets
+    // emperrados há muito tempo" não batia em nenhuma entidade e caía no
+    // fallback de listar_tickets sem filtro nenhum.
+    || /\bemperrad/.test(text)
     || /\b(?:sla|relogio|tempo|prazo)\s+(?:parad[oa]|pausad[oa]|suspens[oa])\b/.test(text);
 
   const isSemOperadorIntent =
@@ -2300,7 +2343,7 @@ function routeTicketQuestionCore(pergunta) {
       compactEntities({
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
@@ -2319,7 +2362,7 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
@@ -2411,6 +2454,15 @@ function routeTicketQuestionCore(pergunta) {
       || /\brecem\b/.test(text))
     && !/\bpor\s+ultimo\b/.test(text);
 
+  // "ultimo"/"ultima" SOZINHO (singular, sem número nenhum na frase) pede só
+  // 1 resultado — mesmo raciocínio do "primeiro" sozinho (isBareOldestOverallIntent
+  // acima), só que no sentido oposto (mais recente). Achado testando o lote de
+  // perguntas ao vivo (Lote extra 1, pergunta 16): "Qual foi o último ticket
+  // registrado no sistema?" não tinha nenhum número na frase, então caía no
+  // default do schema da tool (10) em vez da resposta única esperada.
+  const isBareMostRecentIntent =
+    isMostRecentIntent && /\bultim[oa]\b/.test(text) && !/\bultim[oa]s\b/.test(text);
+
   if (isOldestOverallIntent) {
     const numeroSolto = extractLooseNumberMatch(text);
 
@@ -2421,7 +2473,7 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
@@ -2445,13 +2497,13 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         situacao: situacaoInequivoca,
         dataInicio,
         dataFim,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : (isBareMostRecentIntent ? 1 : undefined)),
         pagina,
       }),
     );
@@ -2472,7 +2524,7 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         dataInicio,
@@ -2497,7 +2549,7 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
-        operador: extractOperatorName(pergunta),
+        operador,
         cliente,
         prioridade,
         dataInicio,

@@ -79,6 +79,19 @@ test("normalizeForMatch decodifica entidade HTML antes de comparar (mesma pessoa
   assert.equal(normalizeForMatch("F&aacute;bio"), normalizeForMatch("Fábio"));
 });
 
+// Achado testando o lote de perguntas ao vivo (Lote extra 1, pergunta 13):
+// um ticket tinha "Amanda Carolina da Silva Queiroz" e outro "Amanda
+// Carolina da Silva Queiroz." (ponto final a mais no cadastro, mesma
+// pessoa) — sem remover pontuação final antes de comparar, viravam 2 chaves
+// normalizadas diferentes, gerando uma ambiguidade falsa.
+test("normalizeForMatch remove pontuação final solta (mesma pessoa com e sem ponto final casam)", () => {
+  assert.equal(
+    normalizeForMatch("Amanda Carolina da Silva Queiroz"),
+    normalizeForMatch("Amanda Carolina da Silva Queiroz."),
+  );
+  assert.equal(normalizeForMatch("Fabio Gali,"), normalizeForMatch("Fabio Gali"));
+});
+
 test("resolveMetaId: sem nome informado, não filtra (id/nomeCanonico undefined, naoEncontrado false)", async () => {
   const result = await resolveMetaId(async () => [{ id: 1, name: "Suporte" }], undefined);
   assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: false });
@@ -317,6 +330,18 @@ test("resolveClienteFiltro: duas pessoas distintas batendo no mesmo substring é
   assert.equal(resultado.naoEncontrado, true);
   assert.equal(resultado.ambiguo, true);
   assert.deepEqual(resultado.candidatos, ["Ana Silva", "Ana Paula Reis"]);
+});
+
+test("resolveClienteFiltro: variante com ponto final a mais no cadastro da MESMA pessoa não é ambígua (Lote extra 1, pergunta 13)", () => {
+  const tickets = [
+    { contact_name: "Amanda Carolina da Silva Queiroz" },
+    { contact_name: "Amanda Carolina da Silva Queiroz." },
+  ];
+
+  const resultado = resolveClienteFiltro(tickets, "Amanda Carolina");
+
+  assert.equal(resultado.naoEncontrado, false);
+  assert.equal(resultado.ambiguo, undefined);
 });
 
 test("resolveClienteFiltro: variante de caixa/acento da MESMA pessoa não é ambígua", () => {

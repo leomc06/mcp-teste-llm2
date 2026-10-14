@@ -102,11 +102,20 @@ function decodeHtmlEntitiesForMatch(value) {
 
 // Casa nomes ignorando maiúscula/minúscula e acentuação (ex.: "supercomputacao"
 // == "Supercomputação"), já que quem pergunta raramente digita acentos.
+// Também remove pontuação final solta (achado testando o lote de perguntas
+// ao vivo — Lote extra 1, pergunta 13): "Amanda Carolina da Silva Queiroz"
+// e "Amanda Carolina da Silva Queiroz." (um ticket com ponto final a mais no
+// cadastro, mesma pessoa) viravam 2 chaves normalizadas diferentes, gerando
+// uma "ambiguidade" falsa em resolveClienteFiltro — mesma família de bug da
+// entidade HTML em contact_name, só que com ruído de pontuação em vez de
+// encoding.
 export function normalizeForMatch(value) {
   return decodeHtmlEntitiesForMatch(String(value ?? ""))
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .trim()
+    .replace(/[.,]+$/u, "")
     .trim();
 }
 

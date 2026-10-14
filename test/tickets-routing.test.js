@@ -1889,14 +1889,20 @@ test("'pelo'/'pela' é equivalente a 'por' na extração de operador por situaç
 // também dá alguma pista de que é sobre tickets (achado B10 da auditoria). ---
 
 test("verbo de fechamento sem nenhum contexto de ticket não vira falso positivo de listar_tickets_fechados", () => {
-  assert.deepEqual(
-    routeTicketQuestion("A diretoria resolveu trocar de fornecedor").toolNames,
-    ["listar_tickets"],
-  );
-  assert.deepEqual(
-    routeTicketQuestion("A empresa concluiu o projeto novo").toolNames,
-    ["listar_tickets"],
-  );
+  // Atualizado no lote "Lote extra 1" (pergunta 19, teste de falso positivo
+  // proposital do usuário): essas frases não têm nada a ver com tickets, mas
+  // antes caíam em listar_tickets SEM NENHUM FILTRO (despejando o banco
+  // inteiro) — pior que simplesmente recusar. Agora CLOSURE_VERB_SOURCE
+  // sozinho não basta mais pro portão de domínio aceitar a frase (ver
+  // TICKET_DOMAIN_VOCABULARY_PATTERN), então essas duas caem em
+  // fora_do_dominio, igual "qual é a previsão do tempo?" já fazia.
+  const diretoria = routeTicketQuestion("A diretoria resolveu trocar de fornecedor");
+  assert.deepEqual(diretoria.toolNames, []);
+  assert.equal(diretoria.intent, "fora_do_dominio");
+
+  const empresa = routeTicketQuestion("A empresa concluiu o projeto novo");
+  assert.deepEqual(empresa.toolNames, []);
+  assert.equal(empresa.intent, "fora_do_dominio");
 });
 
 test("verbo de fechamento com palavra do domínio (ticket/chamado/...) continua funcionando", () => {
@@ -2831,4 +2837,47 @@ test("pergunta 18: verbo 'fechou'/'fecharam' captura o operador, igual 'tem'/'tr
   assert.deepEqual(route.toolNames, ["listar_tickets_fechados"]);
   assert.equal(route.entities.operador, "Helpdesk");
   assert.equal(route.entities.departamento, "Coids");
+});
+
+// --- Lote extra 1 (testado ao vivo) ---
+
+test("'o último ticket' sozinho (singular, sem número) pede limite 1, não o default de 10", () => {
+  const route = routeTicketQuestion("Qual foi o último ticket registrado no sistema?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_mais_recentes"]);
+  assert.equal(route.entities.limite, 1);
+
+  // Plural com número continua funcionando normalmente (não regride)
+  const comNumero = routeTicketQuestion("Liste os últimos 5 tickets abertos.");
+  assert.equal(comNumero.entities.limite, 5);
+
+  // Plural sem número não força limite 1 (só o singular "último" faz isso)
+  const plural = routeTicketQuestion("Quais os últimos tickets abertos?");
+  assert.equal(plural.entities.limite, undefined);
+});
+
+test("verbo genérico de fechamento ('resolveu') sozinho, sem nenhuma outra palavra do domínio, agora recusa como fora do domínio em vez de despejar todos os tickets sem filtro", () => {
+  const route = routeTicketQuestion("O time resolveu adiar a manutenção programada.");
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(route.intent, "fora_do_dominio");
+
+  // "chamados solucionados" continua funcionando: tem a palavra do domínio
+  // (chamados) independente do verbo de fechamento.
+  assert.deepEqual(routeTicketQuestion("Chamados solucionados.").toolNames, ["listar_tickets_fechados"]);
+});
+
+test("'emperrado' é reconhecido como sinônimo de travado/parado/congelado", () => {
+  const route = routeTicketQuestion("Tickets emperrados há muito tempo.");
+  assert.deepEqual(route.toolNames, ["listar_tickets_congelados"]);
+});
+
+test("'sobre' sozinho não sequestra a pergunta pra busca textual quando o resíduo é só a palavra genérica do domínio (ticket/chamado)", () => {
+  const route = routeTicketQuestion("Me fala sobre os tickets abertos pela Wanilene Cassiano, por gentileza.");
+  assert.notDeepEqual(route.toolNames, ["buscar_tickets_por_texto"]);
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+
+  // Busca textual de verdade (termo específico, não a palavra genérica
+  // "ticket"/"chamado" sozinha) continua funcionando normalmente.
+  const buscaReal = routeTicketQuestion("Tickets sobre impressora com defeito.");
+  assert.deepEqual(buscaReal.toolNames, ["buscar_tickets_por_texto"]);
+  assert.equal(buscaReal.entities.texto, "impressora com defeito");
 });
