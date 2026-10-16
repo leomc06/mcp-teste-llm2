@@ -3175,3 +3175,41 @@ test("data explícita DD/MM/AAAA dentro de 'entre X e Y' não vira limite (dígi
   const routeComLimite = routeTicketQuestion("Top 5 tickets vencidos do departamento COIDS.");
   assert.equal(routeComLimite.entities.limite, 5);
 });
+
+test("'vencidos agrupados por X' não descarta o filtro de vencido em troca do resumo por dimensão", () => {
+  const porPrioridade = routeTicketQuestion(
+    "Quantos tickets vencidos tem o departamento Suporte, agrupados por prioridade?",
+  );
+  assert.deepEqual(porPrioridade.toolNames, ["listar_tickets_vencidos"]);
+  assert.equal(porPrioridade.entities.departamento, "Suporte");
+
+  const porStatus = routeTicketQuestion("Tickets vencidos agrupados por status.");
+  assert.deepEqual(porStatus.toolNames, ["listar_tickets_vencidos"]);
+
+  const porArea = routeTicketQuestion("Tickets vencidos agrupados por área.");
+  assert.deepEqual(porArea.toolNames, ["listar_tickets_vencidos"]);
+
+  const porOperador = routeTicketQuestion("Tickets vencidos agrupados por operador.");
+  assert.deepEqual(porOperador.toolNames, ["listar_tickets_vencidos"]);
+
+  const porDepartamento = routeTicketQuestion("Tickets vencidos agrupados por departamento.");
+  assert.deepEqual(porDepartamento.toolNames, ["listar_tickets_vencidos"]);
+
+  const porCliente = routeTicketQuestion("Tickets vencidos agrupados por cliente.");
+  assert.deepEqual(porCliente.toolNames, ["listar_tickets_vencidos"]);
+
+  // Pergunta de resumo normal (sem "vencido") continua indo pro resumo
+  const resumoNormal = routeTicketQuestion("Tickets agrupados por prioridade.");
+  assert.deepEqual(resumoNormal.toolNames, ["resumo_tickets_por_prioridade"]);
+});
+
+test("'e depois exporte em PDF/CSV' não vaza pro nome de área/departamento capturado", () => {
+  const route = routeTicketQuestion(
+    "Faça o resumo operacional dos tickets do departamento Suporte e depois exporte em PDF.",
+  );
+  assert.equal(route.entities.departamento, "Suporte");
+
+  const routeArea = routeTicketQuestion("Resumo de tickets por área e exporte em CSV.");
+  assert.equal(routeArea.entities.area, undefined);
+  assert.deepEqual(routeArea.toolNames, ["resumo_tickets_por_area"]);
+});

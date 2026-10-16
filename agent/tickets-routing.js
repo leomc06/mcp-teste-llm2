@@ -20,6 +20,16 @@ const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
 const TRAILING_PAGE_CLAUSE_PATTERN =
   /\s*\(?\s*p[áa]gina\s+\d+\)?\s*$/iu;
 
+// "e depois exporte em PDF/CSV" (achado testando o lote de perguntas ao
+// vivo): pedir um resumo/listagem e, na mesma frase, pedir pra exportar o
+// resultado (exportação em si é um botão só de frontend, ver web/app.js —
+// o backend não processa esse pedido) vazava a cláusula inteira pro nome
+// capturado (ex.: "resumo do departamento Suporte e depois exporte em
+// PDF" virava departamento: "Suporte e depois exporte em PDF", que nunca
+// resolve no catálogo real). Só poda a cláusula, não implementa exportação.
+const TRAILING_EXPORT_CLAUSE_PATTERN =
+  /\s+e\s+(?:depois\s+)?export(?:e|a|ar)\s+(?:isso\s+|o\s+resultado\s+)?em\s+(?:pdf|csv)\b.*$/iu;
+
 // Achado ao vivo testando continuação conversacional (agent/continuation.js):
 // mergeContinuation só concatena a pergunta anterior com a nova usando um
 // espaço, sem nenhuma pontuação entre as duas — "Resumo... na área Suporte"
@@ -685,6 +695,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_ULTIMOS_N_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
@@ -2383,7 +2394,17 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsStatusDimension) {
+  // "Quantos tickets vencidos tem o departamento Suporte, agrupados por
+  // prioridade?" (achado testando o lote de perguntas ao vivo): nenhuma tool
+  // resumo_tickets_por_* sabe filtrar por SLA vencido (só listar_tickets_
+  // vencidos faz a checagem real de SLA por ticket, ver comentário acima) —
+  // sem este guard, "agrupados por prioridade" vencia e a palavra "vencidos"
+  // era descartada em silêncio, devolvendo a contagem de TODOS os tickets
+  // por prioridade (não só os vencidos) como se fosse a resposta certa. Com
+  // o guard, a pergunta cai no branch de isSlaVencidoIntent mais abaixo —
+  // honesto mesmo sem conseguir agrupar (lista os vencidos de verdade, só
+  // não agrupados por prioridade).
+  if (hasResumoIntent && mentionsStatusDimension && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
@@ -2403,7 +2424,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsPriorityDimension) {
+  if (hasResumoIntent && mentionsPriorityDimension && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
@@ -2423,7 +2444,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsAreaDimension) {
+  if (hasResumoIntent && mentionsAreaDimension && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
@@ -2443,7 +2464,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent)) {
+  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent) && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
@@ -2464,7 +2485,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsDepartmentDimension) {
+  if (hasResumoIntent && mentionsDepartmentDimension && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
@@ -2479,7 +2500,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsClienteDimension) {
+  if (hasResumoIntent && mentionsClienteDimension && !isSlaVencidoIntent) {
     const decision = createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",
