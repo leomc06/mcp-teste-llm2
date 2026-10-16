@@ -53,8 +53,11 @@ const TRAILING_CONTINUATION_CLAUSE_PATTERN = new RegExp(`\\s+${CONTINUATION_MARK
 // "teve"/"tiveram" (passado de "ter") e "possuiu"/"possuíram" (passado de
 // "possuir") são a mesma ideia em outro tempo verbal (ex.: "a área WEB teve
 // no mês de agosto?") — sem eles, só a forma no presente era podada.
+// "existe(m)" (achado testando o padrão novo "tickets de <nome>" acima):
+// "Quantos chamados de Ana existem?" sobrava "Ana existem" como nome, pelo
+// mesmo motivo — "existem" nunca tinha entrado nessa lista de verbos soltos.
 const BARE_HAVE_VERB_SOURCE =
-  `(?:tem|teve|tiveram|possui|possuiu|possu[íi]ram|${ESTAR_SOURCE})`;
+  `(?:tem|teve|tiveram|possui|possuiu|possu[íi]ram|existe|existem|${ESTAR_SOURCE})`;
 const TRAILING_BARE_VERB_PATTERN = new RegExp(
   `\\s+${BARE_HAVE_VERB_SOURCE}(?:\\s+(?:no\\s+total|ao\\s+todo))?\\s*$`,
   "iu",
@@ -196,12 +199,21 @@ const RANKING_CUE_SOURCE =
   + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)))";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
-// pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes).
+// pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes) ou
+// por "<dimensão>s diferentes" (achado testando o lote de perguntas ao
+// vivo: "Quantos solicitantes diferentes abriram chamado esse mês?" caía
+// no listar_tickets genérico — devolvendo a listagem inteira de tickets —
+// em vez de resumo_tickets_por_cliente, que já devolve exatamente o que
+// "diferentes" pede: nomes distintos, cada um com sua contagem, não uma
+// lista de tickets crua). Não colide com a negação "diferente(s) de X"
+// (NEGATION_PREFIX_SOURCE) porque essa exige "de" logo depois — aqui o
+// \b fecha o match bem em "diferentes", sem nada depois.
 function mentionsDimension(text, dimensionSource) {
   const connector = new RegExp(`\\b${DIMENSION_CONNECTOR_SOURCE}\\s+(?:${dimensionSource})\\b`);
   const ranking = new RegExp(`\\b(?:${dimensionSource})\\b.*\\b${RANKING_CUE_SOURCE}\\b`);
+  const distinctCount = new RegExp(`\\b(?:${dimensionSource})\\s+diferentes\\b`);
 
-  return connector.test(text) || ranking.test(text);
+  return connector.test(text) || ranking.test(text) || distinctCount.test(text);
 }
 
 const ISO_DATE_SOURCE = "\\d{4}-\\d{2}-\\d{2}";
@@ -740,7 +752,14 @@ function extractByPatterns(value, patterns) {
 // "ordem" pluraliza irregular (ordem -&gt; ordens, "m" vira "ns", não é só
 // "+s") — mesmo cuidado já tomado com "solicitação/solicitações" logo
 // abaixo (TICKET_CONTEXT_SOURCE), erro que quase se repetiu aqui.
-const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao|(?:ordem|ordens)\\s+de\\s+servico)";
+// Tolerante a acento ([êe]/[çc]/[ãa]) de propósito: quase todo uso desta
+// constante é contra texto já normalizado (normalizeText, sem acento), onde
+// essa tolerância é um no-op inofensivo — mas extractOperatorName (achado
+// testando o lote de perguntas ao vivo, padrão "tickets DE <nome>" abaixo)
+// usa contra o texto CRU, onde "serviço"/"ocorrência"/"solicitação" mantêm
+// o acento de verdade, e sem essa tolerância o padrão nunca bateria.
+const TICKET_NOUN_SOURCE =
+  "(?:ticket|chamado|atendimento|ocorr[êe]ncia|solicita[çc][ãa]o|(?:ordem|ordens)\\s+de\\s+servi[çc]o)";
 
 // Referência vaga a um ticket específico ("Aquele ticket lá, você sabe
 // qual") produz entities:{} — exatamente a mesma forma de "Liste os
@@ -1020,6 +1039,24 @@ export function extractOperatorName(value) {
     ),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
     new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    // "Quais os tickets de Vanessa Ventura?" (achado testando o lote de
+    // perguntas ao vivo): "de" sem contração com artigo ("do"/"da") é tão
+    // comum quanto elas na fala natural, mas só o padrão "do/da X" acima
+    // existia — a pergunta inteira caía sem filtro nenhum, devolvendo a
+    // listagem completa do sistema como se "de Vanessa Ventura" nunca
+    // tivesse sido dito. Diferente do padrão "do/da" (que vale em qualquer
+    // ponto da frase), este é ancorado logo depois do substantivo de ticket
+    // — "de" sozinho é genérico demais pra soltar em qualquer lugar (bate
+    // em "resumo DE tickets", "tickets DE hoje/ontem/março", datas ISO
+    // etc.), então a mesma lista de exclusão de palavras de domínio
+    // (OPERATOR_DO_DA_EXCLUSION_SOURCE) mais dia relativo/nome de mês/dígito
+    // cobre os casos mais prováveis de falso positivo.
+    new RegExp(
+      `\\b${TICKET_NOUN_SOURCE}s?\\s+de\\s+`
+        + `(?!hoje\\b)(?!ontem\\b)(?!amanh[ãa]\\b)(?!\\d)(?!(?:${MONTH_NAME_SOURCE})\\b)`
+        + `(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`,
+      "iu",
+    ),
     // "Quantos tickets o Fábio Gali tem em aberto?" (achado testando o
     // lote de perguntas ao vivo): mesmo padrão de extractOperatorWorkloadName
     // ("quantos tickets <nome> tem"), mas SEM exigir que "tem" feche a
@@ -1105,9 +1142,28 @@ export function extractClientActivityName(value) {
   ]);
 }
 
+// Marcadores de negação não suportada ("diferente de"/"não"/"exceto"/
+// "tirando"/"sem contar") — module-level (não só dentro de
+// routeTicketQuestionCore, onde foi criada originalmente) porque
+// extractTicketStatusName logo abaixo também precisa dela: "status
+// DIFERENTE DE Encerrada" sem essa exclusão capturava "diferente de" (ou só
+// "não", no caso de "status NÃO Encerrada") como se fosse valor de catálogo
+// — a intenção de aberto/fechado já era resolvida certo em outro lugar
+// (isNegatedClosed, binário, sem ambiguidade), mas esse valor-lixo
+// continuava sobrando em entities.status, quebrando a consulta com um
+// "status 'diferente de' não encontrado" mesmo a tool certa já tendo sido
+// escolhida. "n[ãa]o" (não só "nao") de propósito, mesmo motivo do acento
+// tolerante em TICKET_NOUN_SOURCE acima: contra texto cru, "não" mantém o
+// til — sem essa tolerância, "status NÃO Encerrada" ainda vazava "não" (com
+// acento) como valor de status, já que "nao" sem acento nunca batia.
+const NEGATION_MARKER_SOURCE = "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|sem\\s+contar)";
+
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
-    new RegExp(`\\bstatus\\s+(?:de\\s+)?(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
+    new RegExp(
+      `\\bstatus\\s+(?:de\\s+)?(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      "iu",
+    ),
   ]);
 }
 
@@ -2092,7 +2148,8 @@ function routeTicketQuestionCore(pergunta) {
   // que "cancelado" não é um valor de 2 opções só (status literal tem N
   // valores possíveis), então aqui o tratamento certo é o esclarecimento,
   // não inverter.
-  const NEGATION_MARKER_SOURCE = "(?:nao|excet[oa]|diferentes?\\s+de|tirando|sem\\s+contar)";
+  // NEGATION_MARKER_SOURCE agora é module-level (ver extractTicketStatusName
+  // acima) — reaproveitada aqui, não redeclarada.
   const NEGATION_MARKER_PATTERN = new RegExp(`\\b${NEGATION_MARKER_SOURCE}\\b`, "u");
   const LEADING_NEGATION_PATTERN = new RegExp(`^${NEGATION_MARKER_SOURCE}\\b`, "iu");
 

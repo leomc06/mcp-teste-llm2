@@ -3213,3 +3213,72 @@ test("'e depois exporte em PDF/CSV' não vaza pro nome de área/departamento cap
   assert.equal(routeArea.entities.area, undefined);
   assert.deepEqual(routeArea.toolNames, ["resumo_tickets_por_area"]);
 });
+
+test("'tickets de <nome>' (sem contração do/da) extrai o operador normalmente", () => {
+  const comEspacoDuplo = routeTicketQuestion("Quais os tickets de  Vanessa Ventura?");
+  assert.equal(comEspacoDuplo.entities.operador, "Vanessa Ventura");
+
+  const comEspacoSimples = routeTicketQuestion("Quais os tickets de Vanessa Ventura?");
+  assert.equal(comEspacoSimples.entities.operador, "Vanessa Ventura");
+
+  const comChamados = routeTicketQuestion("Chamados de Rodrigo Fernandes.");
+  assert.equal(comChamados.entities.operador, "Rodrigo Fernandes");
+
+  // "ordem(ns) de serviço" com acento de verdade (texto cru, não
+  // normalizado) também funciona, encadeado com um segundo "de <nome>"
+  const comOs = routeTicketQuestion("Ordens de serviço de Carlos Eduardo.");
+  assert.equal(comOs.entities.operador, "Carlos Eduardo");
+
+  // Verbo solto "existem" no fim não vaza pro nome capturado
+  const comVerboSolto = routeTicketQuestion("Quantos chamados de Ana existem?");
+  assert.equal(comVerboSolto.entities.operador, "Ana");
+
+  // Regressão negativa: "de" antes de outras dimensões/datas continua sem
+  // capturar operador nenhum (controles já cobertos antes desta mudança)
+  assert.equal(routeTicketQuestion("Tickets de março.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de hoje.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de ontem.").entities.operador, undefined);
+  assert.equal(
+    routeTicketQuestion("Tickets de 2026-01-01 a 2026-01-31.").entities.operador,
+    undefined,
+  );
+  assert.equal(routeTicketQuestion("Tickets de prioridade alta.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de status Cancelada.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de área Suporte.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de cliente Acme.").entities.operador, undefined);
+  assert.equal(routeTicketQuestion("Tickets de cliente Acme.").entities.cliente, "Acme");
+  assert.equal(
+    routeTicketQuestion("Resumo de tickets por área.").entities.operador,
+    undefined,
+  );
+});
+
+test("'<dimensão>s diferentes' vira resumo por dimensão (nomes com contagem), não listagem crua de tickets", () => {
+  const porCliente = routeTicketQuestion("Quantos solicitantes diferentes abriram chamado esse mês?");
+  assert.deepEqual(porCliente.toolNames, ["resumo_tickets_por_cliente"]);
+
+  const porOperador = routeTicketQuestion("Quantos operadores diferentes atenderam chamados esse mês?");
+  assert.deepEqual(porOperador.toolNames, ["resumo_tickets_por_operador"]);
+
+  const porArea = routeTicketQuestion("Quantas áreas diferentes tiveram chamados essa semana?");
+  assert.deepEqual(porArea.toolNames, ["resumo_tickets_por_area"]);
+
+  // Não colide com a negação "diferente DE X" (singular, exige "de" depois)
+  const negacao = routeTicketQuestion("Tickets com prioridade diferente de Urgente.");
+  assert.equal(negacao.intent, "esclarecimento_negacao");
+});
+
+test("'status diferente de X'/'status não X' não deixa valor-lixo em entities.status (já resolvido como aberto)", () => {
+  const diferenteDe = routeTicketQuestion("Tickets com status diferente de Encerrada.");
+  assert.deepEqual(diferenteDe.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(diferenteDe.entities.status, undefined);
+
+  // "não" com acento (texto cru, não normalizado) também não vaza
+  const negado = routeTicketQuestion("Tickets com status não Encerrada.");
+  assert.deepEqual(negado.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(negado.entities.status, undefined);
+
+  // Status literal de verdade continua funcionando normalmente
+  const statusReal = routeTicketQuestion("Quais tickets estão com status Em atendimento?");
+  assert.equal(statusReal.entities.status, "Em atendimento");
+});
