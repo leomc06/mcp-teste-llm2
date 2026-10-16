@@ -740,11 +740,12 @@ server.registerTool(
   "resumo_tickets_por_operador",
   {
     title: "Resumo de tickets por operador",
-    description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N). Use para perguntas como \"quais operadores têm mais tickets?\", \"quantos tickets cada operador possui?\" ou \"quem tem mais chamados em aberto?\".",
+    description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador (restringe a 1 só, útil numa continuação depois do resumo geral), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N). Use para perguntas como \"quais operadores têm mais tickets?\", \"quantos tickets cada operador possui?\" ou \"quem tem mais chamados em aberto?\".",
     inputSchema: {
       status: z.string().trim().min(1).max(100).optional(),
       area: z.string().trim().min(1).max(100).optional(),
       departamento: z.string().trim().min(1).max(100).optional(),
+      operador: z.string().trim().min(1).max(100).optional(),
       prioridade: z.string().trim().min(1).max(100).optional(),
       situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
@@ -753,21 +754,24 @@ server.registerTool(
       ordem: z.enum(["asc", "desc"]).optional(),
     },
   },
-  async ({ status, area, departamento, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
+  async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
       const usuarios = await ticketsApi.listUsers();
 
-      const [statusResolvido, areaResolvida, departamentoResolvido, prioridadeResolvida] = await Promise.all([
-        resolveMetaId(() => ticketsApi.listStatuses(), status),
-        resolveMetaId(() => ticketsApi.listAreas(), area),
-        resolveMetaId(() => ticketsApi.listDepartments(), departamento),
-        resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
-      ]);
+      const [statusResolvido, areaResolvida, departamentoResolvido, operadorResolvido, prioridadeResolvida] =
+        await Promise.all([
+          resolveMetaId(() => ticketsApi.listStatuses(), status),
+          resolveMetaId(() => ticketsApi.listAreas(), area),
+          resolveMetaId(() => ticketsApi.listDepartments(), departamento),
+          resolveMetaId(() => Promise.resolve(usuarios), operador),
+          resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
+        ]);
 
       const naoEncontrados = [
         describeNaoEncontrado("status", status, statusResolvido),
         describeNaoEncontrado("área", area, areaResolvida),
         describeNaoEncontrado("departamento", departamento, departamentoResolvido),
+        describeNaoEncontrado("operador", operador, operadorResolvido),
         describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
@@ -787,7 +791,18 @@ server.registerTool(
       // operador é filtrável no servidor: sem prioridade/situação/período de
       // abertura (só locais), dá pra contar cada operador com chamadas
       // baratas e nunca truncar, mesmo em filtros com milhares de tickets.
-      if (prioridade === undefined && situacao === undefined && dataInicio === undefined && dataFim === undefined) {
+      // Também exige nenhum operador específico já escolhido (achado
+      // testando ao vivo a continuação conversacional — item F: "Resumo por
+      // operador" + "e desses, só os do Fábio?" — nesse caso o caminho
+      // rápido abaixo, que itera TODO o catálogo, não faz sentido; cai no
+      // caminho de baixo, que já filtra 1 operador só no servidor).
+      if (
+        operador === undefined
+        && prioridade === undefined
+        && situacao === undefined
+        && dataInicio === undefined
+        && dataFim === undefined
+      ) {
         const { resultados: porOperador, falhas } = await contarPorCatalogo(usuarios, (item) =>
           contarTicketsExato({ ...filtrosBase, operator: item.id }),
         );
@@ -803,7 +818,7 @@ server.registerTool(
         }
 
         return success({
-          filtros: { status, area, departamento, prioridade, situacao, dataInicio, dataFim },
+          filtros: { status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim },
           total_tickets: totalGeral,
           truncado: false,
           ...(falhas > 0 ? { itensComErro: falhas } : {}),
@@ -811,9 +826,10 @@ server.registerTool(
         });
       }
 
-      const { tickets: todos, truncado } = await fetchAllTicketsSafe(filtrosBase, {
-        paraQuando: criarParaQuandoAbertura(dataInicio),
-      });
+      const { tickets: todos, truncado } = await fetchAllTicketsSafe(
+        { ...filtrosBase, operator: operadorResolvido.id },
+        { paraQuando: criarParaQuandoAbertura(dataInicio) },
+      );
 
       const tickets = filtrarPorPeriodo(todos, dataInicio, dataFim).filter((ticket) => {
         if (prioridade !== undefined && ticket.priority !== prioridadeResolvida.nomeCanonico) {
@@ -839,7 +855,7 @@ server.registerTool(
       }
 
       return success({
-        filtros: { status, area, departamento, prioridade, situacao, dataInicio, dataFim },
+        filtros: { status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim },
         total_tickets: tickets.length,
         truncado,
         resumo: rankearResumo(
@@ -1025,7 +1041,7 @@ server.registerTool(
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).default(50),
       pagina: z.number().int().min(1).default(1),
     },
   },
@@ -1529,7 +1545,7 @@ server.registerTool(
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).default(50),
       pagina: z.number().int().min(1).default(1),
     },
   },
@@ -1618,7 +1634,7 @@ server.registerTool(
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).default(50),
       pagina: z.number().int().min(1).default(1),
     },
   },
@@ -1707,7 +1723,7 @@ server.registerTool(
       prioridade: z.string().trim().min(1).max(100).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).default(50),
       pagina: z.number().int().min(1).default(1),
     },
   },
@@ -1799,7 +1815,7 @@ server.registerTool(
       situacao: z.enum(["aberto", "fechado"]).optional(),
       dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
       dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
+      limite: z.number().int().min(1).max(100).default(50),
       pagina: z.number().int().min(1).default(1),
     },
   },

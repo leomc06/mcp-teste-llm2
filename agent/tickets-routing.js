@@ -30,8 +30,10 @@ const TRAILING_PAGE_CLAUSE_PATTERN =
 // agent/continuation.js, repetida aqui de propósito (routing-utils.js não
 // importa de agent/continuation.js nem vice-versa, pra não criar uma
 // dependência cruzada só por isso).
-const TRAILING_CONTINUATION_CLAUSE_PATTERN =
-  /\s+(?:e\s+desses|desses|e\s+os|s[óo]\s+os|apenas\s+os|e\s+quanto\s+a(?:os?)?)\b.*$/iu;
+const CONTINUATION_MARKER_SOURCE =
+  "(?:e\\s+desses|desses|e\\s+os|e\\s+as|s[óo]\\s+os|s[óo]\\s+as|apenas\\s+os|apenas\\s+as|e\\s+quanto\\s+a(?:os?)?)";
+
+const TRAILING_CONTINUATION_CLAUSE_PATTERN = new RegExp(`\\s+${CONTINUATION_MARKER_SOURCE}\\b.*$`, "iu");
 
 // Verbo solto no fim da captura, sem cláusula depois (ex.: "...o operador
 // Cesar tem?" → o "tem" sobra porque não há um "no/na/do/da <dimensão>"
@@ -337,7 +339,11 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(segunda), dataFim: formatIsoDate(sexta) };
   }
 
-  if (/\bmes\s+passado\b/.test(text)) {
+  // "último mês" (achado testando o lote de perguntas ao vivo): mesma ideia
+  // de "última semana" já aceita acima como sinônimo de "semana passada" —
+  // faltava o equivalente pra mês ("mês passado" sozinho não cobria essa
+  // forma, bem comum, de falar).
+  if (/\bmes\s+passado\b/.test(text) || /\bultimo\s+mes\b/.test(text)) {
     const primeiroDiaMesAtual = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const ultimoDiaMesPassado = new Date(primeiroDiaMesAtual);
     ultimoDiaMesPassado.setDate(ultimoDiaMesPassado.getDate() - 1);
@@ -356,7 +362,8 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(primeiroDia), dataFim: formatIsoDate(ultimoDia) };
   }
 
-  if (/\bano\s+passado\b/.test(text)) {
+  // "último ano" — mesmo raciocínio de "último mês"/"última semana" acima.
+  if (/\bano\s+passado\b/.test(text) || /\bultimo\s+ano\b/.test(text)) {
     const anoPassado = agora.getFullYear() - 1;
 
     return {
@@ -548,8 +555,8 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
-    + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado"
-    + "|(?:esse|este)\\s+ano|ano\\s+passado)\\b.*$",
+    + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|[úu]ltimo\\s+m[êe]s"
+    + "|(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano)\\b.*$",
   "iu",
 );
 
@@ -610,6 +617,16 @@ const TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN = new RegExp(
   `\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\s+muito[s]?\\s+(?:tickets?|chamados?|atendimentos?)\\b.*$`,
   "iu",
 );
+
+// "cliente X ABRIU no último mês" (achado testando o lote de perguntas ao
+// vivo): mesmo verbo ativo de criação do padrão acima, mas sem "muito(s)
+// chamados" depois — sozinho no fim da captura, uma vez que a cláusula de
+// data relativa já foi cortada (por isso entra DEPOIS de
+// TRAILING_RELATIVE_DATE_CLAUSE_PATTERN/TRAILING_DATE_CLAUSE_PATTERN na
+// cadeia abaixo). Sem isso, "cliente Acme abriu no último mês" virava
+// cliente: "Acme abriu" (verbo colado), que nunca bate com nenhum
+// contact_name real.
+const TRAILING_BARE_CREATION_VERB_PATTERN = new RegExp(`\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\s*$`, "iu");
 
 // "equipe X tratou NO DIA DD/MM/AAAA" — TRAILING_DATE_CLAUSE_PATTERN só
 // cobre data absoluta em intervalo ("entre/desde/até"), não uma data única
@@ -672,6 +689,11 @@ function cleanFreeText(value) {
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
     .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
+    // Por último de propósito: só depois que uma cláusula de data já foi
+    // cortada (ex.: "no último mês" por TRAILING_RELATIVE_DATE_CLAUSE_
+    // PATTERN acima) é que o verbo de criação fica exposto sozinho no fim
+    // ("Acme abriu" → "Acme").
+    .replace(TRAILING_BARE_CREATION_VERB_PATTERN, "")
     .trim();
 
   return text.length >= 1 && text.length <= 100 ? text : undefined;
@@ -708,6 +730,27 @@ function extractByPatterns(value, patterns) {
 // "+s") — mesmo cuidado já tomado com "solicitação/solicitações" logo
 // abaixo (TICKET_CONTEXT_SOURCE), erro que quase se repetiu aqui.
 const TICKET_NOUN_SOURCE = "(?:ticket|chamado|atendimento|ocorrencia|solicitacao|(?:ordem|ordens)\\s+de\\s+servico)";
+
+// Referência vaga a um ticket específico ("Aquele ticket lá, você sabe
+// qual") produz entities:{} — exatamente a mesma forma de "Liste os
+// tickets" (pedido deliberado de listagem sem filtro nenhum). As duas não
+// dão pra distinguir só pela ausência de entidade; o sinal extra aqui é a
+// combinação demonstrativo ("aquele"/"esse"/"aquela"/"essa") + substantivo
+// de ticket + uma pista de incerteza do próprio usuário (ele mesmo admite
+// não saber qual é). Sem essa combinação completa, uma frase comum como
+// "Esse ticket está aberto?" não deve disparar — "esse ticket" sozinho é
+// só uma referência demonstrativa normal, não necessariamente vaga.
+// `text`, aqui e no uso abaixo, já passou por normalizeText (sem acento,
+// sem pontuação) — por isso o acento nunca aparece e não precisa de
+// fronteira de frase entre as duas partes do padrão (pontuação já virou
+// espaço).
+const VAGUE_TICKET_UNCERTAINTY_SOURCE =
+  "(?:(?:voce\\s+)?sabe\\s+qual|nao\\s+sei\\s+qual|nao\\s+lembro\\s+qual|qual\\s+(?:era|e)\\s+mesmo)";
+const VAGUE_TICKET_REFERENCE_PATTERN = new RegExp(
+  `\\b(?:aquele|aquela|esse|essa|esses|essas)\\s+${TICKET_NOUN_SOURCE}\\b.*${VAGUE_TICKET_UNCERTAINTY_SOURCE}`
+    + `|${VAGUE_TICKET_UNCERTAINTY_SOURCE}.*\\b${TICKET_NOUN_SOURCE}\\b`,
+  "u",
+);
 
 // "área" tinha 3 listas de sinônimo quase-iguais, cada uma num lugar
 // diferente do arquivo (extractAreaName, mentionsDimension pro resumo, e o
@@ -826,22 +869,42 @@ export function extractTicketComparisonNumbers(value) {
 // MAIS abriu chamados", "operador com MENOS tickets") sejam lidas como um
 // nome de filtro literal ("área 'mais tem tickets'") — nenhum nome real de
 // área/departamento/operador/cliente começa com "mais" ou "menos".
+// "(?!${CONTINUATION_MARKER_SOURCE}\b)" logo depois (achado testando ao vivo
+// a continuação conversacional, item F: "Resumo de tickets por operador" +
+// "e desses, só os do Fábio?"): a palavra "operador"/"área"/"cliente"/etc.
+// também aparece sozinha como CONECTOR de dimensão ("por operador", sem nome
+// nenhum), e nesse caso ela fica diretamente colada ao marcador de
+// continuação mesclado pelo F ("operador E DESSES, só os do Fábio"). Sem
+// essa exclusão, o 1º pattern (achando a palavra "operador") vencia e
+// engolia o marcador de continuação inteiro como se fosse o nome, e o nome
+// de verdade ("Fábio", mais adiante na frase, via "do Fábio") nunca era
+// tentado pelos padrões seguintes — o filtro inteiro sumia em silêncio.
+// "(?!${RANKING_CUE_SOURCE})" (achado corrigindo o item acima, regressão
+// pega por um teste já existente): "(?!mais|menos)" só bloqueia quando
+// "mais"/"menos" vem IMEDIATAMENTE depois do substantivo — "Qual operador
+// TEM MENOS tickets?" tem um verbo no meio ("tem") antes do "menos", e por
+// isso não era bloqueado; capturava "tem menos tickets" como se fosse nome.
+// RANKING_CUE_SOURCE já reconhece essa forma com verbo no meio (usado em
+// mentionsDimension/hasResumoIntent), reaproveitado aqui pelo mesmo motivo.
 export function extractAreaName(value) {
   return extractByPatterns(value, [
     // "categoria"/"equipe" são sinônimos comuns de "área" fora do
     // vocabulário interno do sistema (quem pergunta não necessariamente sabe
     // que a API chama isso de "área") — resolveMetaId falha graciosamente se
     // não for um nome de área real, então o risco de falso positivo é baixo.
-    new RegExp(`(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(.+)$`, "iu"),
+    new RegExp(
+      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      "iu",
+    ),
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
     // sem usar a palavra "área" — mesmo raciocínio acima.
-    /\bpessoal\s+d[ao]\s+(?!(?:mais|menos)\b)(.+)$/iu,
+    new RegExp(`\\bpessoal\\s+d[ao]\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
   ]);
 }
 
 export function extractDepartmentName(value) {
   return extractByPatterns(value, [
-    /\bdepartamento\s+(?:de\s+)?(?!(?:mais|menos)\b)(.+)$/iu,
+    new RegExp(`\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
   ]);
 }
 
@@ -940,7 +1003,10 @@ const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|f
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
-    new RegExp(`\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?!(?:mais|menos)\\b)(.+)$`, "iu"),
+    new RegExp(
+      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      "iu",
+    ),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
     new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
     // "Quantos tickets o Fábio Gali tem em aberto?" (achado testando o
@@ -966,7 +1032,8 @@ export function extractOperatorName(value) {
 export function extractClientName(value) {
   return extractByPatterns(value, [
     new RegExp(
-      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?!(?:mais|menos|respons[áa]vel)\\b)(.+)$`,
+      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?`
+        + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
       "iu",
     ),
     // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
@@ -1029,7 +1096,7 @@ export function extractClientActivityName(value) {
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
-    /\bstatus\s+(?:de\s+)?(.+)$/iu,
+    new RegExp(`\\bstatus\\s+(?:de\\s+)?(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
   ]);
 }
 
@@ -1270,6 +1337,26 @@ export function extractOperatorComparisonNames(value) {
       continue;
     }
 
+    // "Compare a carga do Fábio com a atividade do cliente Acme." (achado
+    // testando o lote de perguntas ao vivo — Complexas, pergunta 15): o 1º
+    // padrão acima (carga ... com ... carga) também casa quando o 2º lado é
+    // na verdade uma cláusula de ATIVIDADE DE CLIENTE, não a carga de outro
+    // operador — sem este guard, "atividade do cliente Acme" virava um nome
+    // de operador ("atividade", depois que TRAILING_CLIENT_ACTIVITY_CLAUSE_
+    // PATTERN podava "do cliente Acme" dentro de cleanFreeText), perdendo
+    // "Acme" por completo e misturando duas dimensões diferentes numa
+    // comparação só. A mistura de dimensão em si é tratada à parte, mais
+    // abaixo em routeTicketQuestionCore (clarification dedicada) — aqui só
+    // recusamos o match pra essa frase não virar uma comparação de operador
+    // errada.
+    const mencionaClienteNoMatch =
+      new RegExp(`\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\b`, "u").test(match[1])
+      || new RegExp(`\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\b`, "u").test(match[2]);
+
+    if (mencionaClienteNoMatch) {
+      continue;
+    }
+
     const nome1 = cleanFreeText(match[1]);
     const nome2 = cleanFreeText(match[2]);
 
@@ -1373,9 +1460,17 @@ export function extractAreaComparisonNames(value) {
 export function extractDateRange(value) {
   const text = String(value ?? "");
 
+  // "de" sozinho (sem "entre"/"período de") também abre um intervalo
+  // quando é seguido, mais adiante na mesma frase, por uma data de
+  // fechamento ("de X até Y") — achado testando o lote de perguntas ao
+  // vivo (Nível Complexo, item 8): "Resumo operacional de 01/01/2020 até
+  // 02/01/2020" só capturava dataFim (via fimMatch mais abaixo), porque
+  // "de" não abria intervalo nenhum — dataInicio ficava de fora. Seguro
+  // porque exige as DUAS datas na mesma frase (não é um "de X" solto, que
+  // continua caindo no fallback de dia único/fim aberto mais abaixo).
   const rangeMatch = text.match(
     new RegExp(
-      `\\b(?:entre|per[íi]odo\\s+de)\\s+(${DATE_TOKEN_SOURCE})\\s+(?:e|a|at[ée])\\s+(${DATE_TOKEN_SOURCE})\\b`,
+      `\\b(?:entre|per[íi]odo\\s+de|de)\\s+(${DATE_TOKEN_SOURCE})\\s+(?:e|a|at[ée])\\s+(${DATE_TOKEN_SOURCE})\\b`,
       "iu",
     ),
   );
@@ -1433,15 +1528,20 @@ export function extractPage(value) {
 
 // Usado pelos branches de mais_antigos/mais_recentes/sla_vencido pra achar
 // um número solto na frase e usar como `limite` (ex.: "10 tickets mais
-// antigos"). Precisa descartar ANTES dois tipos de número que não são um
-// limite: "página N" (já tratado por extractPage) e "nos últimos N dias/
+// antigos"). Precisa descartar ANTES tipos de número que não são um
+// limite: "página N" (já tratado por extractPage), "nos últimos N dias/
 // semanas/..." (achado testando o lote de perguntas ao vivo — esse número é
 // quantidade de um intervalo de DATA, já capturado por extractDateRange/
 // extractRelativeDateRange; sem descartar aqui, "nos últimos 30 dias"
 // também virava limite: 30, truncando a listagem em vez de só filtrar por
-// data).
+// data), e uma DATA explícita DD/MM/AAAA ou AAAA-MM-DD (achado testando o
+// lote de perguntas ao vivo — Básico/Médio/Complexo, item 3 do nível
+// complexo): o texto já chega normalizado aqui (barras/hífens viram espaço,
+// "01/01/2026" vira "01 01 2026"), então o primeiro "01" de uma data em
+// "...aberto ENTRE 01/01/2026 e 30/06/2026..." batia como se fosse um
+// pedido de "top 1", truncando a lista em 1 resultado só.
 const LOOSE_NUMBER_NOISE_PATTERN =
-  /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/giu;
+  /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b|\b\d{1,2}\s+\d{1,2}\s+\d{4}\b|\b\d{4}\s+\d{1,2}\s+\d{1,2}\b/giu;
 
 function extractLooseNumberMatch(text) {
   return text.replace(LOOSE_NUMBER_NOISE_PATTERN, "").match(/\b(\d+)\b/);
@@ -1735,6 +1835,45 @@ function routeTicketQuestionCore(pergunta) {
       { toolName: "listar_tickets", args: { area: comparacaoAreas[0], limite: 1 } },
       { toolName: "listar_tickets", args: { area: comparacaoAreas[1], limite: 1 } },
     ]);
+  }
+
+  // "Compare a carga do Fábio com a atividade do cliente Acme." (achado
+  // testando o lote de perguntas ao vivo — Complexas, pergunta 15): pedido
+  // de comparação que mistura duas dimensões diferentes (carga de operador
+  // de um lado, atividade de cliente do outro) — cada extrator específico
+  // acima exige a MESMA dimensão nos dois lados, então nenhum bate aqui
+  // (extractOperatorComparisonNames já recusa esse match, ver guard nele).
+  // Sem este guard a pergunta cairia no "sem nome" genérico logo abaixo
+  // (mensagem errada, já que nomes FORAM dados) ou, pior, no fallback de
+  // listagem sem filtro algum. Basta 2 dimensões diferentes mencionadas
+  // (operador/carga, cliente/atividade, área) numa frase de comparação pra
+  // já ser ambíguo o bastante pra recusar, mesmo sem checar os nomes em si.
+  const comparaDimensaoOperador = new RegExp(
+    `\\bcarga\\b|\\b(?:${USER_LOOKUP_NOUN_SOURCE})(?:es|s)?\\b`,
+    "u",
+  ).test(text);
+  const comparaDimensaoCliente = new RegExp(
+    `\\batividade\\b|\\b${CLIENT_LOOKUP_NOUN_SOURCE}(?:s)?\\b`,
+    "u",
+  ).test(text);
+  const comparaDimensaoArea = new RegExp(`\\b${AREA_SYNONYM_SOURCE}(?:s)?\\b`, "u").test(text);
+  const quantasDimensoesComparadas = [
+    comparaDimensaoOperador,
+    comparaDimensaoCliente,
+    comparaDimensaoArea,
+  ].filter(Boolean).length;
+
+  const mencionaComparacaoDimensoesMisturadas =
+    /\bcompar[ae]\b/.test(text) && quantasDimensoesComparadas >= 2;
+
+  if (mencionaComparacaoDimensoesMisturadas) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_dimensoes_diferentes",
+      "Só consigo comparar dentro da mesma dimensão — dois operadores, dois clientes ou duas áreas — não dá pra comparar a carga de um operador com a atividade de um cliente (ou outra dimensão) diretamente."
+        + "\n\nExemplos:\n"
+        + "- Compare a carga do operador Fulano com a do operador Beltrano.\n"
+        + "- Compare a atividade do cliente X com a do cliente Y.",
+    );
   }
 
   // "Compare a carga de tickets entre dois operadores à sua escolha." (achado
@@ -2312,6 +2451,7 @@ function routeTicketQuestionCore(pergunta) {
         status,
         area,
         departamento,
+        operador,
         prioridade,
         situacao: situacaoInequivoca,
         limite,
@@ -2541,9 +2681,16 @@ function routeTicketQuestionCore(pergunta) {
   // "atividade do cliente X nos últimos 30 dias" disparava mais_recentes e
   // ainda lia o "30" como limite de resultados (ver extractLooseNumberMatch),
   // quando o pedido real era só filtrar por data.
+  // "último mês"/"última semana"/"último ano" (SEM número, achado testando o
+  // lote de perguntas ao vivo) é a mesma ideia, só na forma singular que
+  // extractRelativeDateRange passou a reconhecer também — sem essa exclusão,
+  // "o cliente Acme abriu no ÚLTIMO MÊS" disparava mais_recentes com
+  // limite:1 (via isBareMostRecentIntent, mais abaixo), quando "último"
+  // aqui qualifica o MÊS, não pede "o ticket mais recente".
   const mentionsUltimoComoRecencia =
     /\bultimos?\b/.test(text)
-    && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text);
+    && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text)
+    && !/\bultim[oa]\s+(?:semana|mes|ano)\b/.test(text);
 
   const isMostRecentIntent =
     (/\brecent/.test(text)
@@ -2773,6 +2920,25 @@ function routeTicketQuestionCore(pergunta) {
         + "- Quantos tickets estão abertos na área Suporte?\n"
         + "- Qual o resumo dos tickets por prioridade este mês?\n"
         + "- Detalhe o ticket 1050.",
+    );
+  }
+
+  // "Aquele ticket lá, você sabe qual" produz entidades:{} igual a "Liste
+  // os tickets" (pedido deliberado de listagem sem filtro) — as duas não
+  // dão pra distinguir só pela ausência de entidade forte. O sinal extra é
+  // a combinação demonstrativo + substantivo de ticket + o próprio usuário
+  // admitindo não saber qual é (VAGUE_TICKET_REFERENCE_PATTERN). Checado
+  // DEPOIS do portão fora_do_dominio (que já teria barrado aqui se não
+  // houvesse nenhuma palavra de ticket) e ANTES do fallback de listagem
+  // genérica, pra não despejar os 5000+ tickets sem filtro quando o próprio
+  // usuário já sinalizou que não sabe a qual ticket se refere.
+  if (Object.keys(entidadesFortes).length === 0 && VAGUE_TICKET_REFERENCE_PATTERN.test(text)) {
+    return createClarificationDecision(
+      "esclarecimento_termo_ambiguo",
+      "Não consegui identificar a qual ticket você está se referindo. Pode informar o número do ticket, ou descrever um filtro (status, área, operador, cliente, período)?"
+        + "\n\nExemplos:\n"
+        + "- Detalhe o ticket 1050.\n"
+        + "- Tickets abertos na área Suporte.",
     );
   }
 

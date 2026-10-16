@@ -563,6 +563,21 @@ test("extrai período de datas em diferentes frases", () => {
   assert.deepEqual(extractDateRange("Liste os tickets."), {});
 });
 
+// Achado testando o lote de perguntas ao vivo (Nível Complexo, item 8):
+// "de X até Y" (sem "entre"/"período de" abrindo a frase) só capturava
+// dataFim — dataInicio ficava de fora porque "de" sozinho não abria
+// intervalo nenhum antes dessa correção.
+test("'de X até Y' (sem 'entre'/'período de') também é reconhecido como intervalo", () => {
+  assert.deepEqual(
+    extractDateRange("Resumo operacional de 01/01/2020 até 02/01/2020"),
+    { dataInicio: "2020-01-01", dataFim: "2020-01-02" },
+  );
+  assert.deepEqual(
+    extractDateRange("Tickets de 2026-01-01 a 2026-01-31."),
+    { dataInicio: "2026-01-01", dataFim: "2026-01-31" },
+  );
+});
+
 test("extrai período de datas por extenso (dia D de MÊS de AAAA)", () => {
   assert.deepEqual(
     extractDateRange("Liste os tickets desde dia 2 de agosto de 2026."),
@@ -1784,6 +1799,32 @@ test("'parado' com qualificador (SLA/ninguém pegando) continua resolvendo norma
   assert.equal(semOperador.clarification, undefined);
 });
 
+// --- Referência vaga a um ticket específico ("aquele ticket, você sabe
+// qual") tem entities:{} idêntico a "Liste os tickets" (listagem deliberada
+// sem filtro) — só a combinação demonstrativo + incerteza admitida pelo
+// próprio usuário distingue os dois casos. ---
+
+test("referência vaga a um ticket específico (demonstrativo + incerteza) pede esclarecimento em vez de listar tudo", () => {
+  const route = routeTicketQuestion("Aquele ticket lá, você sabe qual");
+
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(typeof route.clarification, "string");
+
+  const outraForma = routeTicketQuestion("Esse chamado, não sei qual, pode ver pra mim?");
+  assert.deepEqual(outraForma.toolNames, []);
+  assert.equal(typeof outraForma.clarification, "string");
+});
+
+test("demonstrativo sozinho, sem sinal de incerteza, continua resolvendo normalmente (não é referência vaga)", () => {
+  const listaTudo = routeTicketQuestion("Liste os tickets.");
+  assert.deepEqual(listaTudo.toolNames, ["listar_tickets"]);
+  assert.equal(listaTudo.clarification, undefined);
+
+  const demonstrativoNormal = routeTicketQuestion("Esse ticket está aberto?");
+  assert.deepEqual(demonstrativoNormal.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(demonstrativoNormal.clarification, undefined);
+});
+
 // --- Achado P1 da auditoria end-to-end: pergunta fora do domínio de tickets
 // (sem nenhuma entidade extraída e sem nenhuma palavra do vocabulário de
 // tickets) caía silenciosamente em listar_tickets sem filtro, devolvendo uma
@@ -2947,7 +2988,13 @@ test("'cliente TEVE mais tickets' (passado de 'ter') é reconhecido como ranking
   );
   assert.deepEqual(route.toolNames, ["resumo_tickets_por_cliente"]);
   assert.equal(route.entities.cliente, undefined);
-  assert.equal(route.entities.dataInicio, "2026-09-14");
+
+  const esperado = new Date();
+  esperado.setDate(esperado.getDate() - 30);
+  assert.equal(
+    route.entities.dataInicio,
+    esperado.toISOString().slice(0, 10),
+  );
 });
 
 test("'compare ... entre dois operadores/clientes à sua escolha' (sem nomear ninguém) pede esclarecimento em vez de despejar tudo sem filtro", () => {
@@ -2963,6 +3010,27 @@ test("'compare ... entre dois operadores/clientes à sua escolha' (sem nomear ni
     "Compare a carga do operador Fabio Gali com a do operador Rodrigo Fernandes.",
   );
   assert.equal(comNome.compare?.length, 2);
+});
+
+test("'compare a carga de um operador com a atividade de um cliente' (dimensões diferentes) pede esclarecimento em vez de misturar os dois", () => {
+  const dimensoesMisturadas = routeTicketQuestion(
+    "Compare a carga do Fábio com a atividade do cliente Acme.",
+  );
+  assert.deepEqual(dimensoesMisturadas.toolNames, []);
+  assert.equal(dimensoesMisturadas.intent, "esclarecimento_comparacao_dimensoes_diferentes");
+  assert.equal(dimensoesMisturadas.compare, undefined);
+
+  // Comparação dentro da MESMA dimensão (2 operadores, ou 2 clientes)
+  // continua funcionando normalmente, sem cair nesse novo esclarecimento.
+  const doisOperadores = routeTicketQuestion(
+    "Compare a carga do operador Fulano com a do operador Beltrano.",
+  );
+  assert.equal(doisOperadores.intent, "comparar_carga_operador");
+
+  const doisClientes = routeTicketQuestion(
+    "Compare a atividade do cliente X com a do cliente Y.",
+  );
+  assert.equal(doisClientes.intent, "comparar_atividade_cliente");
 });
 
 // Achado F13 (gap maior, confirmado testando o lote de perguntas ao vivo —
@@ -2991,4 +3059,119 @@ test("'situação' (aberto/fechado) chega nos resumos por status/prioridade/áre
   const porCliente = routeTicketQuestion("Quais os clientes com mais tickets, sem contar os fechados?");
   assert.equal(porCliente.toolNames[0], "resumo_tickets_por_cliente");
   assert.equal(porCliente.entities.situacao, "aberto");
+});
+
+// Achados testando ao vivo o lote "Básico/Médio/Complexo" (foco em continuação
+// conversacional, item F): o marcador de continuação mesclado pelo F ficava
+// colado direto na palavra-conector de dimensão ("operador"/"área"/"cliente"/
+// "departamento"/"status"), e o 1º pattern de extração (que só olha a
+// palavra-conector, não sabe que veio de uma continuação) engolia o
+// marcador inteiro como se fosse o nome, perdendo o nome real mais adiante
+// na frase (ex.: "do Fábio").
+test("nome extraído não engole o marcador de continuação quando a palavra-conector de dimensão vem logo antes dele", () => {
+  // extractOperatorName tem um fallback genérico "do/da X" (pattern irmão,
+  // mais abaixo na lista) que ainda acha o nome real mesmo depois do 1º
+  // pattern recusar o marcador de continuação colado — "Fábio" é achado.
+  assert.equal(
+    extractOperatorName("Resumo de tickets por operador e desses, só os do Fábio?"),
+    "Fábio",
+  );
+
+  // área/cliente/departamento/status não têm um fallback genérico
+  // equivalente — o importante aqui é que NENHUM deles mais captura o
+  // marcador de continuação como se fosse o nome (antes virava "e", um
+  // nome inventado); undefined é o resultado seguro e correto, não uma
+  // regressão (mesma filosofia de "falhar graciosamente" usada em
+  // resolveMetaId, em vez de aplicar um filtro errado em silêncio).
+  assert.equal(extractAreaName("Resumo por área e desses, só os do Suporte?"), undefined);
+  assert.equal(extractClientName("Resumo por cliente e desses, só os do Acme?"), undefined);
+  assert.equal(extractDepartmentName("Resumo por departamento e desses, só os do COIDS?"), undefined);
+  assert.equal(extractTicketStatusName("Resumo por status e desses, só os do Cancelado?"), undefined);
+
+  // Ponta a ponta: o filtro de operador chega até a tool, não fica vazio
+  const route = routeTicketQuestion("Resumo de tickets por operador e desses, só os do Fábio?");
+  assert.equal(route.toolNames[0], "resumo_tickets_por_operador");
+  assert.equal(route.entities.operador, "Fábio");
+});
+
+// Regressão achada corrigindo o teste acima: "(?!mais|menos)" só bloqueava
+// quando "mais"/"menos" vinha IMEDIATAMENTE depois da palavra-conector —
+// "Qual operador TEM MENOS tickets?" (verbo no meio) não era bloqueado,
+// capturando "tem menos tickets" como nome (só não aparecia antes porque
+// resumo_tickets_por_operador não ecoava o campo "operador" de volta).
+test("'operador/área/cliente TEM MENOS X' (verbo entre o conector e 'menos') não vira nome extraído", () => {
+  assert.equal(extractOperatorName("Qual operador tem menos tickets?"), undefined);
+  assert.equal(extractAreaName("Qual área tem menos chamados?"), undefined);
+  assert.equal(extractClientName("Qual cliente tem menos chamados?"), undefined);
+});
+
+// Achado testando ao vivo o lote "Básico/Médio/Complexo": "último mês"/
+// "última semana"/"último ano" (SEM número) nunca tinha sido reconhecido
+// como filtro de data — só a forma "X passado" (mês passado/ano passado) e
+// a forma plural com número ("últimos 30 dias") existiam, deixando exatamente
+// essa forma singular (bem comum) sem suporte. Além de não filtrar nada, o
+// nome capturado ficava com a cláusula de data E o verbo de criação colados
+// ("Acme abriu no último mês"), e "último" sozinho ainda disparava (por
+// engano) a intenção de "só o mais recente" (limite:1).
+test("'cliente X abriu no último mês' filtra por período e não cola o verbo/cláusula de data no nome", () => {
+  const agora = new Date(2026, 8, 2); // 2026-09-02
+
+  assert.deepEqual(extractRelativeDateRange("ultimo mes", agora), {
+    dataInicio: "2026-08-01",
+    dataFim: "2026-08-31",
+  });
+  assert.deepEqual(extractRelativeDateRange("ultima semana", agora), {
+    dataInicio: "2026-08-24",
+    dataFim: "2026-08-28",
+  });
+  assert.deepEqual(extractRelativeDateRange("ultimo ano", agora), {
+    dataInicio: "2025-01-01",
+    dataFim: "2025-12-31",
+  });
+  // Formas já existentes continuam funcionando (não regride)
+  assert.deepEqual(extractRelativeDateRange("mes passado", agora), {
+    dataInicio: "2026-08-01",
+    dataFim: "2026-08-31",
+  });
+
+  assert.equal(
+    extractClientName("Quais tickets o cliente Acme abriu no último mês?"),
+    "Acme",
+  );
+
+  const route = routeTicketQuestion("Quais tickets o cliente Acme abriu no último mês?");
+  assert.equal(route.entities.cliente, "Acme");
+  assert.ok(route.entities.dataInicio !== undefined);
+  assert.ok(route.entities.dataFim !== undefined);
+  // "último" aqui qualifica o MÊS, não pede "o ticket mais recente" —
+  // não deve forçar limite:1.
+  assert.equal(route.entities.limite, undefined);
+});
+
+// Achado testando ao vivo o lote "Básico/Médio/Complexo" (item 3 do nível
+// complexo — filtro combinado pesado): o texto já chega normalizado em
+// extractLooseNumberMatch (barras/hífens viram espaço), então o primeiro
+// número de uma data explícita ("01/01/2026" → "01 01 2026") batia como se
+// fosse um pedido de "top N", truncando a lista vencida/mais-antiga/mais-
+// recente em 1 resultado só, mesmo sem nenhum pedido de limite na frase.
+test("data explícita DD/MM/AAAA dentro de 'entre X e Y' não vira limite (dígito da data confundido com 'top N')", () => {
+  const route = routeTicketQuestion(
+    "Quantos tickets vencidos tem o departamento COIDS, aberto entre 01/01/2026 e 30/06/2026, com prioridade Urgente?",
+  );
+  assert.equal(route.toolNames[0], "listar_tickets_vencidos");
+  assert.equal(route.entities.departamento, "COIDS");
+  assert.equal(route.entities.prioridade, "Urgente");
+  assert.equal(route.entities.dataInicio, "2026-01-01");
+  assert.equal(route.entities.dataFim, "2026-06-30");
+  assert.equal(route.entities.limite, undefined);
+
+  // Formato ISO (AAAA-MM-DD) também não deve colidir
+  const routeIso = routeTicketQuestion(
+    "Tickets mais antigos abertos entre 2026-01-01 e 2026-06-30 no departamento COIDS.",
+  );
+  assert.equal(routeIso.entities.limite, undefined);
+
+  // Um "top N"/"primeiros N" de verdade continua funcionando normalmente
+  const routeComLimite = routeTicketQuestion("Top 5 tickets vencidos do departamento COIDS.");
+  assert.equal(routeComLimite.entities.limite, 5);
 });

@@ -39,6 +39,14 @@ const blockedQuestions = [
   "DROP TABLE tickets.",
   "TRUNCATE TABLE tickets.",
   "GRANT ALL ON tickets TO usuario.",
+  // Imperativo informal ("tu", mas comum na fala/escrita cotidiana mesmo
+  // com "você") — achado testando o lote de perguntas ao vivo: só a forma
+  // formal ("Feche") era bloqueada, "Fecha o ticket 1234, por favor" (bem
+  // mais comum no dia a dia) passava como se fosse uma leitura.
+  "Fecha o ticket 1234, por favor.",
+  "Cancela o ticket 1004.",
+  "Atualiza a prioridade do ticket 1002.",
+  "Marca o ticket 1002 como concluído.",
 ];
 
 const allowedQuestions = [
