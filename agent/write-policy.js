@@ -52,6 +52,39 @@ const imperativeVerbs = [
   "reatribui",
 ];
 
+// Pretérito imperfeito do subjuntivo ("se eu fechasse", "que você
+// atualizasse") — achado testando o lote de perguntas ao vivo: "Precisava
+// que você ATUALIZASSE pra mim o status do chamado 4830, pode ser?" (e
+// variações como "Seria bom se você FECHASSE o ticket", "Queria que você
+// CANCELASSE o chamado") passavam direto pelo guard, porque nem
+// imperativeVerbs nem infinitiveVerbs cobrem essa conjugação — um pedido de
+// escrita real, só disfarçado numa forma verbal diferente (indireta/
+// educada), era tratado como leitura. normalizeText já tira acento antes de
+// isWriteRequest testar qualquer padrão, por isso as formas aqui são
+// escritas sem acento ("concluisse", não "concluísse").
+const subjunctiveVerbs = [
+  "criasse",
+  "cadastrasse",
+  "registrasse",
+  "alterasse",
+  "atualizasse",
+  "modificasse",
+  "mudasse",
+  "trocasse",
+  "editasse",
+  "marcasse",
+  "concluisse",
+  "encerrasse",
+  "fechasse",
+  "cancelasse",
+  "excluisse",
+  "apagasse",
+  "removesse",
+  "reabrisse",
+  "atribuisse",
+  "reatribuisse",
+];
+
 const infinitiveVerbs = [
   "criar",
   "cadastrar",
@@ -83,11 +116,23 @@ const imperativePattern = new RegExp(
   "u",
 );
 
+const subjunctivePattern = new RegExp(
+  `\\b(?:${subjunctiveVerbs.join("|")})\\b`,
+  "u",
+);
+
 const directInfinitivePattern = new RegExp(
   `^(?:por favor\\s+)?(?:${infinitiveVerbs.join("|")})\\b`,
   "u",
 );
 
+// "dava pra"/"da pra"/"seria possível" (achado testando o lote de
+// perguntas ao vivo): "Dava pra você atualizar o status do ticket 4830?"
+// não batia em nenhum prefixo reconhecido — a mesma ideia coloquial de
+// "poderia", só com outras palavras. "voce\s+"/"tu\s+" opcional entre o
+// prefixo e o verbo (achado junto): a frase real tem "você" no meio ("dava
+// pra VOCÊ atualizar"), que o conector antigo (só "que" opcional) não
+// previa.
 const requestPrefixPattern = new RegExp(
   [
     "\\b",
@@ -95,9 +140,10 @@ const requestPrefixPattern = new RegExp(
     "quero|preciso|desejo|solicito|",
     "pode|poderia|",
     "gostaria\\s+de|",
+    "dava\\s+pra|dava\\s+para|da\\s+pra|da\\s+para|seria\\s+possivel|",
     "vamos|tente|favor",
     ")",
-    "\\s+(?:que\\s+)?",
+    "\\s+(?:que\\s+)?(?:voce\\s+|tu\\s+)?",
     `(?:${[
       ...imperativeVerbs,
       ...infinitiveVerbs,
@@ -113,6 +159,7 @@ export function isWriteRequest(pergunta) {
   return (
     sqlWritePattern.test(text)
     || imperativePattern.test(text)
+    || subjunctivePattern.test(text)
     || directInfinitivePattern.test(text)
     || requestPrefixPattern.test(text)
   );

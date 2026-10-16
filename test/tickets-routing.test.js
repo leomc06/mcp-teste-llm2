@@ -3282,3 +3282,128 @@ test("'status diferente de X'/'status não X' não deixa valor-lixo em entities.
   const statusReal = routeTicketQuestion("Quais tickets estão com status Em atendimento?");
   assert.equal(statusReal.entities.status, "Em atendimento");
 });
+
+// --- Lote "teste você mesmo" (testado ao vivo) ---
+
+test("'último trimestre'/'última quinzena' viram intervalo de data, não disparam 'mais recentes' por engano", () => {
+  const trimestre = routeTicketQuestion("Tickets abertos no último trimestre.");
+  assert.deepEqual(trimestre.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(trimestre.entities.limite, undefined);
+  assert.notEqual(trimestre.entities.dataInicio, undefined);
+
+  const quinzena = routeTicketQuestion("Tickets abertos na última quinzena.");
+  assert.deepEqual(quinzena.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(quinzena.entities.limite, undefined);
+  assert.notEqual(quinzena.entities.dataInicio, undefined);
+
+  // Controle: "trimestre"/"quinzena" não pruna um nome real que termine
+  // com um substantivo parecido (não é o foco deste teste, só garante que
+  // o fallback "último" sozinho continua funcionando pra outros casos)
+  const bareUltimo = routeTicketQuestion("Qual foi o último ticket registrado no sistema?");
+  assert.deepEqual(bareUltimo.toolNames, ["listar_tickets_mais_recentes"]);
+});
+
+test("'X ou de prioridade Y' (e 'prioridade Y' na ordem substantivo-nível) dispara união de prioridades, não escolhe 1 lado silenciosamente", () => {
+  const ouTrimestre = routeTicketQuestion("Tickets urgentes ou de prioridade alta abertos no último trimestre.");
+  assert.equal(ouTrimestre.intent, "esclarecimento_uniao_prioridades");
+
+  const ordemInvertida = routeTicketQuestion("Tickets de prioridade alta e urgentes.");
+  assert.equal(ordemInvertida.intent, "esclarecimento_uniao_prioridades");
+
+  // Prioridade única, em qualquer ordem, continua funcionando normalmente
+  assert.equal(routeTicketQuestion("Tickets de prioridade alta.").entities.prioridade, "alta");
+  assert.equal(routeTicketQuestion("Tickets de alta prioridade.").entities.prioridade, "alta");
+});
+
+test("'o técnico/operador X tem na fila' não deixa o verbo+complemento vazar pro nome capturado", () => {
+  const route = routeTicketQuestion("Quantos chamados o técnico Rodrigo Fernandes tem na fila?");
+  assert.equal(route.entities.operador, "Rodrigo Fernandes");
+});
+
+test("'já deveriam ter sido resolvidos' (idioma modal de SLA vencido) não vaza pro nome de operador capturado", () => {
+  const route = routeTicketQuestion("Os chamados do Carlos já deveriam ter sido resolvidos há quanto tempo?");
+  assert.deepEqual(route.toolNames, ["listar_tickets_vencidos"]);
+  assert.equal(route.entities.operador, "Carlos");
+});
+
+test("comparação de 2 departamentos (antes inexistente) funciona como a de áreas/operadores/clientes", () => {
+  const quemTemMais = routeTicketQuestion(
+    "Quem tem mais chamados vencidos: o departamento de Suporte ou o departamento de Redes e Segurança?",
+  );
+  assert.equal(quemTemMais.intent, "comparar_tickets_departamento");
+  assert.equal(quemTemMais.compare?.length, 2);
+  assert.equal(quemTemMais.compare[0].args.departamento, "Suporte");
+  assert.equal(quemTemMais.compare[1].args.departamento, "Redes e Segurança");
+
+  const compare = routeTicketQuestion(
+    "Compare o departamento de Governança com o departamento Coids em volume de tickets fechados.",
+  );
+  assert.equal(compare.intent, "comparar_tickets_departamento");
+  assert.equal(compare.compare[0].args.departamento, "Governança");
+  assert.equal(compare.compare[1].args.departamento, "Coids");
+
+  // "Compare a área X com a área Y" (achado junto — mesmo gap, já existia
+  // pra área antes desta correção) também passa a funcionar.
+  const compareArea = routeTicketQuestion("Compare a área de Suporte com a área de Redes e Segurança.");
+  assert.equal(compareArea.intent, "comparar_tickets_area");
+  assert.equal(compareArea.compare[0].args.area, "Suporte");
+  assert.equal(compareArea.compare[1].args.area, "Redes e Segurança");
+});
+
+test("negação separada do valor por uma oração relativa mais longa (6+ palavras) ainda é detectada", () => {
+  const route = routeTicketQuestion(
+    "Tickets urgentes da área WEB, sem contar os que já foram atendidos pelo Helpdesk.",
+  );
+  assert.equal(route.intent, "esclarecimento_negacao");
+});
+
+test("'excluindo' (achado ao vivo) é reconhecido como negação, igual 'tirando'/'sem contar'", () => {
+  const route = routeTicketQuestion("Quantos chamados o solicitante Diego Mota tem, excluindo os cancelados?");
+  assert.equal(route.intent, "esclarecimento_negacao");
+});
+
+test("'tira' (imperativo/presente, não só o gerúndio 'tirando') também é reconhecido como negação", () => {
+  const route = routeTicketQuestion("Resumo por status e desses, tira os cancelados");
+  assert.equal(route.intent, "esclarecimento_negacao");
+});
+
+test("'tickets de alta/baixa/media prioridade' (nível antes do substantivo) resolve a prioridade, não vira nome de operador fantasma", () => {
+  const alta = routeTicketQuestion("Tickets de alta prioridade.");
+  assert.equal(alta.entities.prioridade, "alta");
+  assert.equal(alta.entities.operador, undefined);
+
+  const baixa = routeTicketQuestion("Tickets de baixa prioridade.");
+  assert.equal(baixa.entities.prioridade, "baixa");
+  assert.equal(baixa.entities.operador, undefined);
+
+  // Contradição ("urgentes" + nível explícito diferente) continua
+  // disparando esclarecimento, mesmo com a prioridade resolvendo pelo
+  // padrão novo de ordem invertida (achado corrigindo esta mesma mudança:
+  // "baixa" virava o valor resolvido e "urgentes" era descartado em
+  // silêncio, sem avisar a contradição).
+  const contradicao = routeTicketQuestion("Tickets urgentes de baixa prioridade.");
+  assert.equal(contradicao.intent, "esclarecimento_contradicao");
+
+  // Controle: "prioridade" como conector de dimensão solto (sem nível
+  // nenhum) continua resolvendo normalmente, sem disparar esse novo check
+  // por engano só porque "urgente" aparece em outro lugar da frase (ex.:
+  // um marcador de continuação "só os Urgente" no fim).
+  const semNivel = routeTicketQuestion(
+    "Resumo dos tickets por prioridade na área Suporte e desses só os Urgente",
+  );
+  assert.equal(semNivel.intent, "resumo_por_prioridade");
+});
+
+test("comparação de clientes aceita 'abre' (presente), não só 'abriu' (passado)", () => {
+  const presente = routeTicketQuestion(
+    "O cliente Acme abre mais chamados que o cliente Beta, considerando só os urgentes?",
+  );
+  assert.equal(presente.intent, "comparar_atividade_cliente");
+  assert.equal(presente.compare?.length, 2);
+  assert.equal(presente.compare[0].args.cliente, "Acme");
+  assert.equal(presente.compare[1].args.cliente, "Beta");
+
+  // Passado continua funcionando normalmente
+  const passado = routeTicketQuestion("O cliente Acme abriu mais chamados que o cliente Beta?");
+  assert.equal(passado.intent, "comparar_atividade_cliente");
+});

@@ -30,6 +30,15 @@ const TRAILING_PAGE_CLAUSE_PATTERN =
 const TRAILING_EXPORT_CLAUSE_PATTERN =
   /\s+e\s+(?:depois\s+)?export(?:e|a|ar)\s+(?:isso\s+|o\s+resultado\s+)?em\s+(?:pdf|csv)\b.*$/iu;
 
+// "em volume/quantidade/número de tickets fechados" (achado testando o
+// lote de perguntas ao vivo): cauda comum de "compare X com Y EM <métrica>"
+// — sem essa poda, "Compare o departamento de Governança com o
+// departamento Coids EM VOLUME DE TICKETS FECHADOS." vazava a cláusula
+// inteira pro 2º nome capturado (departamento: "Coids em volume de
+// tickets"), que nunca resolve no catálogo real.
+const TRAILING_METRIC_CLAUSE_PATTERN =
+  /\s+em\s+(?:volume|quantidade|numero)\s+de\s+.*$/iu;
+
 // Achado ao vivo testando continuação conversacional (agent/continuation.js):
 // mergeContinuation só concatena a pergunta anterior com a nova usando um
 // espaço, sem nenhuma pontuação entre as duas — "Resumo... na área Suporte"
@@ -58,8 +67,12 @@ const TRAILING_CONTINUATION_CLAUSE_PATTERN = new RegExp(`\\s+${CONTINUATION_MARK
 // mesmo motivo — "existem" nunca tinha entrado nessa lista de verbos soltos.
 const BARE_HAVE_VERB_SOURCE =
   `(?:tem|teve|tiveram|possui|possuiu|possu[íi]ram|existe|existem|${ESTAR_SOURCE})`;
+// "na fila" (achado testando o lote de perguntas ao vivo): "Quantos
+// chamados o técnico Rodrigo Fernandes TEM NA FILA?" só tinha "no total"/
+// "ao todo" como qualificador aceito depois do verbo — "na fila" vazava
+// junto do nome capturado ("Rodrigo Fernandes tem na fila").
 const TRAILING_BARE_VERB_PATTERN = new RegExp(
-  `\\s+${BARE_HAVE_VERB_SOURCE}(?:\\s+(?:no\\s+total|ao\\s+todo))?\\s*$`,
+  `\\s+${BARE_HAVE_VERB_SOURCE}(?:\\s+(?:no\\s+total|ao\\s+todo|na\\s+fila))?\\s*$`,
   "iu",
 );
 
@@ -160,7 +173,11 @@ const TRAILING_CREATED_BY_CLAUSE_PATTERN = /\s+criad[oa]s?\s+(?:por|pel[oa])\s+.
 // o idioma modal "já deveriam ter sido resolvidos" (que no uso natural
 // significa vencido — "deveria ter acontecido mas não aconteceu", não uma
 // afirmação de que já fechou) faltavam aqui.
-const SLA_MODAL_OVERDUE_SOURCE = `deveria(?:m)?\\s+(?:ja\\s+)?ter\\s+sido\\s+${CLOSURE_VERB_SOURCE}`;
+// "j[áa]" (não só "ja") de propósito: esta constante agora também é usada
+// contra texto CRU em TRAILING_SLA_MODAL_CLAUSE_PATTERN (cleanFreeText),
+// onde "já" mantém o acento — mesmo motivo da tolerância em TICKET_NOUN_
+// SOURCE/NEGATION_MARKER_SOURCE.
+const SLA_MODAL_OVERDUE_SOURCE = `deveria(?:m)?\\s+(?:j[áa]\\s+)?ter\\s+sido\\s+${CLOSURE_VERB_SOURCE}`;
 const OLDEST_PROXY_STATE_SOURCE =
   "(?:atrasad[oa]s?"
   + "|vencid[oa]s?"
@@ -394,6 +411,37 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "último trimestre" (achado testando o lote de perguntas ao vivo):
+  // "trimestre" nunca tinha entrado no vocabulário de período — sem
+  // reconhecimento nenhum, a frase inteira caía no fallback de "último"
+  // sozinho (isBareMostRecentIntent, mais abaixo), virando por engano um
+  // pedido de "só o ticket mais recente" (limite:1), sentido completamente
+  // diferente do período pedido. Trimestre CALENDÁRIO (jan-mar/abr-jun/
+  // jul-set/out-dez), mesmo raciocínio de "mês passado" (unidade de
+  // calendário completa anterior, não uma janela corrida de 90 dias).
+  if (/\btrimestre\s+passado\b/.test(text) || /\bultimo\s+trimestre\b/.test(text)) {
+    const trimestreAtual = Math.floor(agora.getMonth() / 3);
+    const trimestrePassado = (trimestreAtual + 3) % 4;
+    const anoTrimestrePassado = trimestreAtual === 0 ? agora.getFullYear() - 1 : agora.getFullYear();
+    const primeiroMes = trimestrePassado * 3;
+
+    return {
+      dataInicio: formatIsoDate(new Date(anoTrimestrePassado, primeiroMes, 1)),
+      dataFim: formatIsoDate(new Date(anoTrimestrePassado, primeiroMes + 3, 0)),
+    };
+  }
+
+  // "última quinzena" — mesmo gap de vocabulário acima, mas sem
+  // equivalente de calendário padronizado (diferente de mês/trimestre/ano),
+  // então é tratada como janela corrida dos últimos 15 dias, mesmo
+  // raciocínio de "últimos N dias" mais abaixo.
+  if (/\bultima\s+quinzena\b/.test(text)) {
+    const inicio = new Date(agora);
+    inicio.setDate(inicio.getDate() - 15);
+
+    return { dataInicio: formatIsoDate(inicio), dataFim: formatIsoDate(agora) };
+  }
+
   if (/\b(?:esse|este)\s+ano\b/.test(text)) {
     const anoAtual = agora.getFullYear();
 
@@ -578,7 +626,8 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
     + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|[úu]ltimo\\s+m[êe]s"
-    + "|(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano)\\b.*$",
+    + "|(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
+    + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)\\b.*$",
   "iu",
 );
 
@@ -611,6 +660,17 @@ const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
 // também não faz parte do nome capturado.
 const TRAILING_ULTIMOS_N_CLAUSE_PATTERN =
   /\s+(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
+
+// "já deveriam ter sido resolvidos" (achado testando o lote de perguntas ao
+// vivo): "Os chamados DO CARLOS já deveriam ter sido resolvidos há quanto
+// tempo?" — o idioma modal de SLA vencido (SLA_MODAL_OVERDUE_SOURCE, já
+// reconhecido certo pra ESCOLHER a tool listar_tickets_vencidos) nunca
+// tinha o equivalente de poda em cleanFreeText, então vazava inteiro pro
+// nome capturado ("Carlos já deveriam ter sido"). "(?:ja\s+)?" extra aqui
+// cobre a ordem "já deveria(m)..." (mais comum na fala), além da ordem
+// "deveria(m) já..." que SLA_MODAL_OVERDUE_SOURCE já cobre por conta
+// própria.
+const TRAILING_SLA_MODAL_CLAUSE_PATTERN = new RegExp(`\\s+(?:j[áa]\\s+)?${SLA_MODAL_OVERDUE_SOURCE}\\b.*$`, "iu");
 
 // "entre agosto e setembro" (intervalo de 2 meses soltos) — mesma ideia,
 // pro intervalo de meses que extractRelativeDateRange também reconhece.
@@ -690,6 +750,13 @@ function cleanFreeText(value) {
     .replace(TRAILING_CONTINUATION_CLAUSE_PATTERN, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
+    // Antes de TRAILING_RESOLVED_CLAUSE_PATTERN de propósito (mesma lógica
+    // do comentário sobre TRAILING_CREATION_CLAUSE_PATTERN mais abaixo):
+    // "já deveriam ter sido RESOLVIDOS" precisa ser podado inteiro primeiro
+    // (pattern mais específico, cobre o idioma modal inteiro), senão o
+    // pattern genérico de "resolvidos" solto como verbo de fechamento comia
+    // só o "resolvidos" e deixava "já deveriam ter sido" órfão pra trás.
+    .replace(TRAILING_SLA_MODAL_CLAUSE_PATTERN, "")
     .replace(TRAILING_RESOLVED_CLAUSE_PATTERN, "")
     .replace(TRAILING_CREATION_CLAUSE_PATTERN, "")
     // Depois de TRAILING_CREATION_CLAUSE_PATTERN de propósito: "foram
@@ -708,6 +775,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
+    .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
@@ -1054,6 +1122,14 @@ export function extractOperatorName(value) {
     new RegExp(
       `\\b${TICKET_NOUN_SOURCE}s?\\s+de\\s+`
         + `(?!hoje\\b)(?!ontem\\b)(?!amanh[ãa]\\b)(?!\\d)(?!(?:${MONTH_NAME_SOURCE})\\b)`
+        // "alta"/"baixa"/"media" + "prioridade" (achado testando o lote de
+        // perguntas ao vivo): "tickets DE ALTA PRIORIDADE" tem "prioridade"
+        // como a 2ª palavra, não a 1ª — a exclusão de OPERATOR_DO_DA_
+        // EXCLUSION_SOURCE só bloqueia quando "prioridade" vem logo depois
+        // de "de", então "alta prioridade" inteiro escapava e virava um
+        // operador fantasma (junto do prioridade:"alta" já resolvido certo
+        // por extractPriorityName, os 2 filtros brigavam entre si).
+        + `(?!(?:baixa|media|alta)\\s+prioridade\\b)`
         + `(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`,
       "iu",
     ),
@@ -1156,7 +1232,17 @@ export function extractClientActivityName(value) {
 // tolerante em TICKET_NOUN_SOURCE acima: contra texto cru, "não" mantém o
 // til — sem essa tolerância, "status NÃO Encerrada" ainda vazava "não" (com
 // acento) como valor de status, já que "nao" sem acento nunca batia.
-const NEGATION_MARKER_SOURCE = "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|sem\\s+contar)";
+// "excluindo" (achado testando o lote de perguntas ao vivo): mesma família
+// de "tirando"/"sem contar" — sem essa entrada, "excluindo os cancelados"
+// não era reconhecido como negação, e "cancelados" virava filtro POSITIVO
+// (o oposto exato do pedido), a mesma classe de inversão silenciosa que
+// "tirando"/"sem contar" já foram corrigidos pra evitar.
+// "tira"/"tire" (achado testando continuação ao vivo — "e desses, tira os
+// cancelados"): forma imperativa/presente de "tirar", tão comum na fala
+// quanto o gerúndio "tirando" (já coberto) — mesma classe de verbo informal
+// vs. formal já tratada em write-policy.js pros verbos de escrita.
+const NEGATION_MARKER_SOURCE =
+  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem\\s+contar|excluindo)";
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
@@ -1243,10 +1329,22 @@ export function extractLiteralStatus(text) {
 // prioridade sozinho: "baixa"/"média"/"alta" soltas continuam de propósito
 // fora de extractPriorityIntent (adjetivos comuns demais, ver comentário
 // abaixo) — aqui só entram quando acompanhadas da palavra "prioridade".
+// Nível em qualquer ordem natural do português ("alta prioridade" OU
+// "prioridade alta", igualmente comuns) — achado testando o lote de
+// perguntas ao vivo: só a 1ª ordem (nível antes do substantivo) era
+// reconhecida nos 2 grupos de padrão abaixo; "tickets urgentes ou de
+// prioridade alta" (substantivo antes do nível) não disparava nem união
+// nem contradição nenhuma, e "alta e urgentes"/"alta ou urgentes" inteiro
+// vazava como se fosse 1 valor de prioridade só (nunca resolve no catálogo
+// real, ou pior, resolve errado por acaso).
+function priorityLevelSource(nivel) {
+  return `(?:${nivel}\\s+prioridade|prioridade\\s+${nivel})`;
+}
+
 const PRIORITY_LEVEL_LITERAL_PATTERNS = [
-  [/\bbaixa\s+prioridade\b/, "Baixa"],
-  [/\bmedia\s+prioridade\b/, "Media"],
-  [/\balta\s+prioridade\b/, "Alta"],
+  [new RegExp(`\\b${priorityLevelSource("baixa")}\\b`), "Baixa"],
+  [new RegExp(`\\b${priorityLevelSource("media")}\\b`), "Media"],
+  [new RegExp(`\\b${priorityLevelSource("alta")}\\b`), "Alta"],
 ];
 
 // Achado testando o lote de perguntas ao vivo: "tickets urgentes E de alta
@@ -1254,16 +1352,50 @@ const PRIORITY_LEVEL_LITERAL_PATTERNS = [
 // acima (2 níveis diferentes na mesma frase) e levava a mesma mensagem de
 // "contradição" de "tickets urgentes DE baixa prioridade" — mas os dois
 // casos não são iguais: com "de", o segundo nível modifica o MESMO ticket
-// (contradição de verdade, impossível). Com "e", a frase pede a UNIÃO de 2
-// categorias (tickets urgentes + tickets de alta prioridade), não descreve
-// 1 ticket com 2 prioridades. Esses padrões (com conector "e" de qualquer
-// lado) identificam esse segundo caso pra dar uma mensagem que explica a
-// limitação real (só filtra 1 prioridade por consulta), em vez de dizer que
-// o pedido é logicamente impossível quando não é.
+// (contradição de verdade, impossível). Com "e"/"ou", a frase pede a UNIÃO
+// de 2 categorias (tickets urgentes + tickets de alta prioridade), não
+// descreve 1 ticket com 2 prioridades. Esses padrões (com conector "e"/"ou"
+// de qualquer lado) identificam esse segundo caso pra dar uma mensagem que
+// explica a limitação real (só filtra 1 prioridade por consulta), em vez
+// de dizer que o pedido é logicamente impossível quando não é. "ou" entra
+// ao lado de "e" pelo mesmo motivo (achado testando o lote de perguntas ao
+// vivo: "urgentes OU de prioridade alta" não disparava nada, só "e" tinha
+// suporte). "urgente" ganha entrada própria (não tem a forma "<nível>
+// prioridade", é uma palavra solta) pareada com qualquer um dos outros 3
+// níveis via conector, nos 2 lados possíveis.
+const PRIORITY_UNIAO_CONNECTOR_SOURCE = "(?:e|ou)";
+
 const PRIORITY_LEVEL_UNIAO_PATTERNS = [
-  [/\be\s+(?:de\s+)?baixa\s+prioridade\b|\bbaixa\s+prioridade\s+e\b/, "Baixa"],
-  [/\be\s+(?:de\s+)?media\s+prioridade\b|\bmedia\s+prioridade\s+e\b/, "Media"],
-  [/\be\s+(?:de\s+)?alta\s+prioridade\b|\balta\s+prioridade\s+e\b/, "Alta"],
+  [
+    new RegExp(
+      `\\b${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\s+(?:de\\s+)?${priorityLevelSource("baixa")}\\b`
+        + `|\\b${priorityLevelSource("baixa")}\\s+${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\b`,
+    ),
+    "Baixa",
+  ],
+  [
+    new RegExp(
+      `\\b${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\s+(?:de\\s+)?${priorityLevelSource("media")}\\b`
+        + `|\\b${priorityLevelSource("media")}\\s+${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\b`,
+    ),
+    "Media",
+  ],
+  [
+    new RegExp(
+      `\\b${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\s+(?:de\\s+)?${priorityLevelSource("alta")}\\b`
+        + `|\\b${priorityLevelSource("alta")}\\s+${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\b`,
+    ),
+    "Alta",
+  ],
+  [
+    new RegExp(
+      `\\burgentes?\\s+${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\s+(?:de\\s+)?`
+        + `(?:${priorityLevelSource("baixa")}|${priorityLevelSource("media")}|${priorityLevelSource("alta")})\\b`
+        + `|\\b(?:${priorityLevelSource("baixa")}|${priorityLevelSource("media")}|${priorityLevelSource("alta")})`
+        + `\\s+${PRIORITY_UNIAO_CONNECTOR_SOURCE}\\s+urgentes?\\b`,
+    ),
+    "Urgente",
+  ],
 ];
 
 // Achado testando o lote de perguntas ao vivo — Complexas 1, pergunta 14:
@@ -1279,6 +1411,16 @@ const PRIORITY_UNSET_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especi
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
     new RegExp(`\\bprioridade\\s+(?:de\\s+)?(?!${PRIORITY_UNSET_ADJECTIVE_SOURCE}\\b)(.+)$`, "iu"),
+    // Ordem substantivo-nível invertida ("alta prioridade", tão natural
+    // quanto "prioridade alta") — achado testando o lote de perguntas ao
+    // vivo: "Tickets de ALTA PRIORIDADE." não resolvia prioridade nenhuma
+    // (só a ordem "prioridade alta" acima era aceita), e sem esse valor
+    // resolvido o novo padrão "tickets de <nome>" de extractOperatorName
+    // (ver mais abaixo) capturava "alta prioridade" inteiro como se fosse
+    // um nome de operador. Só os 3 níveis nomeados (baixa/media/alta) têm
+    // essa forma invertida reconhecida — não é uma captura livre genérica
+    // como a do padrão principal acima.
+    /\b(baixa|media|alta)\s+prioridade\b/iu,
   ]);
 }
 
@@ -1457,8 +1599,14 @@ export function extractClientComparisonNames(value) {
     // gulosa (.+?) pra nome1 parar exatamente no conector "com"/"e", igual
     // ao padrão irmão de carga de operador.
     /\bcompar[ae]\s+a\s+atividade\s+(?:d[oa]\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:a\s+)?(?:atividade\s+)?(?:d[oa]\s+)?cliente\s+(.+)$/iu,
-    /\bquem\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s*:?\s*(?:o\s+)?cliente\s+(.+?)\s+ou\s+(?:o\s+)?cliente\s+(.+)$/iu,
-    /^(?:o\s+)?cliente\s+(.+?)\s+abriu\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    // "abr(?:e|em|iu|iram)" (achado testando o lote de perguntas ao vivo):
+    // só o passado "abriu" era aceito — "O cliente Acme ABRE mais chamados
+    // que o cliente Beta...?" (presente, tão comum quanto o passado) não
+    // batia em nenhum padrão, e a comparação inteira caía no fallback
+    // genérico de resumo por cliente, perdendo o 2º nome ("Beta") por
+    // completo.
+    /\bquem\s+abr(?:e|em|iu|iram)\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s*:?\s*(?:o\s+)?cliente\s+(.+?)\s+ou\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    /^(?:o\s+)?cliente\s+(.+?)\s+abr(?:e|em|iu|iram)\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?cliente\s+(.+)$/iu,
   ];
 
   for (const pattern of patterns) {
@@ -1479,6 +1627,15 @@ export function extractClientComparisonNames(value) {
   return undefined;
 }
 
+// Adjetivo de estado opcional entre o substantivo de ticket e o ":"/nome da
+// 1ª opção em "quem tem mais <substantivo> [adjetivo]: X ou Y?" (achado
+// testando o lote de perguntas ao vivo: "Quem tem mais CHAMADOS VENCIDOS: o
+// departamento de Suporte ou...?" não batia em nenhum padrão de comparação
+// de área/departamento por faltar esse qualificador) — compartilhado pelos
+// 2, em vez de duplicar o mesmo vocabulário.
+const COMPARISON_NOUN_QUALIFIER_SOURCE =
+  `${OLDEST_PROXY_STATE_SOURCE}|${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}`;
+
 // Mesma ideia de extractOperatorComparisonNames/extractClientComparisonNames,
 // mas pra 2 ÁREAS (achado testando o lote de perguntas ao vivo — Médias 1,
 // pergunta 14): "Quem tem mais tickets: a área de Suporte ou a área WEB?"
@@ -1492,8 +1649,23 @@ export function extractAreaComparisonNames(value) {
   const text = String(value ?? "");
 
   const patterns = [
+    // "Compare a área X com a área Y" (achado testando o lote de perguntas
+    // ao vivo): faltava aqui, apesar de ser o 1º padrão já aceito pelas
+    // comparações irmãs de operador/cliente — sem ele, "Compare a área de
+    // Suporte com a área de Redes e Segurança." caía no fallback genérico,
+    // perdendo a 2ª área por completo.
     new RegExp(
-      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)\\s*:?\\s*`
+      `\\bcompar[ae]\\s+(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e)\\s+`
+        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
+    // "Quem tem mais CHAMADOS VENCIDOS: X ou Y?" (achado testando o lote de
+    // perguntas ao vivo): adjetivo de estado (vencido/atrasado/aberto/
+    // fechado/...) entre o substantivo e o ":"/nome da 1ª área — sem esse
+    // qualificador opcional, a pergunta inteira não batia em nenhum padrão.
+    new RegExp(
+      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
+        + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
         + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+ou\\s+`
         + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
@@ -1504,6 +1676,49 @@ export function extractAreaComparisonNames(value) {
         + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    const nome1 = cleanFreeText(match[1]);
+    const nome2 = cleanFreeText(match[2]);
+
+    if (nome1 !== undefined && nome2 !== undefined) {
+      return [nome1, nome2];
+    }
+  }
+
+  return undefined;
+}
+
+// Mesma ideia de extractAreaComparisonNames, mas pra 2 DEPARTAMENTOS em vez
+// de 2 áreas (achado testando o lote de perguntas ao vivo): "Quem tem mais
+// chamados vencidos: o departamento de Suporte ou o departamento de Redes e
+// Segurança?" e "Compare o departamento de Governança com o departamento
+// Coids..." não tinham suporte nenhum — a pergunta inteira caía no
+// extrator genérico de departamento (extractDepartmentName), que capturava
+// só o 1º departamento citado (e ainda vazava o resto da frase junto,
+// "Suporte ou o departamento de Redes e Segurança") e perdia o 2º
+// departamento por completo, sem nunca avisar que a comparação não foi
+// feita de verdade. "Departamento" não tem sinônimo comum (diferente de
+// área/categoria/equipe), por isso a palavra é literal, sem fonte própria.
+export function extractDepartmentComparisonNames(value) {
+  const text = String(value ?? "");
+
+  const patterns = [
+    /\bcompar[ae]\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+?)\s+(?:com|e)\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+)$/iu,
+    new RegExp(
+      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
+        + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
+        + `(?:o\\s+)?departamento\\s+(?:de\\s+)?(.+?)\\s+ou\\s+(?:o\\s+)?departamento\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
+    /^(?:o\s+)?departamento\s+(?:de\s+)?(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+)$/iu,
   ];
 
   for (const pattern of patterns) {
@@ -1904,6 +2119,17 @@ function routeTicketQuestionCore(pergunta) {
     ]);
   }
 
+  // Mesma ideia da comparação de áreas acima, mas pra 2 departamentos (ver
+  // extractDepartmentComparisonNames).
+  const comparacaoDepartamentos = extractDepartmentComparisonNames(pergunta);
+
+  if (comparacaoDepartamentos !== undefined) {
+    return createCompareDecision("comparar_tickets_departamento", [
+      { toolName: "listar_tickets", args: { departamento: comparacaoDepartamentos[0], limite: 1 } },
+      { toolName: "listar_tickets", args: { departamento: comparacaoDepartamentos[1], limite: 1 } },
+    ]);
+  }
+
   // "Compare a carga do Fábio com a atividade do cliente Acme." (achado
   // testando o lote de perguntas ao vivo — Complexas, pergunta 15): pedido
   // de comparação que mistura duas dimensões diferentes (carga de operador
@@ -2168,7 +2394,13 @@ function routeTicketQuestionCore(pergunta) {
       return false;
     }
 
-    const janela = haystack.slice(0, index).trim().split(/\s+/u).slice(-5).join(" ");
+    // Janela de 10 palavras (não mais 5) — achado testando o lote de
+    // perguntas ao vivo: "sem contar OS QUE JÁ FORAM ATENDIDOS PELO
+    // Helpdesk" tem uma oração relativa de 6 palavras entre o marcador de
+    // negação e o nome capturado, mais larga que qualquer exemplo visto até
+    // então ("que NÃO seja urgente" etc.) — a janela de 5 cortava "sem
+    // contar" fora, perdendo a negação por completo.
+    const janela = haystack.slice(0, index).trim().split(/\s+/u).slice(-10).join(" ");
 
     return NEGATION_MARKER_PATTERN.test(janela);
   }
@@ -2260,6 +2492,29 @@ function routeTicketQuestionCore(pergunta) {
         if (pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade)) {
           return true;
         }
+      }
+
+      // "urgente" não tem forma "<nível> prioridade" (é uma palavra solta,
+      // por isso fica fora de PRIORITY_LEVEL_LITERAL_PATTERNS) — mas
+      // precisa do mesmo check simétrico: achado testando o lote de
+      // perguntas ao vivo, "Tickets URGENTES de BAIXA prioridade." (prioridade
+      // resolvida = "Baixa", via a forma invertida "baixa prioridade" que
+      // extractPriorityName agora também reconhece) deixava de disparar
+      // contradição nenhuma, porque "urgente" nunca era comparado contra o
+      // valor já resolvido quando ELE NÃO é o valor vencedor.
+      // Só dispara quando o valor resolvido é EXATAMENTE um dos 3 níveis
+      // nomeados (não qualquer string != "urgente") — "prioridade" sozinho
+      // depois de "por"/"quantos tickets por prioridade" (conector de
+      // dimensão, sem valor nenhum) já é capturado (erradamente, bug à
+      // parte, não desta correção) como um valor "sujo" por
+      // extractPriorityName; comparar contra ele cegamente geraria falso
+      // positivo sempre que "urgente" aparecesse em qualquer lugar da
+      // frase (ex.: um marcador de continuação "só os Urgente" no fim).
+      if (
+        /\burgentes?\b/.test(text)
+        && ["baixa", "media", "alta"].includes(normalizeText(prioridade))
+      ) {
+        return true;
       }
     }
 
@@ -2765,10 +3020,15 @@ function routeTicketQuestionCore(pergunta) {
   // "o cliente Acme abriu no ÚLTIMO MÊS" disparava mais_recentes com
   // limite:1 (via isBareMostRecentIntent, mais abaixo), quando "último"
   // aqui qualifica o MÊS, não pede "o ticket mais recente".
+  // "último trimestre"/"última quinzena" (achado testando o lote de
+  // perguntas ao vivo) são a mesma exclusão de "último mês/semana/ano" —
+  // extractRelativeDateRange já sabe calcular o período real pra essas 2
+  // formas agora, então "último" aqui qualifica o PERÍODO, não pede "o
+  // ticket mais recente".
   const mentionsUltimoComoRecencia =
     /\bultimos?\b/.test(text)
     && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text)
-    && !/\bultim[oa]\s+(?:semana|mes|ano)\b/.test(text);
+    && !/\bultim[oa]\s+(?:semana|mes|ano|trimestre|quinzena)\b/.test(text);
 
   const isMostRecentIntent =
     (/\brecent/.test(text)

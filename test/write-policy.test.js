@@ -47,6 +47,20 @@ const blockedQuestions = [
   "Cancela o ticket 1004.",
   "Atualiza a prioridade do ticket 1002.",
   "Marca o ticket 1002 como concluído.",
+  // Pretérito imperfeito do subjuntivo (pedido indireto/educado) — achado
+  // testando o lote de perguntas ao vivo: "Precisava que você atualizasse
+  // pra mim o status do chamado 4830, pode ser?" e variações similares
+  // ("seria bom se", "queria que") não eram reconhecidas como escrita,
+  // porque nem o imperativo nem o infinitivo cobrem essa conjugação.
+  "Precisava que você atualizasse pra mim o status do chamado 4830, pode ser?",
+  "Seria bom se você fechasse o ticket 4830.",
+  "Queria que você cancelasse o chamado 4830.",
+  "Atualizasse o status do ticket 4830 pra mim?",
+  // "dava pra"/"da pra"/"seria possível" (achado junto): prefixo de pedido
+  // coloquial que faltava, com "você" opcional entre o prefixo e o verbo.
+  "Dava pra você atualizar o status do ticket 4830?",
+  "Dá pra você fechar o ticket 4830?",
+  "Seria possível cancelar o chamado 4830?",
 ];
 
 const allowedQuestions = [
