@@ -3497,3 +3497,60 @@ test("números por extenso (1-20) funcionam como limite, igual o dígito equival
   const top = routeTicketQuestion("Top cinco tickets vencidos.");
   assert.equal(top.entities.limite, 5);
 });
+
+// --- Lote "mais um lote pra testar" (testado ao vivo) ---
+
+test("'por engano'/'pelo nome do X'/'ordenado do menor pro maior' não vazam pro nome de operador capturado", () => {
+  const porEngano = routeTicketQuestion("Tickets fechados por engano esse mês.");
+  assert.equal(porEngano.entities.operador, undefined);
+  assert.deepEqual(porEngano.toolNames, ["listar_tickets_fechados"]);
+
+  const peloNome = routeTicketQuestion("Liste os tickets em ordem alfabética pelo nome do cliente.");
+  assert.equal(peloNome.entities.operador, undefined);
+
+  const menorMaior = routeTicketQuestion(
+    "Resumo por prioridade, em tabela, resumido, ordenado do menor pro maior, só os 5 primeiros.",
+  );
+  assert.equal(menorMaior.entities.operador, undefined);
+  assert.equal(menorMaior.entities.ordem, "asc");
+});
+
+test("'só os N primeiros' (sem substantivo depois de 'primeiros') também funciona como limite", () => {
+  const route = routeTicketQuestion(
+    "Resumo por prioridade, em tabela, resumido, ordenado do menor pro maior, só os 5 primeiros.",
+  );
+  assert.equal(route.entities.limite, 5);
+
+  // Formas já cobertas antes continuam funcionando (regressão negativa)
+  assert.equal(routeTicketQuestion("Liste os primeiros 10 tickets.").entities.limite, 10);
+  assert.equal(
+    routeTicketQuestion("Primeiro ticket que a Sabrina Mariotto abriu.").entities.limite,
+    1,
+  );
+});
+
+test("'status X ou Y' pede esclarecimento em vez de concatenar 2 valores num filtro só", () => {
+  const route = routeTicketQuestion("Tickets com status Em estudo ou Em atendimento.");
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(route.intent, "esclarecimento_uniao_status");
+
+  // Status único continua funcionando normalmente
+  const unico = routeTicketQuestion("Quais tickets estão com status Em atendimento?");
+  assert.equal(unico.entities.status, "Em atendimento");
+});
+
+test("'o que significa/é <termo de catálogo>' é reconhecido como pergunta conceitual, não consulta de dados", () => {
+  const slaCongelado = routeTicketQuestion("O que significa SLA congelado?");
+  assert.equal(slaCongelado.intent, "esclarecimento_pergunta_conceitual");
+  assert.deepEqual(slaCongelado.toolNames, []);
+
+  const ticketVencido = routeTicketQuestion("O que é um ticket vencido?");
+  assert.equal(ticketVencido.intent, "esclarecimento_pergunta_conceitual");
+
+  // Perguntas de dado real com "o que"/"qual é" continuam funcionando
+  const dadoReal = routeTicketQuestion("Qual é o status do ticket 4830?");
+  assert.deepEqual(dadoReal.toolNames, ["buscar_ticket_por_numero"]);
+
+  const foraDoDominio = routeTicketQuestion("O que você consegue fazer?");
+  assert.equal(foraDoDominio.intent, "fora_do_dominio");
+});

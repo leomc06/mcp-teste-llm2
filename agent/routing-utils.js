@@ -57,6 +57,12 @@ export function extractLimit(value) {
     /\blimite(?:\s+de)?\s+(\d+)\b/,
     /\bno maximo(?:\s+de)?\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\bprimeir(?:o|os|a|as)\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
+    // "só os 5 primeiros" (achado testando o lote de perguntas ao vivo):
+    // ordem invertida ("N primeiros", sem nenhum substantivo depois) — o
+    // padrão acima exige "primeiros N <substantivo>", então essa forma
+    // mais curta e comum na fala (quando já ficou claro do que se trata
+    // pelo resto da frase) nunca batia.
+    /\b(\d+)\s+primeir(?:o|os|a|as)\b/,
     /\bate\s+(\d+)\s+(?:resultado|resultados|registro|registros|ticket|tickets)\b/,
     /\btop\s+(\d+)\b/,
     // "os 3 operadores com mais tickets"/"as 5 áreas com menos chamados"

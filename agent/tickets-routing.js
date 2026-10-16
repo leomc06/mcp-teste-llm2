@@ -1113,10 +1113,21 @@ export function extractDepartmentName(value) {
 // filtra por canal hoje (só lista o catálogo via listar_canais_tickets),
 // mas "canal" continua sendo uma palavra de domínio conhecida que não é
 // nome de pessoa, mesma classe de "fornecedor"/"sistema" acima.
+// "engano" (achado testando outro lote ao vivo): "Tickets fechados POR
+// ENGANO esse mês" capturava operador: "engano" — mesma família de
+// "favor"/"gentileza"/"último" acima (idioma de cortesia/discurso, não
+// nome de pessoa).
+// "nome" (achado junto): "Liste os tickets... PELO NOME do cliente"
+// capturava operador: "nome" — pedido de ORDENAÇÃO alfabética (não
+// suportado, dados sempre vêm ordenados por data), mas "nome" sozinho
+// nunca é um nome de pessoa de verdade.
+// "menor"/"maior" (achado junto): "ordenado DO MENOR pro maior" capturava
+// operador: "menor pro maior" — vocabulário de ordenação de ranking (ver
+// RANKING_CUE_SOURCE), não nome de pessoa.
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
-  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
+  + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
 
@@ -2104,6 +2115,27 @@ function routeTicketQuestionCore(pergunta) {
   const status =
     extractTicketStatusName(pergunta)
     ?? extractLiteralStatus(text);
+
+  // "Tickets com status Em estudo OU Em atendimento." (achado testando o
+  // lote de perguntas ao vivo): status é texto livre de catálogo (não tem
+  // um conjunto fixo pequeno como baixa/media/alta de prioridade), então
+  // extractTicketStatusName captura a frase INTEIRA depois de "status",
+  // incluindo o "ou" e o 2º valor — "Em estudo ou Em atendimento" nunca
+  // resolve como status real nenhum, só falha silenciosamente como "não
+  // encontrado" sem explicar o motivo real (são 2 valores, não 1). Mesma
+  // limitação de "só filtro 1 valor por vez" já avisada pra prioridade,
+  // aqui detectada genericamente pelo conector "ou" dentro do valor
+  // capturado (não dá pra listar os status reais, catálogo é dinâmico).
+  if (status !== undefined && /\bou\b/.test(normalizeText(status))) {
+    return createClarificationDecision(
+      "esclarecimento_uniao_status",
+      "Essa pergunta parece pedir mais de um status ao mesmo tempo — hoje só consigo filtrar por um status de cada vez. Pode perguntar sobre cada status separadamente?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com status Em estudo.\n"
+        + "- Tickets com status Em atendimento.",
+    );
+  }
+
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operadorExtraido = extractOperatorName(pergunta);
@@ -2309,7 +2341,23 @@ function routeTicketQuestionCore(pergunta) {
     "u",
   ).test(text);
 
-  if (isConceptualDimensionDiffQuestion) {
+  // "O que significa SLA congelado?" (achado testando o lote de perguntas
+  // ao vivo): mesma intenção conceitual do "diferença entre" acima, só com
+  // outra construção ("o que significa/é X"). Sem este guard, "SLA
+  // congelado" batia no gatilho de isCongeladoIntent e devolvia a listagem
+  // de tickets congelados — como se a pergunta fosse pedir DADOS, quando na
+  // verdade pede uma EXPLICAÇÃO do termo. Vocabulário restrito aos termos
+  // de catálogo/domínio conhecidos (sla/congelado/vencido/status/
+  // prioridade/área/departamento), pra não capturar "o que é o ticket
+  // 1234?" (pergunta de dado de verdade) por engano.
+  const isConceptualTermQuestion =
+    /\bo\s+que\s+(?:significa|[ée]|quer\s+dizer)\b/.test(text)
+    && new RegExp(
+      `\\b(?:sla|congelad[oa]s?|vencid[oa]s?|atrasad[oa]s?|status|prioridade|${AREA_SYNONYM_SOURCE}|departamento)\\b`,
+      "u",
+    ).test(text);
+
+  if (isConceptualDimensionDiffQuestion || isConceptualTermQuestion) {
     return createClarificationDecision(
       "esclarecimento_pergunta_conceitual",
       "Não consigo explicar o significado ou a diferença entre valores de catálogo (status, prioridade, área, departamento) — só consulto dados de tickets já existentes. Pode perguntar sobre tickets com um desses valores específicos?"
