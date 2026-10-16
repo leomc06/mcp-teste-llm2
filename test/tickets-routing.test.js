@@ -3407,3 +3407,93 @@ test("comparação de clientes aceita 'abre' (presente), não só 'abriu' (passa
   const passado = routeTicketQuestion("O cliente Acme abriu mais chamados que o cliente Beta?");
   assert.equal(passado.intent, "comparar_atividade_cliente");
 });
+
+// --- Lote "outro lote pra testar" (testado ao vivo) ---
+
+test("verbosidade ('detalhado'/'resumido') chega nos 6 branches de listagem que ainda não tinham, não só abertos/fechados", () => {
+  const casos = [
+    ["Liste os tickets congelados de forma detalhada.", "listar_tickets_congelados"],
+    ["Liste os tickets sem operador de forma detalhada.", "listar_tickets_sem_operador"],
+    ["Liste os tickets vencidos de forma detalhada.", "listar_tickets_vencidos"],
+    ["Liste os tickets mais antigos de forma detalhada.", "listar_tickets_mais_antigos"],
+    ["Liste os tickets mais recentes de forma detalhada.", "listar_tickets_mais_recentes"],
+    ["Busca tickets sobre impressora de forma detalhada.", "buscar_tickets_por_texto"],
+    ["Liste os tickets abertos mais antigos de forma detalhada.", "listar_tickets_abertos_mais_antigos"],
+  ];
+
+  for (const [pergunta, tool] of casos) {
+    const route = routeTicketQuestion(pergunta);
+    assert.deepEqual(route.toolNames, [tool], pergunta);
+    assert.equal(route.verbosidade, "detalhado", pergunta);
+  }
+});
+
+test("'canal' não vaza pro nome de operador capturado (nenhuma tool filtra por canal hoje)", () => {
+  const route = routeTicketQuestion("Tickets abertos pelo canal Telefone.");
+  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'mas atendidos por outro operador' não vaza pro nome de operador capturado (pergunta cruzada sem suporte, poda só a cláusula)", () => {
+  const route = routeTicketQuestion("Tickets abertos pelo Rodrigo mas atendidos por outro operador.");
+  assert.equal(route.entities.operador, "Rodrigo");
+});
+
+test("'tem a menor/maior carga (de trabalho)' vira ranking por operador, não nome de operador fantasma", () => {
+  const menor = routeTicketQuestion("Qual operador tem a menor carga de trabalho na área de Suporte?");
+  assert.deepEqual(menor.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(menor.entities.ordem, "asc");
+  assert.equal(menor.entities.operador, undefined);
+
+  const maior = routeTicketQuestion("Qual operador tem a maior carga de trabalho?");
+  assert.deepEqual(maior.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(maior.entities.ordem, undefined);
+});
+
+test("'N <dimensão> que mais <verbo>' (fechou/atendeu/tratou, não só 'com mais') aplica ranking + limite", () => {
+  const route = routeTicketQuestion("Quais os 3 operadores que mais fecharam tickets este mês?");
+  assert.deepEqual(route.toolNames, ["resumo_tickets_por_operador"]);
+  assert.equal(route.entities.limite, 3);
+  assert.equal(route.entities.situacao, "fechado");
+});
+
+test("comparação de 3 ou mais itens da mesma dimensão pede esclarecimento, em vez de descartar 1 item em silêncio", () => {
+  const route = routeTicketQuestion("Compare a área de Suporte, a área WEB e a área de Redes e Segurança.");
+  assert.deepEqual(route.toolNames, []);
+  assert.equal(route.intent, "esclarecimento_comparacao_3_ou_mais");
+
+  // Comparação de 2 (controle) continua funcionando normalmente
+  const doisItens = routeTicketQuestion("Compare a área de Suporte com a área WEB.");
+  assert.equal(doisItens.intent, "comparar_tickets_area");
+});
+
+test("'passou de'/'passaram de N dias' é reconhecido como teto de idade, igual 'há mais de N dias'", () => {
+  const route = routeTicketQuestion(
+    "Quantos tickets o Fábio tem aberto, considerando só os que passaram de 90 dias e são da área WEB com prioridade urgente?",
+  );
+  assert.equal(route.entities.operador, "Fábio");
+  assert.equal(route.entities.area, "WEB");
+  assert.equal(route.entities.prioridade, "urgente");
+  assert.notEqual(route.entities.dataFim, undefined);
+});
+
+test("'dia N de <mês>' (sem ano) extrai uma data específica, mesmo raciocínio de 'em <mês>' sozinho", () => {
+  const route = routeTicketQuestion("Tickets abertos dia 15 de março.");
+  assert.equal(route.entities.dataInicio, route.entities.dataFim);
+  assert.match(route.entities.dataInicio, /-03-15$/);
+
+  // Controle: "em <mês>" sozinho (mês inteiro) continua funcionando
+  const mesInteiro = routeTicketQuestion("Tickets abertos no mês de agosto.");
+  assert.match(mesInteiro.entities.dataInicio, /-08-01$/);
+});
+
+test("números por extenso (1-20) funcionam como limite, igual o dígito equivalente", () => {
+  const porExtenso = routeTicketQuestion("Liste os dez tickets mais antigos ainda abertos.");
+  assert.equal(porExtenso.entities.limite, 10);
+
+  const digito = routeTicketQuestion("Liste os 10 tickets mais antigos ainda abertos.");
+  assert.equal(digito.entities.limite, 10);
+
+  const top = routeTicketQuestion("Top cinco tickets vencidos.");
+  assert.equal(top.entities.limite, 5);
+});

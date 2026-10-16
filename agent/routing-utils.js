@@ -9,8 +9,49 @@ export function normalizeText(value) {
     .trim();
 }
 
+// Números por extenso (achado testando o lote de perguntas ao vivo): "Liste
+// os DEZ tickets mais antigos..." não reconhecia nenhum limite, porque
+// nenhum padrão abaixo aceitava algo que não fosse dígito — só cobre 1 a 20
+// (faixa mais comum em "top N"/"primeiros N", números maiores quase sempre
+// aparecem como dígito mesmo na fala real).
+const NUMBER_WORDS = {
+  um: 1,
+  uma: 1,
+  dois: 2,
+  duas: 2,
+  tres: 3,
+  quatro: 4,
+  cinco: 5,
+  seis: 6,
+  sete: 7,
+  oito: 8,
+  nove: 9,
+  dez: 10,
+  onze: 11,
+  doze: 12,
+  treze: 13,
+  quatorze: 14,
+  catorze: 14,
+  quinze: 15,
+  dezesseis: 16,
+  dezessete: 17,
+  dezoito: 18,
+  dezenove: 19,
+  vinte: 20,
+};
+
+const NUMBER_WORD_PATTERN = new RegExp(`\\b(${Object.keys(NUMBER_WORDS).join("|")})\\b`, "gu");
+
+// Exportada (não só usada internamente por extractLimit) porque
+// extractLooseNumberMatch em tickets-routing.js também precisa dela — "dez
+// tickets mais antigos" (sem "primeiros"/"top"/"com mais") só tem número
+// extraído ali, não pelos padrões específicos acima.
+export function substituiNumerosPorExtenso(text) {
+  return text.replace(NUMBER_WORD_PATTERN, (match) => String(NUMBER_WORDS[match]));
+}
+
 export function extractLimit(value) {
-  const text = normalizeText(value);
+  const text = substituiNumerosPorExtenso(normalizeText(value));
 
   const patterns = [
     /\blimite(?:\s+de)?\s+(\d+)\b/,
@@ -24,6 +65,11 @@ export function extractLimit(value) {
     // isso, "Quais os 3 operadores com mais tickets fechados..." ignorava o
     // "3" e devolvia TODOS os operadores do resumo, não só os 3 pedidos.
     /\b(\d+)\s+\p{L}+\s+com\s+(?:mais|menos)\b/u,
+    // "os 3 operadores QUE mais fecharam" (achado testando o lote de
+    // perguntas ao vivo): mesma ideia do padrão acima, só com "que" no
+    // lugar de "com" (ex.: "que mais fecharam/atenderam/trataram", um verbo
+    // de ação em vez de "com mais tickets").
+    /\b(\d+)\s+\p{L}+\s+que\s+(?:mais|menos)\b/u,
   ];
 
   for (const pattern of patterns) {

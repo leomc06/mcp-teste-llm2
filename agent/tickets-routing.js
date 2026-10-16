@@ -2,6 +2,7 @@ import {
   compactEntities,
   extractLimit,
   normalizeText,
+  substituiNumerosPorExtenso,
 } from "./routing-utils.js";
 
 // "está"/"esta" (singular) ou "estão"/"estao" (plural) — atenção: o plural
@@ -38,6 +39,18 @@ const TRAILING_EXPORT_CLAUSE_PATTERN =
 // tickets"), que nunca resolve no catálogo real.
 const TRAILING_METRIC_CLAUSE_PATTERN =
   /\s+em\s+(?:volume|quantidade|numero)\s+de\s+.*$/iu;
+
+// "mas atendidos/tratados por outro operador" (achado testando o lote de
+// perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
+// OPERADOR." vazava a cláusula inteira pro nome capturado (operador:
+// "Rodrigo mas atendidos por outro operador") — a pergunta cruzada em si
+// (aberto por X, atendido por Y) não é suportada pelo modelo de dados (só
+// existe 1 campo "operator" por ticket), então aqui só poda a cláusula; o
+// filtro vira o operador que ABRIU (Rodrigo), a parte não suportada é
+// descartada honestamente em silêncio, igual qualquer outra combinação sem
+// suporte no sistema.
+const TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN =
+  /\s+mas\s+(?:foram\s+|foi\s+)?(?:atendid[oa]s?|tratad[oa]s?)\s+por\s+outro\s+operador\b.*$/iu;
 
 // Achado ao vivo testando continuação conversacional (agent/continuation.js):
 // mergeContinuation só concatena a pergunta anterior com a nova usando um
@@ -211,9 +224,24 @@ const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cad
 // "Qual cliente TEVE mais tickets nos últimos 30 dias?" não batia em nenhum
 // gatilho de ranking, e a frase inteira acabava capturada por engano como
 // nome de cliente ("teve mais tickets") por extractClientName.
+// "tem a maior/menor carga (de trabalho)" (achado testando o lote de
+// perguntas ao vivo): "Qual operador tem A MENOR carga de trabalho na área
+// de Suporte?" não batia em nenhuma forma acima (todas exigem "mais"/
+// "menos" logo depois do verbo, sem o artigo "a" nem o adjetivo "maior"/
+// "menor" no meio) — a frase inteira caía no fallback genérico, e "tem a
+// menor carga de trabalho" virava nome de operador.
+// "fechou"/"fecharam"/"atendeu"/"atenderam"/"tratou"/"trataram" (achado
+// testando o lote de perguntas ao vivo): "Quais os 3 operadores QUE MAIS
+// FECHARAM tickets este mês?" não batia em nenhuma forma de verbo aceita
+// (só possuir/ter/abrir) — a frase inteira caía no listar_tickets_fechados
+// genérico, perdendo o ranking "3 operadores que mais X" por completo. Mesmo
+// vocabulário de verbo já aceito em OPERATOR_WORKLOAD_VERB_SOURCE, reusado
+// aqui pelo mesmo motivo (evitar 2 listas divergentes do mesmo verbo).
 const RANKING_CUE_SOURCE =
-  "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|com)\\s+(?:mais|menos)(?!\\s+de\\b)"
-  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)))";
+  "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram)|com)"
+  + "\\s+(?:mais|menos)(?!\\s+de\\b)"
+  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram))"
+  + "|tem\\s+a\\s+(?:maior|menor)\\s+carga(?:\\s+de\\s+trabalho)?)";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
 // pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes) ou
@@ -495,6 +523,23 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "dia 15 de março" (achado testando o lote de perguntas ao vivo): dia +
+  // mês nomeado, sem ano — mesmo raciocínio de "no mês de agosto"/"em
+  // agosto" logo abaixo (assume o ano corrente), só que com um dia
+  // específico dentro do mês, não o mês inteiro.
+  const diaMesNomeadoMatch = text.match(
+    new RegExp(`\\bdia\\s+(\\d{1,2})\\s+de\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`, "iu"),
+  );
+
+  if (diaMesNomeadoMatch) {
+    const dia = diaMesNomeadoMatch[1].padStart(2, "0");
+    const mes = MONTH_NUMBERS[diaMesNomeadoMatch[2].toLowerCase()];
+    const ano = agora.getFullYear();
+    const isoData = `${ano}-${mes}-${dia}`;
+
+    return { dataInicio: isoData, dataFim: isoData };
+  }
+
   // "no mês de agosto"/"em agosto" — nome do mês solto, sem dia nem ano.
   // Diferente de LONG_DATE_SOURCE (que exige "de <mês> de <ano>" completo),
   // aqui assume-se o ano corrente, já que é assim que a maioria das
@@ -551,7 +596,13 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // radical + "s?" só (bug achado testando esta própria correção: "6
   // meses" não batia com "mes" + s? opcional, porque sobra um "e" entre os
   // dois "s").
-  const haMaisDeMatch = text.match(/\bha\s+mais\s+de\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu);
+  // "passou de"/"passaram de" (achado testando o lote de perguntas ao
+  // vivo): mesmo sentido de "há mais de N dias" (teto na data de abertura),
+  // só com outro verbo — "considerando só os que PASSARAM DE 90 dias" não
+  // batia em nenhuma forma aceita.
+  const haMaisDeMatch = text.match(
+    /\b(?:ha\s+mais\s+de|passou\s+de|passaram\s+de)\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu,
+  );
 
   if (haMaisDeMatch) {
     const quantidade = Number(haMaisDeMatch[1]);
@@ -635,7 +686,7 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
 // também não faz parte do nome — mesmo raciocínio do padrão acima, mas pro
 // mês nomeado que extractRelativeDateRange passou a reconhecer.
 const TRAILING_NAMED_MONTH_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:no\\s+m[êe]s\\s+de|em)\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
+  `\\s+(?:dia\\s+\\d{1,2}\\s+de|no\\s+m[êe]s\\s+de|em)\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
   "iu",
 );
 
@@ -651,7 +702,7 @@ const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
 // período relativo em aberto que extractRelativeDateRange também passou a
 // reconhecer.
 const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
-  /\s+h[áa]\s+mais\s+de\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
+  /\s+(?:h[áa]\s+mais\s+de|passou\s+de|passaram\s+de)\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
 
 // "nos últimos N dias/semanas/meses/anos" — mesma ideia, pro intervalo
 // fechado que extractRelativeDateRange também passou a reconhecer. ".*$" no
@@ -776,6 +827,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
+    .replace(TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
@@ -1056,9 +1108,14 @@ export function extractDepartmentName(value) {
 // "sla" (achado junto da ampliação do vocabulário de vencido, F5): "tickets
 // fora do SLA" capturava operador: "SLA" pelo mesmo motivo de "prazo" acima
 // (fallback genérico "do/da X" sem essa exclusão).
+// "canal" (achado testando o lote de perguntas ao vivo): "tickets abertos
+// PELO CANAL Telefone" capturava operador: "canal Telefone" — nenhuma tool
+// filtra por canal hoje (só lista o catálogo via listar_canais_tickets),
+// mas "canal" continua sendo uma palavra de domínio conhecida que não é
+// nome de pessoa, mesma classe de "fornecedor"/"sistema" acima.
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
-  + "|fornecedor\\b|prazo\\b|sla\\b"
+  + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
@@ -1825,8 +1882,13 @@ export function extractPage(value) {
 const LOOSE_NUMBER_NOISE_PATTERN =
   /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b|\b\d{1,2}\s+\d{1,2}\s+\d{4}\b|\b\d{4}\s+\d{1,2}\s+\d{1,2}\b/giu;
 
+// "dez tickets mais antigos" (achado testando o lote de perguntas ao vivo):
+// número por extenso sem nenhum gatilho específico ("primeiros"/"top"/"com
+// mais") — extractLimit nunca chega a tentar, só este fallback solto é
+// usado pelos branches de mais_antigos/mais_recentes/sla_vencido. Mesma
+// substituição de extractLimit, reaproveitada em vez de duplicada.
 function extractLooseNumberMatch(text) {
-  return text.replace(LOOSE_NUMBER_NOISE_PATTERN, "").match(/\b(\d+)\b/);
+  return substituiNumerosPorExtenso(text).replace(LOOSE_NUMBER_NOISE_PATTERN, "").match(/\b(\d+)\b/);
 }
 
 // Pedido explícito de visualização — troca a visão padrão da resposta
@@ -2074,6 +2136,40 @@ function routeTicketQuestionCore(pergunta) {
     limite,
     pagina,
   });
+
+  // "Compare a área de Suporte, a área WEB e a área de Redes e Segurança."
+  // (achado testando o lote de perguntas ao vivo): comparação de 3+ itens
+  // da mesma dimensão — nenhuma tool de comparação suporta mais de 2 de
+  // cada vez (analisar_carga_operador/analisar_atividade_cliente/
+  // listar_tickets são sempre chamadas em pares) — sem este guard, os
+  // extratores de 2 itens só (mais abaixo) capturavam 2 dos 3 nomes e
+  // descartavam o 3º (ou o do meio) em silêncio, sem avisar que a
+  // comparação de verdade não foi feita. Checado ANTES de qualquer
+  // extrator de 2 itens, pra nunca chegar a uma captura parcial enganosa.
+  function contaMencoesDimensao(dimensionSource) {
+    const matches = text.match(new RegExp(`\\b(?:${dimensionSource})\\b`, "gu"));
+
+    return matches === null ? 0 : matches.length;
+  }
+
+  const mencionaComparacaoDe3OuMais =
+    /\bcompar[ae]\b/.test(text)
+    && [
+      contaMencoesDimensao(AREA_SYNONYM_SOURCE),
+      contaMencoesDimensao("departamento"),
+      contaMencoesDimensao(USER_LOOKUP_NOUN_SOURCE),
+      contaMencoesDimensao(CLIENT_LOOKUP_NOUN_SOURCE),
+    ].some((contagem) => contagem >= 3);
+
+  if (mencionaComparacaoDe3OuMais) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_3_ou_mais",
+      "Só consigo comparar 2 de cada vez — não dá pra comparar 3 ou mais itens numa pergunta só. Pode comparar 2 por vez?"
+        + "\n\nExemplos:\n"
+        + "- Compare a área de Suporte com a área WEB.\n"
+        + "- Compare a área WEB com a área de Redes e Segurança.",
+    );
+  }
 
   // Comparação entre 2 tickets ou 2 operadores — checado antes de qualquer
   // outra intenção, já que "compare o ticket X com o Y" não deve cair no
@@ -2654,11 +2750,14 @@ function routeTicketQuestionCore(pergunta) {
     /\bquem\s+(?:tem|possui|esta\s+com)\s+(?:mais|menos)\b/.test(text)
     || /\bquem\s+(?:mais|menos)\s+(?:tem|possui|esta\s+com)\b/.test(text);
 
-  // Direção do ranking pedido: "menos" (ascendente, menor primeiro) vs.
-  // "mais"/nada (descendente, padrão). Exclui "menos de N dias"/"pelo menos
-  // N" — não são ranking, são limiar/quantidade mínima.
+  // Direção do ranking pedido: "menos"/"menor" (ascendente, menor primeiro)
+  // vs. "mais"/"maior"/nada (descendente, padrão). Exclui "menos de N dias"/
+  // "pelo menos N" — não são ranking, são limiar/quantidade mínima. "menor"
+  // (achado junto de "tem a menor carga", ver RANKING_CUE_SOURCE acima) é o
+  // mesmo sentido ascendente de "menos", só em forma de adjetivo.
   const ordemRanking =
-    /\bmenos\b(?!\s+de\b)/.test(text) && !/\bpelo\s+menos\b/.test(text)
+    (/\bmenos\b(?!\s+de\b)/.test(text) && !/\bpelo\s+menos\b/.test(text))
+    || /\bmenor\b/.test(text)
       ? "asc"
       : undefined;
 
@@ -2856,11 +2955,17 @@ function routeTicketQuestionCore(pergunta) {
   }
 
   if (isCongeladoIntent) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_congelados",
       "listar_tickets_congelados",
       compactEntities({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   // Checado ANTES da busca textual de propósito (item 2 do plano de
@@ -2882,7 +2987,7 @@ function routeTicketQuestionCore(pergunta) {
   const textoBusca = extractSearchText(pergunta);
 
   if (textoBusca !== undefined) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "buscar_por_texto",
       "buscar_tickets_por_texto",
       compactEntities({
@@ -2900,6 +3005,12 @@ function routeTicketQuestionCore(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isOldestOpenIntent) {
@@ -2908,7 +3019,7 @@ function routeTicketQuestionCore(pergunta) {
     // limite: 2).
     const numeroSolto = extractLooseNumberMatch(text);
 
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_abertos_mais_antigos",
       "listar_tickets_abertos_mais_antigos",
       compactEntities({
@@ -2921,12 +3032,18 @@ function routeTicketQuestionCore(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isSlaVencidoIntent) {
     const numeroSolto = extractLooseNumberMatch(text);
 
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_vencidos",
       "listar_tickets_vencidos",
       compactEntities({
@@ -2943,6 +3060,12 @@ function routeTicketQuestionCore(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   const operadorCarga = extractOperatorWorkloadName(pergunta);
@@ -3049,7 +3172,7 @@ function routeTicketQuestionCore(pergunta) {
   if (isOldestOverallIntent) {
     const numeroSolto = extractLooseNumberMatch(text);
 
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_mais_antigos",
       "listar_tickets_mais_antigos",
       compactEntities({
@@ -3066,6 +3189,12 @@ function routeTicketQuestionCore(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isMostRecentIntent) {
@@ -3073,7 +3202,7 @@ function routeTicketQuestionCore(pergunta) {
     // como limite (mesmo cuidado do branch de mais antigos).
     const numeroSolto = extractLooseNumberMatch(text);
 
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_mais_recentes",
       "listar_tickets_mais_recentes",
       compactEntities({
@@ -3090,6 +3219,12 @@ function routeTicketQuestionCore(pergunta) {
         pagina,
       }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
   if (isAbertoIntent && !isFechadoIntent) {
@@ -3150,11 +3285,17 @@ function routeTicketQuestionCore(pergunta) {
   }
 
   if (isSemOperadorIntent) {
-    return createTicketDecision(
+    const decision = createTicketDecision(
       "listar_sem_operador",
       "listar_tickets_sem_operador",
       compactEntities({ status, area, departamento, cliente, prioridade, dataInicio, dataFim, limite, pagina }),
     );
+
+    if (verbosidadePreferida) {
+      decision.verbosidade = verbosidadePreferida;
+    }
+
+    return decision;
   }
 
 
