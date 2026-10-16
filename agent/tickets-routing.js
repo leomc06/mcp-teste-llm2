@@ -52,6 +52,16 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 const TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN =
   /\s+mas\s+(?:foram\s+|foi\s+)?(?:atendid[oa]s?|tratad[oa]s?)\s+por\s+outro\s+operador\b.*$/iu;
 
+// "e me diga quem está mais sobrecarregado" (achado testando o lote de
+// perguntas ao vivo): jeito comum de fechar um pedido de comparação pedindo
+// um veredito explícito — "Compare a carga do X com a do Y E ME DIGA QUEM
+// está mais sobrecarregado." vazava a cláusula inteira pro 2º nome
+// capturado (operador: "Y e me diga quem"). A resposta da comparação já diz
+// os números de cada lado (o usuário consegue ver quem está mais
+// sobrecarregado olhando o resultado), então só poda a cláusula.
+const TRAILING_TELL_ME_WHO_CLAUSE_PATTERN =
+  /\s+e\s+(?:me\s+)?di(?:ga|z)\s+quem\b.*$/iu;
+
 // Achado ao vivo testando continuação conversacional (agent/continuation.js):
 // mergeContinuation só concatena a pergunta anterior com a nova usando um
 // espaço, sem nenhuma pontuação entre as duas — "Resumo... na área Suporte"
@@ -397,8 +407,12 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(segundaPassada), dataFim: formatIsoDate(sextaPassada) };
   }
 
-  // "Semana de trabalho" = segunda a sexta da semana atual.
-  if (/\b(?:essa|esta)\s+semana\b/.test(text)) {
+  // "Semana de trabalho" = segunda a sexta da semana atual. "d?essa"/
+  // "d?esta" (achado testando o lote de perguntas ao vivo): "DESSA/DESTE
+  // semana/mês/ano" (contração natural de "de"+"essa"/"de"+"este", tão
+  // comum quanto a forma sem contração) não era reconhecida em nenhum dos
+  // 3 períodos (semana/mês/ano) — a data inteira era ignorada em silêncio.
+  if (/\b(?:d|n)?(?:essa|esta)\s+semana\b/.test(text)) {
     const segunda = startOfWeek(agora);
     const sexta = new Date(segunda);
     sexta.setDate(sexta.getDate() + 4);
@@ -422,7 +436,7 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
-  if (/\b(?:esse|este)\s+mes\b/.test(text)) {
+  if (/\b(?:d|n)?(?:esse|este)\s+mes\b/.test(text)) {
     const primeiroDia = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
 
@@ -470,7 +484,7 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(inicio), dataFim: formatIsoDate(agora) };
   }
 
-  if (/\b(?:esse|este)\s+ano\b/.test(text)) {
+  if (/\b(?:d|n)?(?:esse|este)\s+ano\b/.test(text)) {
     const anoAtual = agora.getFullYear();
 
     return {
@@ -675,9 +689,9 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 // capturado (departamento: "Coids teve no").
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
-    + "|(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
-    + "|(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|[úu]ltimo\\s+m[êe]s"
-    + "|(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
+    + "|(?:d|n)?(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
+    + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|[úu]ltimo\\s+m[êe]s"
+    + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)\\b.*$",
   "iu",
 );
@@ -828,6 +842,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
     .replace(TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN, "")
+    .replace(TRAILING_TELL_ME_WHO_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
@@ -1052,9 +1067,18 @@ export function extractAreaName(value) {
   ]);
 }
 
+// "sem departamento atribuído" (achado testando o lote de perguntas ao
+// vivo): "atribuído" capturava como se fosse o NOME do departamento — não
+// existe uma tool "listar_tickets_sem_departamento" (só sem_operador),
+// então o pedido não tem como ser atendido de verdade, mas pelo menos não
+// deve gerar um filtro de departamento "atribuído" (nunca resolve no
+// catálogo real).
 export function extractDepartmentName(value) {
   return extractByPatterns(value, [
-    new RegExp(`\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
+    new RegExp(
+      `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!atribu[ií]do\\b)(.+)$`,
+      "iu",
+    ),
   ]);
 }
 
@@ -1212,6 +1236,13 @@ export function extractOperatorName(value) {
       `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
       "iu",
     ),
+    // "os tickets QUE o Fábio Gali tratou/atendeu/fechou" (achado testando o
+    // lote de perguntas ao vivo): mesma ideia de "que X abriu" já aceita
+    // por extractClientName, só do lado do operador — quem ABRE um ticket é
+    // o cliente, mas quem TRATA/ATENDE/FECHA é o operador. Sem este padrão,
+    // "Mostra os tickets que o Fábio Gali tratou." não capturava operador
+    // nenhum, caindo no fallback genérico sem filtro algum.
+    new RegExp(`\\bque\\s+(?:o\\s+|a\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b`, "iu"),
   ]);
 }
 

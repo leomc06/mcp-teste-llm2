@@ -3554,3 +3554,71 @@ test("'o que significa/é <termo de catálogo>' é reconhecido como pergunta con
   const foraDoDominio = routeTicketQuestion("O que você consegue fazer?");
   assert.equal(foraDoDominio.intent, "fora_do_dominio");
 });
+
+// --- Lote "outro lote" (testado ao vivo) ---
+
+test("'desse'/'deste'/'nessa'/'nesta'/'nesse'/'neste' (contrações de 'esse/este') são reconhecidas, não só a forma sem contração", () => {
+  const casosMes = [
+    "Tickets abertos esse mês.",
+    "Tickets abertos este mês.",
+    "Tickets abertos desse mês.",
+    "Tickets abertos deste mês.",
+    "Tickets abertos nesse mês.",
+    "Tickets abertos neste mês.",
+  ];
+
+  for (const pergunta of casosMes) {
+    const route = routeTicketQuestion(pergunta);
+    assert.equal(route.entities.dataInicio, "2026-10-01", pergunta);
+    assert.equal(route.entities.dataFim, "2026-10-31", pergunta);
+  }
+
+  const casosSemana = [
+    "Tickets abertos essa semana.",
+    "Tickets abertos dessa semana.",
+    "Tickets abertos nessa semana.",
+    "Tickets abertos nesta semana.",
+  ];
+
+  for (const pergunta of casosSemana) {
+    const route = routeTicketQuestion(pergunta);
+    assert.notEqual(route.entities.dataInicio, undefined, pergunta);
+  }
+
+  const ano = routeTicketQuestion("Tickets abertos desse ano.");
+  assert.equal(ano.entities.dataInicio, "2026-01-01");
+  assert.equal(ano.entities.dataFim, "2026-12-31");
+
+  // Poda de cláusula continua funcionando com as formas contraídas
+  const comNome = routeTicketQuestion("Tickets do departamento Governança nessa semana.");
+  assert.equal(comNome.entities.departamento, "Governança");
+});
+
+test("'sem departamento atribuído' não vira filtro de departamento 'atribuído' (não há tool sem_departamento, só poda a cláusula)", () => {
+  const route = routeTicketQuestion("Tickets sem departamento atribuído.");
+  assert.equal(route.entities.departamento, undefined);
+});
+
+test("'e me diga quem está mais sobrecarregado' não vaza pro 2º nome de uma comparação", () => {
+  const route = routeTicketQuestion(
+    "Compare a carga do Fábio Gali com a do Fábio Moreira e me diga quem está mais sobrecarregado.",
+  );
+  assert.equal(route.compare?.length, 2);
+  assert.equal(route.compare[0].args.operador, "Fábio Gali");
+  assert.equal(route.compare[1].args.operador, "Fábio Moreira");
+});
+
+test("'que o operador X tratou/atendeu/fechou' extrai o operador, mesma ideia de 'que X abriu' já aceita pra cliente", () => {
+  const tratou = routeTicketQuestion("Mostra os tickets que o Fábio Gali tratou.");
+  assert.equal(tratou.entities.operador, "Fábio Gali");
+
+  const atendeu = routeTicketQuestion("Mostra os tickets que o Fábio Gali atendeu.");
+  assert.equal(atendeu.entities.operador, "Fábio Gali");
+
+  const fechou = routeTicketQuestion("Mostra os tickets que o Fábio Gali fechou.");
+  assert.equal(fechou.entities.operador, "Fábio Gali");
+
+  // Controle: "que X abriu" (cliente) continua funcionando normalmente
+  const abriu = routeTicketQuestion("Primeiro ticket que a Sabrina Mariotto abriu.");
+  assert.equal(abriu.entities.cliente, "Sabrina Mariotto");
+});
