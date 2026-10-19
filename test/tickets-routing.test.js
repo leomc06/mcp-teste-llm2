@@ -3879,3 +3879,40 @@ test("'último dia do mês' é reconhecido como data de calendário, não hijack
   assert.equal(route.entities.dataInicio, route.entities.dataFim);
   assert.notEqual(route.entities.dataInicio, undefined);
 });
+
+test("'excluindo'/'sem'/'menos' aplicado a fechados agora é reconhecido como negação (vira aberto), igual 'não'/'exceto'/'tirando' já eram (2ª lista de marcadores, paralela, estava dessincronizada)", () => {
+  const excluindo = routeTicketQuestion("Tickets excluindo os fechados.");
+  assert.equal(excluindo.intent, "listar_abertos");
+
+  const sem = routeTicketQuestion("Tickets sem os fechados.");
+  assert.equal(sem.intent, "listar_abertos");
+
+  const menos = routeTicketQuestion("Quantos tickets o Fábio tratou, menos os fechados?");
+  assert.equal(menos.intent, "listar_abertos");
+  assert.equal(menos.entities.operador, "Fábio");
+});
+
+test("comparação mistura área com departamento (e vice-versa) pede esclarecimento, em vez de aplicar os 2 filtros juntos como AND", () => {
+  const areaDepartamento = routeTicketQuestion("Compare a área de TI com o departamento de RH.");
+  assert.equal(areaDepartamento.intent, "esclarecimento_comparacao_dimensoes_diferentes");
+
+  const departamentoArea = routeTicketQuestion("Compare o departamento de TI com a área de Redes.");
+  assert.equal(departamentoArea.intent, "esclarecimento_comparacao_dimensoes_diferentes");
+
+  // Controle: comparação de verdade entre 2 departamentos continua OK
+  const doisDepartamentos = routeTicketQuestion("Compare o departamento de TI com o departamento de RH.");
+  assert.equal(doisDepartamentos.intent, "comparar_tickets_departamento");
+});
+
+test("'que X não abriu/tratou/atendeu/fechou' (negação da AÇÃO, não de um valor) pede esclarecimento, em vez de capturar um nome-lixo com o 'não' preso dentro", () => {
+  const negado = routeTicketQuestion("Tickets que a Ana não abriu essa semana.");
+  assert.equal(negado.intent, "esclarecimento_negacao");
+
+  // Controle: forma positiva continua extraindo o cliente certo
+  const positivo = routeTicketQuestion("Tickets que a Ana abriu essa semana.");
+  assert.equal(positivo.entities.cliente, "Ana");
+
+  // Controle: "que não tem operador" continua sendo isSemOperadorIntent (estado), não esta clarificação
+  const semOperador = routeTicketQuestion("Tickets que não tem operador atribuído.");
+  assert.equal(semOperador.intent, "listar_sem_operador");
+});

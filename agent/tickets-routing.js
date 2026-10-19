@@ -2474,6 +2474,38 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Tickets que a Ana NÃO abriu essa semana." (achado testando o lote de
+  // perguntas ao vivo): nega a AÇÃO (quem NÃO fez algo), não o VALOR de uma
+  // dimensão já capturada — diferente de todas as negações tratadas em
+  // detectaNegacaoNaoSuportada (mais abaixo), que exigem um valor JÁ
+  // extraído pra negar. Checado ANTES de extractClientName/extractOperatorName
+  // de propósito: o padrão "que X abriu"/"que X tratou/atendeu/fechou" (ver
+  // esses extratores) usa captura NÃO-gulosa até o verbo, então "não" ficava
+  // PRESO dentro do próprio nome capturado ("Ana não"), que nunca bate por
+  // substring com nenhum contact_name/operador real — a negação nunca era
+  // detectada porque o "não" não ficava ANTES do valor capturado (como os
+  // outros casos esperam), ficava DENTRO dele. Não dá pra inverter com
+  // segurança (precisaria do conjunto de TODOS que não fizeram, não existe
+  // essa tool), então recusa honestamente, igual as outras negações sem
+  // suporte. "tem" fica de fora do verbo de operador de propósito — "que
+  // não tem operador" já é a intenção isSemOperadorIntent (estado), tratada
+  // à parte, não entra aqui.
+  const ACAO_NEGAVEL_SOURCE = `${CLIENT_ACTIVITY_VERB_SOURCE}|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram)`;
+  const mencionaAcaoNegada = new RegExp(
+    `\\bque\\s+(?:o\\s+|a\\s+)?.+?\\s+n[ãa]o\\s+(?:${ACAO_NEGAVEL_SOURCE})\\b`,
+    "u",
+  ).test(text);
+
+  if (mencionaAcaoNegada) {
+    return createClarificationDecision(
+      "esclarecimento_negacao",
+      "Não consigo filtrar por quem NÃO fez uma ação (abrir/tratar/atender/fechar) — as consultas disponíveis só filtram por quem FEZ. Pode reformular dizendo o que você quer ver diretamente?"
+        + "\n\nExemplos:\n"
+        + "- Tickets que a Ana abriu essa semana.\n"
+        + "- Tickets sem operador atribuído.",
+    );
+  }
+
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operadorExtraido = extractOperatorName(pergunta);
@@ -2649,10 +2681,20 @@ function routeTicketQuestionCore(pergunta) {
     "u",
   ).test(text);
   const comparaDimensaoArea = new RegExp(`\\b${AREA_SYNONYM_SOURCE}(?:s)?\\b`, "u").test(text);
+  // "Compare a área de TI com o departamento de RH." (achado testando o
+  // lote de perguntas ao vivo): "departamento" nunca entrava nesta conta —
+  // sem ele, essa frase não batia em NENHUM extrator específico (cada um
+  // exige a MESMA palavra de dimensão nos 2 lados) nem neste guard
+  // genérico (só 1 dimensão "contada" — área —, abaixo do limiar de 2), e
+  // caía no fallback de listagem com os 2 filtros juntos (área E
+  // departamento, como se fossem um AND), perdendo a comparação por
+  // completo.
+  const comparaDimensaoDepartamento = /\bdepartamentos?\b/u.test(text);
   const quantasDimensoesComparadas = [
     comparaDimensaoOperador,
     comparaDimensaoCliente,
     comparaDimensaoArea,
+    comparaDimensaoDepartamento,
   ].filter(Boolean).length;
 
   const mencionaComparacaoDimensoesMisturadas =
@@ -2819,12 +2861,30 @@ function routeTicketQuestionCore(pergunta) {
   // "aberto", mas não batia em nenhum marcador antes — o sistema lia
   // "fechados" como filtro POSITIVO (o oposto do pedido), já que só
   // "não"/"diferente de"/"exceto" eram reconhecidos como negação.
+  // "sem" SOZINHO, "excluindo", "tira"/"tire" e "menos" + artigo (achado
+  // testando o lote de perguntas ao vivo): esta fonte é uma 2ª lista de
+  // marcadores de negação, PARALELA a NEGATION_MARKER_SOURCE (module-level,
+  // usada por detectaNegacaoNaoSuportada/extractTicketStatusName mais
+  // abaixo) — as 2 foram crescendo em momentos diferentes e saíram
+  // dessincronizadas: cada sinônimo novo ("excluindo", "tira"/"tire",
+  // "menos X") entrava só na outra lista, nunca aqui. Resultado: "Tickets
+  // EXCLUINDO OS FECHADOS."/"...MENOS OS FECHADOS?" nunca batiam em
+  // NEGATED_CLOSED_SOURCE, e isNegatedClosed ficava false — isFechadoIntent
+  // continuava true, roteando pro OPOSTO exato do pedido (lista só os
+  // fechados, em vez de excluí-los). Mesmo cuidado do "menos" na outra
+  // lista: exige um artigo logo depois, pra não colidir com ranking
+  // ascendente ("operador com MENOS tickets") nem limiar numérico ("MENOS
+  // de 30 dias").
   const NEGATION_PREFIX_SOURCE =
     "(?:nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?"
     + "|diferentes?\\s+de\\s+"
     + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
-    + "|sem\\s+contar\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
-    + "|tirando\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?)";
+    + "|sem\\s+(?:contar\\s+)?(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|tirando\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|tira\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|tire\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|excluindo\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|menos\\s+(?:o\\s+|a\\s+|os\\s+|as\\s+)?)";
   const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
 
