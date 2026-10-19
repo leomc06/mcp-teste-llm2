@@ -436,6 +436,40 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "mês retrasado" (achado testando o lote de perguntas ao vivo): 2 meses
+  // atrás (o mês ANTES do mês passado) — mesmo raciocínio de "mês passado"
+  // acima, só 1 mês a mais pra trás. Checado DEPOIS de "mês passado" de
+  // propósito (regex mais específico primeiro — "retrasado" não contém
+  // "passado", então a ordem não causaria colisão de match, mas mantém a
+  // leitura em sequência lógica: passado, depois retrasado).
+  if (/\bmes\s+retrasado\b/.test(text)) {
+    const primeiroDiaMesAtual = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    const primeiroDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 2, 1);
+    const ultimoDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 1, 0);
+
+    return {
+      dataInicio: formatIsoDate(primeiroDiaMesRetrasado),
+      dataFim: formatIsoDate(ultimoDiaMesRetrasado),
+    };
+  }
+
+  // "entre o dia 1 e o dia 15 deste mês" (achado testando o lote de
+  // perguntas ao vivo): intervalo de DIAS dentro do mês atual — mais
+  // específico que "esse mês" sozinho (mês inteiro), checado ANTES pra não
+  // perder o intervalo real de dias e virar o mês inteiro por engano.
+  const entreDiasDesseMesMatch = text.match(
+    /\bentre\s+(?:o\s+)?dia\s+(\d{1,2})\s+e\s+(?:o\s+)?dia\s+(\d{1,2})\s+(?:d|n)?(?:esse|este)\s+mes\b/iu,
+  );
+
+  if (entreDiasDesseMesMatch) {
+    const diaInicio = entreDiasDesseMesMatch[1].padStart(2, "0");
+    const diaFim = entreDiasDesseMesMatch[2].padStart(2, "0");
+    const ano = agora.getFullYear();
+    const mes = String(agora.getMonth() + 1).padStart(2, "0");
+
+    return { dataInicio: `${ano}-${mes}-${diaInicio}`, dataFim: `${ano}-${mes}-${diaFim}` };
+  }
+
   if (/\b(?:d|n)?(?:esse|este)\s+mes\b/.test(text)) {
     const primeiroDia = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
@@ -535,6 +569,28 @@ export function extractRelativeDateRange(text, agora = new Date()) {
       dataInicio: formatIsoDate(new Date(ano, mes - 1, 1)),
       dataFim: formatIsoDate(agora),
     };
+  }
+
+  // "desde o dia 10 de março"/"a partir do dia 10 de março" (achado
+  // testando o lote de perguntas ao vivo): mesma ideia de "desde agosto"/
+  // "a partir de agosto" acima (intervalo ABERTO, até hoje), só que com um
+  // dia específico dentro do mês em vez do mês inteiro — checado ANTES do
+  // padrão "dia N de mês" sozinho (mais específico primeiro), senão esse
+  // padrão mais genérico batia primeiro e virava um snapshot de 1 dia só
+  // (dataInicio = dataFim), quando o pedido real é um intervalo aberto.
+  const desdeDiaMesNomeadoMatch = text.match(
+    new RegExp(
+      `\\b(?:desde\\s+(?:o\\s+)?|a\\s+partir\\s+d[oe]\\s+)dia\\s+(\\d{1,2})\\s+de\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`,
+      "iu",
+    ),
+  );
+
+  if (desdeDiaMesNomeadoMatch) {
+    const dia = desdeDiaMesNomeadoMatch[1].padStart(2, "0");
+    const mes = MONTH_NUMBERS[desdeDiaMesNomeadoMatch[2].toLowerCase()];
+    const ano = agora.getFullYear();
+
+    return { dataInicio: `${ano}-${mes}-${dia}`, dataFim: formatIsoDate(agora) };
   }
 
   // "dia 15 de março" (achado testando o lote de perguntas ao vivo): dia +
@@ -687,10 +743,19 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 // "no"/"na" opcional antes da fase relativa (ex.: "departamento Coids teve
 // NO mês passado") — sem isso, o corte deixava o "no" órfão colado no nome
 // capturado (departamento: "Coids teve no").
+// "entre o dia 1 e o dia 15 deste mês" (achado testando o lote de
+// perguntas ao vivo) — mesma ideia das outras TRAILING_*_CLAUSE acima, pro
+// intervalo de dias dentro do mês que extractRelativeDateRange também
+// passou a reconhecer. Padrão à parte (não cabe dentro de
+// TRAILING_RELATIVE_DATE_CLAUSE_PATTERN abaixo porque essa começa a busca
+// em "hoje|ontem|..."/formas de período sozinhas, não em "entre").
+const TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN =
+  /\s+entre\s+(?:o\s+)?dia\s+\d{1,2}\s+e\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d|n)?(?:esse|este)\s+m[êe]s\b.*$/iu;
+
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:d|n)?(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
-    + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|[úu]ltimo\\s+m[êe]s"
+    + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)\\b.*$",
   "iu",
@@ -708,7 +773,7 @@ const TRAILING_NAMED_MONTH_CLAUSE_PATTERN = new RegExp(
 // completa) — mesma ideia do padrão acima, pro intervalo aberto que
 // extractRelativeDateRange também passou a reconhecer.
 const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:desde|a\\s+partir\\s+de)\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
+  `\\s+(?:desde\\s+(?:o\\s+dia\\s+\\d{1,2}\\s+de\\s+)?|a\\s+partir\\s+d[oe]\\s+(?:dia\\s+\\d{1,2}\\s+de\\s+)?)(?:${MONTH_NAME_SOURCE})\\b.*$`,
   "iu",
 );
 
@@ -804,6 +869,16 @@ const TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN = /\s+(?:trat(?:ou|aram)|atend(?:eu|
 const TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN =
   /\s+(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))\s+quant[oa]s?\b.*$/iu;
 
+// "departamento Coids QUE O Rodrigo Fernandes ATENDEU" (achado testando o
+// lote de perguntas ao vivo): oração relativa do lado do OPERADOR (ver
+// extractOperatorName, mais abaixo, que já extrai "Rodrigo Fernandes"
+// certo via esse mesmo padrão "que X tratou/atendeu/fechou/tem") vazava
+// inteira pro nome de OUTRA dimensão capturada antes dela na frase
+// (departamento: "Coids que o Rodrigo Fernandes"). Mesmo vocabulário de
+// verbo inline do pattern irmão acima, mesmo motivo (ordem de declaração).
+const TRAILING_OPERATOR_RELATIVE_CLAUSE_PATTERN =
+  /\s+que\s+(?:o\s+|a\s+)?.+?\s+(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))\b.*$/iu;
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -832,6 +907,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_CREATED_BY_CLAUSE_PATTERN, "")
     .replace(TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN, "")
@@ -846,6 +922,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
+    .replace(TRAILING_OPERATOR_RELATIVE_CLAUSE_PATTERN, "")
     .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
     // Por último de propósito: só depois que uma cláusula de data já foi
     // cortada (ex.: "no último mês" por TRAILING_RELATIVE_DATE_CLAUSE_
@@ -1148,11 +1225,17 @@ export function extractDepartmentName(value) {
 // "menor"/"maior" (achado junto): "ordenado DO MENOR pro maior" capturava
 // operador: "menor pro maior" — vocabulário de ordenação de ranking (ver
 // RANKING_CUE_SOURCE), não nome de pessoa.
+// "dia\s+\d" (achado testando o lote de perguntas ao vivo): "a partir DO
+// dia 10 de março" tem um "do" solto (de "a partir do"), que o padrão
+// genérico "do/da X" (fallback de operador) casava, capturando "dia 10 de
+// março" inteiro — sem nome nenhum antes da cláusula de data pra
+// cleanFreeText podar (mesmo problema estrutural de "nesse ano" sozinho
+// acima, resolvido aqui excluindo a origem em vez de tentar podar depois).
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
-  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b"
+  + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
@@ -1193,8 +1276,20 @@ const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|f
 
 export function extractOperatorName(value) {
   return extractByPatterns(value, [
+    // "Resumo por operador NESSE ANO..." (achado testando o lote de
+    // perguntas ao vivo): diferente dos padrões "por/pelo X" e "do/da X"
+    // abaixo, este 1º padrão (ancorado em operador/usuário/responsável/
+    // atendente/técnico) nunca tinha ganhado a exclusão de palavras de
+    // domínio (OPERATOR_BY_EXCLUSION_SOURCE) nem das formas contraídas de
+    // período relativo ("nesse"/"desse"/"essa"/...) — "operador" sem nome
+    // nenhum depois, só uma cláusula de data, virava operador: "nesse ano"
+    // (cleanFreeText não tem como podar, não sobra nada ANTES da cláusula
+    // pra ancorar o corte de \s+ das TRAILING_*_CLAUSE_PATTERN).
     new RegExp(
-      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+`
+        + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
+        + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
+        + `(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
       "iu",
     ),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
@@ -2246,9 +2341,32 @@ function routeTicketQuestionCore(pergunta) {
     ]);
   }
 
+  // "Compare a carga do Fábio Gali com a do Rodrigo Fernandes E COM A DO
+  // Carlos." (achado testando o lote de perguntas ao vivo): comparação de
+  // operador/cliente usa "a carga/atividade DO X" só na 1ª menção — da 2ª
+  // em diante é só "com a do Y"/"e com a do Z", sem repetir a palavra
+  // "operador"/"cliente" — então mencionaComparacaoDe3OuMais (que CONTA
+  // menções da palavra de dimensão) não pega esse caso. Em vez disso,
+  // depois de extrair o par, checa se o 2º nome capturado ainda tem um
+  // conector residual ("e com a do"/"e a do") — sinal de que um 3º item
+  // (ou mais) ficou preso dentro do que devia ser só o 2º nome.
+  function contemConectorResidualDeComparacao(nome) {
+    return nome !== undefined && /\be\s+(?:com\s+)?(?:a\s+)?d[oa]\b/u.test(normalizeText(nome));
+  }
+
   const comparacaoOperadores = extractOperatorComparisonNames(pergunta);
 
   if (comparacaoOperadores !== undefined) {
+    if (contemConectorResidualDeComparacao(comparacaoOperadores[1])) {
+      return createClarificationDecision(
+        "esclarecimento_comparacao_3_ou_mais",
+        "Só consigo comparar 2 de cada vez — não dá pra comparar 3 ou mais itens numa pergunta só. Pode comparar 2 por vez?"
+          + "\n\nExemplos:\n"
+          + "- Compare a área de Suporte com a área WEB.\n"
+          + "- Compare a área WEB com a área de Redes e Segurança.",
+      );
+    }
+
     return createCompareDecision("comparar_carga_operador", [
       { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[0] } },
       { toolName: "analisar_carga_operador", args: { operador: comparacaoOperadores[1] } },
@@ -2258,6 +2376,16 @@ function routeTicketQuestionCore(pergunta) {
   const comparacaoClientes = extractClientComparisonNames(pergunta);
 
   if (comparacaoClientes !== undefined) {
+    if (contemConectorResidualDeComparacao(comparacaoClientes[1])) {
+      return createClarificationDecision(
+        "esclarecimento_comparacao_3_ou_mais",
+        "Só consigo comparar 2 de cada vez — não dá pra comparar 3 ou mais itens numa pergunta só. Pode comparar 2 por vez?"
+          + "\n\nExemplos:\n"
+          + "- Compare a área de Suporte com a área WEB.\n"
+          + "- Compare a área WEB com a área de Redes e Segurança.",
+      );
+    }
+
     return createCompareDecision("comparar_atividade_cliente", [
       { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[0] } },
       { toolName: "analisar_atividade_cliente", args: { cliente: comparacaoClientes[1] } },
@@ -2834,9 +2962,17 @@ function routeTicketQuestionCore(pergunta) {
   // "pelo menos N" — não são ranking, são limiar/quantidade mínima. "menor"
   // (achado junto de "tem a menor carga", ver RANKING_CUE_SOURCE acima) é o
   // mesmo sentido ascendente de "menos", só em forma de adjetivo.
+  // "do MAIOR pro menor" (achado testando o lote de perguntas ao vivo):
+  // frase inteira já descreve ordem DESCENDENTE (do maior valor pro menor),
+  // mesmo sentido do padrão (nenhuma mudança necessária) — mas o bare
+  // "menor" sozinho acima disparava "asc" só por "menor" aparecer em
+  // QUALQUER lugar da frase, mesmo quando é a SEGUNDA metade de "do maior
+  // pro menor" (não um pedido de ascendente). Só conta como ascendente
+  // quando "menor" NÃO está nessa construção "maior...pro/para...menor".
+  const pedidoMaiorParaMenor = /\bmaior\s+(?:pro|para)\s+(?:o\s+)?menor\b/.test(text);
   const ordemRanking =
     (/\bmenos\b(?!\s+de\b)/.test(text) && !/\bpelo\s+menos\b/.test(text))
-    || /\bmenor\b/.test(text)
+    || (/\bmenor\b/.test(text) && !pedidoMaiorParaMenor)
       ? "asc"
       : undefined;
 

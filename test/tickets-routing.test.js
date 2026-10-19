@@ -3622,3 +3622,72 @@ test("'que o operador X tratou/atendeu/fechou' extrai o operador, mesma ideia de
   const abriu = routeTicketQuestion("Primeiro ticket que a Sabrina Mariotto abriu.");
   assert.equal(abriu.entities.cliente, "Sabrina Mariotto");
 });
+
+// --- Lote "continuação + datas elaboradas" (testado ao vivo) ---
+
+test("'a partir do dia N de mês'/'desde o dia N de mês' é intervalo ABERTO (até hoje), não um snapshot de 1 dia só", () => {
+  const aPartir = routeTicketQuestion("Tickets abertos a partir do dia 10 de março.");
+  assert.equal(aPartir.entities.dataInicio, "2026-03-10");
+  assert.notEqual(aPartir.entities.dataFim, "2026-03-10");
+  assert.equal(aPartir.entities.operador, undefined);
+
+  const desde = routeTicketQuestion("Tickets abertos desde o dia 10 de março.");
+  assert.equal(desde.entities.dataInicio, "2026-03-10");
+  assert.notEqual(desde.entities.dataFim, "2026-03-10");
+
+  // Controle: "dia N de mês" sozinho (sem "a partir"/"desde") continua
+  // sendo um snapshot de 1 dia só
+  const diaUnico = routeTicketQuestion("Tickets abertos dia 15 de março.");
+  assert.equal(diaUnico.entities.dataInicio, diaUnico.entities.dataFim);
+});
+
+test("'entre o dia X e o dia Y deste mês' extrai o intervalo de dias certo, não o mês inteiro", () => {
+  const route = routeTicketQuestion("Tickets do departamento Governança entre o dia 1 e o dia 15 deste mês.");
+  assert.equal(route.entities.departamento, "Governança");
+  assert.match(route.entities.dataInicio, /-01$/);
+  assert.match(route.entities.dataFim, /-15$/);
+});
+
+test("'mês retrasado' (2 meses atrás) é reconhecido, não vaza pro nome de área capturado", () => {
+  const route = routeTicketQuestion("Quantos tickets a área WEB teve no mês retrasado?");
+  assert.equal(route.entities.area, "WEB");
+  assert.notEqual(route.entities.dataInicio, undefined);
+
+  // Confirma que é de fato 2 meses atrás (1 mês antes de "mês passado")
+  const passado = routeTicketQuestion("Quantos tickets a área WEB teve no mês passado?");
+  assert.notEqual(route.entities.dataInicio, passado.entities.dataInicio);
+});
+
+test("'do maior pro menor' não dispara ordem ascendente por engano (só 'do menor pro maior' deveria)", () => {
+  const maiorParaMenor = routeTicketQuestion("Resumo por operador, ordenado do maior pro menor.");
+  assert.equal(maiorParaMenor.entities.ordem, undefined);
+
+  const menorParaMaior = routeTicketQuestion("Resumo por operador, ordenado do menor pro maior.");
+  assert.equal(menorParaMaior.entities.ordem, "asc");
+});
+
+test("'operador <cláusula de data>' sem nome nenhum não vira operador fantasma", () => {
+  const route = routeTicketQuestion("Resumo por operador nesse ano, ordenado do maior pro menor, top 5.");
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.limite, 5);
+  assert.equal(route.entities.dataInicio, "2026-01-01");
+});
+
+test("comparação de 3 operadores/clientes via 'e com a do Z' (sem repetir a palavra operador/cliente) também pede esclarecimento", () => {
+  const route = routeTicketQuestion(
+    "Compare a carga do Fábio Gali com a do Rodrigo Fernandes e com a do Carlos.",
+  );
+  assert.equal(route.intent, "esclarecimento_comparacao_3_ou_mais");
+
+  // Controle: comparação de 2 continua funcionando
+  const doisItens = routeTicketQuestion("Compare a carga do Fábio Gali com a do Rodrigo Fernandes.");
+  assert.equal(doisItens.intent, "comparar_carga_operador");
+});
+
+test("cláusula relativa do operador ('que o X atendeu/tratou/fechou') não vaza pro nome de OUTRA dimensão capturada antes dela", () => {
+  const route = routeTicketQuestion(
+    "Tickets do departamento Coids que o Rodrigo Fernandes atendeu nessa semana.",
+  );
+  assert.equal(route.entities.departamento, "Coids");
+  assert.equal(route.entities.operador, "Rodrigo Fernandes");
+});

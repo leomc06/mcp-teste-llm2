@@ -12,6 +12,11 @@ import { isBareFormatoRequest } from "./tickets-routing.js";
 // só existia "e os"/"só os" no masculino), "agora"/"agora só" (jeito comum
 // de iniciar um refinamento falado) e "quantas são?"/"quantos é?" (pergunta
 // de acompanhamento bem comum, sem repetir nenhum filtro).
+// "e por X" (achado testando continuação multi-turno ao vivo): jeito bem
+// comum de pedir um RE-agrupamento por outra dimensão em cima do mesmo
+// contexto ("Resumo por área" → "e por prioridade?") — sem esse marcador,
+// "e por prioridade?" não era reconhecida como continuação nenhuma, virava
+// uma pergunta nova do zero (perdia todo o filtro/período acumulado).
 const PLURAL_ARTICLE_SOURCE = "(?:os|as)";
 const CONTINUATION_LEADING_MARKERS = [
   /^e\s+desses\b/,
@@ -20,6 +25,7 @@ const CONTINUATION_LEADING_MARKERS = [
   new RegExp(`^s[óo]\\s+${PLURAL_ARTICLE_SOURCE}\\b`),
   new RegExp(`^apenas\\s+${PLURAL_ARTICLE_SOURCE}\\b`),
   /^e\s+quanto\s+a(?:os?)?\b/,
+  /^e\s+por\b/,
   /^agora\b/,
   /^quant[ao]s?\s+(?:sao|e)\b/,
 ];
