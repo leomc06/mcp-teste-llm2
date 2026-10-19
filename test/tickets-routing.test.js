@@ -3916,3 +3916,28 @@ test("'que X não abriu/tratou/atendeu/fechou' (negação da AÇÃO, não de um 
   const semOperador = routeTicketQuestion("Tickets que não tem operador atribuído.");
   assert.equal(semOperador.intent, "listar_sem_operador");
 });
+
+test("continuação de FORMATO ('mostra em gráfico' → 'agora mostra em tabela') vence pra quem foi pedido mais recente, não sempre gráfico", () => {
+  const efetiva = "Resumo por área, mostra em gráfico. agora mostra em tabela";
+  const route = routeTicketQuestion(efetiva);
+  assert.equal(route.formato, "tabela");
+
+  // Controles: um pedido isolado de cada forma continua funcionando
+  assert.equal(routeTicketQuestion("Resumo por área em um gráfico.").formato, "grafico");
+  assert.equal(routeTicketQuestion("Resumo por área em uma tabela.").formato, "tabela");
+});
+
+test("'que X e Y abriram' (plural) extrai o cliente igual ao singular 'abriu', reusando o mesmo vocabulário de verbo já aceito em outro padrão deste extrator", () => {
+  const plural = routeTicketQuestion("Tickets que a Ana e o Bruno abriram essa semana.");
+  assert.equal(plural.intent, "esclarecimento_uniao_operador_cliente");
+
+  const singular = routeTicketQuestion("Tickets que a Ana abriu essa semana.");
+  assert.equal(singular.entities.cliente, "Ana");
+});
+
+test("'tem o maior/menor número de tickets' é reconhecido como ranking por dimensão (não só 'carga' pra operador), não vira nome de área fantasma", () => {
+  const route = routeTicketQuestion("Qual área tem o menor número de tickets abertos?");
+  assert.equal(route.intent, "resumo_por_area");
+  assert.equal(route.entities.area, undefined);
+  assert.equal(route.entities.ordem, "asc");
+});

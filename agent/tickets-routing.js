@@ -272,7 +272,15 @@ const RANKING_CUE_SOURCE =
   "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram)|com)"
   + "\\s+(?:mais|menos)(?!\\s+de\\b)"
   + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram))"
-  + "|tem\\s+a\\s+(?:maior|menor)\\s+carga(?:\\s+de\\s+trabalho)?)";
+  + "|tem\\s+a\\s+(?:maior|menor)\\s+carga(?:\\s+de\\s+trabalho)?"
+  // "tem o maior/menor número de tickets" (achado testando o lote de
+  // perguntas ao vivo): "Qual área TEM O MENOR NÚMERO DE TICKETS abertos?"
+  // não batia em nenhuma forma acima (todas exigem "mais"/"menos" logo
+  // depois do verbo, sem "o maior/menor número de" no meio) — mesma classe
+  // do "tem a maior/menor carga" já aceito pra operador, generalizado aqui
+  // pra qualquer dimensão (área/departamento/cliente também usam esse
+  // jeito de perguntar, não só carga de operador).
+  + "|tem\\s+o\\s+(?:maior|menor)\\s+n[uú]mero\\s+de\\s+(?:tickets?|chamados?|atendimentos?))";
 
 // Uma dimensão é mencionada tanto pela conexão "por/em cada/cada X" quanto
 // pela estrutura de ranking "X ... tem/possui mais" (nome aparece antes) ou
@@ -1478,7 +1486,16 @@ export function extractClientName(value) {
     // vivo — Img 12): quem abre um ticket é o cliente/contato, não precisa
     // da palavra "cliente" explícita — "que" como âncora evita capturar
     // qualquer "X abriu" solto fora desse contexto bem específico.
-    /\bque\s+(?:o\s+|a\s+)?(?!(?:mais|menos)\b)(.+?)\s+abriu\b/iu,
+    // CLIENT_ACTIVITY_VERB_SOURCE (não só "abriu" literal), achado testando
+    // o lote de perguntas ao vivo: "Tickets que a Ana e o Bruno ABRIRAM
+    // essa semana." (plural, igual já aceito nos outros 2 padrões acima
+    // deste mesmo extrator) não capturava cliente nenhum — "abriu" sozinho
+    // só cobria o singular, perdendo o filtro (e a checagem de união com
+    // "e", mais abaixo em routeTicketQuestionCore) por completo.
+    new RegExp(
+      `\\bque\\s+(?:o\\s+|a\\s+)?(?!(?:mais|menos)\\b)(.+?)\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\b`,
+      "iu",
+    ),
   ]);
 }
 
@@ -2287,12 +2304,27 @@ const FORMATO_GRAFICO_SOURCE =
 const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
 const FORMATO_GRAFICO_PATTERN = new RegExp(FORMATO_GRAFICO_SOURCE, "iu");
 
+// "Resumo por área, mostra em gráfico." → "agora mostra em tabela" (achado
+// testando continuação ao vivo): o texto mesclado (turno 1 + turno 2) fica
+// com os 2 pedidos de formato ao mesmo tempo — antes, gráfico SEMPRE vencia
+// (checado primeiro, incondicionalmente), então o pedido mais recente do
+// usuário (tabela) era ignorado em silêncio. Mesma classe do bug já
+// corrigido pra dimensão de resumo (ultimaDimensaoPorConector) — quando os
+// 2 aparecem, vence o que foi mencionado MAIS TARDE no texto, não uma
+// prioridade fixa.
 function detectFormatoPreferido(text) {
-  if (FORMATO_GRAFICO_PATTERN.test(text)) {
+  const matchGrafico = FORMATO_GRAFICO_PATTERN.exec(text);
+  const matchTabela = FORMATO_TABELA_PATTERN.exec(text);
+
+  if (matchGrafico && matchTabela) {
+    return matchGrafico.index > matchTabela.index ? "grafico" : "tabela";
+  }
+
+  if (matchGrafico) {
     return "grafico";
   }
 
-  if (FORMATO_TABELA_PATTERN.test(text)) {
+  if (matchTabela) {
     return "tabela";
   }
 
