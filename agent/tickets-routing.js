@@ -87,6 +87,17 @@ const CONTINUATION_MARKER_SOURCE =
 
 const TRAILING_CONTINUATION_CLAUSE_PATTERN = new RegExp(`\\s+${CONTINUATION_MARKER_SOURCE}\\b.*$`, "iu");
 
+// "e por X" (achado testando o lote de perguntas ao vivo): mesma ideia de
+// CONTINUATION_MARKER_SOURCE acima, mas pro CONECTOR de resumo multi-
+// dimensão numa frase só ("Resumo por área E POR CLIENTE.") — "status"/
+// "prioridade" já tinham essa exclusão (achado num lote anterior), mas
+// área/operador/departamento/cliente ainda não, e cada um tem seu próprio
+// extrator de nome livre — por isso uma fonte única, reaproveitada nos 6,
+// em vez de repetir a mesma exclusão 6 vezes com o risco de uma ficar pra
+// trás se o vocabulário mudar (mesmo erro que já aconteceu com os
+// sinônimos de área antes de existir AREA_SYNONYM_SOURCE).
+const DIMENSION_CONNECTOR_LEAK_SOURCE = "e\\s+por\\b";
+
 // Verbo solto no fim da captura, sem cláusula depois (ex.: "...o operador
 // Cesar tem?" → o "tem" sobra porque não há um "no/na/do/da <dimensão>"
 // depois dele para o corte acima remover junto). "no total"/"ao todo" depois
@@ -1166,7 +1177,7 @@ export function extractAreaName(value) {
     // (ver UNSET_VALUE_ADJECTIVE_SOURCE), sem ela "definida existem" inteiro
     // virava area: "definida existem".
     new RegExp(
-      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
       "iu",
     ),
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
@@ -1184,7 +1195,7 @@ export function extractAreaName(value) {
 export function extractDepartmentName(value) {
   return extractByPatterns(value, [
     new RegExp(
-      `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!atribu[ií]do\\b)(.+)$`,
+      `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!atribu[ií]do\\b)(.+)$`,
       "iu",
     ),
   ]);
@@ -1276,9 +1287,17 @@ export function extractDepartmentName(value) {
 // troca, a correção acima não bloquearia nada de verdade (lookahead sempre
 // passava), já que esta fonte é usada dentro de `(?!...)` em todo lugar
 // abaixo.
+// "e-?mail\b|telefone\b|whatsapp\b|chat\b" (achado testando o lote de
+// perguntas ao vivo): "Tickets abertos POR E-MAIL OU TELEFONE." vazava o
+// canal (não só a palavra "canal", já excluída acima) pro fallback
+// genérico "por X" — não há tool que filtre por canal hoje (mesmo motivo
+// de "canal" acima), então a cláusula é descartada, não inventa um
+// operador fantasma. Valores escolhidos à mão (igual "fornecedor"/
+// "sistema" acima) porque o catálogo de canais vem de uma API dinâmica
+// (/meta/channels), sem uma lista fixa no código pra reaproveitar aqui.
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|setor\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
-  + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
+  + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b|e-?mail\\b|telefone\\b|whatsapp\\b|chat\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
   + "|manh[ãa](?![\\p{L}\\p{N}])|tarde\\b|noite\\b"
@@ -1335,7 +1354,7 @@ export function extractOperatorName(value) {
       `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+`
         + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
         + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
-        + `(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
+        + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
       "iu",
     ),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
@@ -1417,9 +1436,17 @@ export function extractOperatorName(value) {
 // silêncio, "nenhum ticket encontrado").
 export function extractClientName(value) {
   return extractByPatterns(value, [
+    // "(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})" e "(?!${UNSET_VALUE_ADJECTIVE_
+    // SOURCE}\\b)" (achado testando o lote de perguntas ao vivo): mesmos 2
+    // bugs já corrigidos pra área/operador/departamento (conector "e por X"
+    // vazando) e pra prioridade/área ("sem X definido" virando nome
+    // literal) — faltavam aqui. "Tickets SEM CLIENTE DEFINIDO." virava
+    // cliente: "definido"; "Resumo por cliente E POR OPERADOR." virava
+    // cliente: "e por operador".
     new RegExp(
       `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?`
-        + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+        + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
+        + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
       "iu",
     ),
     // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
@@ -1524,7 +1551,7 @@ export function extractTicketStatusName(value) {
     // status: "e por área" (nunca resolve no catálogo real), mesmo a rota
     // certa (resumo_por_area) já tendo sido escolhida em outro lugar.
     new RegExp(
-      `\\bstatus\\s+(?:de\\s+)?(?!e\\s+por\\b)(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      `\\bstatus\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
       "iu",
     ),
   ]);
@@ -1696,7 +1723,7 @@ export function extractPriorityName(value) {
     // ÁREA." usa "prioridade" só como conector, não valor — sem essa
     // exclusão, "e por área" inteiro virava prioridade: "e por área".
     new RegExp(
-      `\\bprioridade\\s+(?:de\\s+)?(?!e\\s+por\\b)(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+      `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
       "iu",
     ),
     // Ordem substantivo-nível invertida ("alta prioridade", tão natural
@@ -1829,6 +1856,17 @@ export function extractOperatorComparisonNames(value) {
         + `(?:a\\s+(?:${CARGA_SYNONYM_SOURCE}\\s+)?d[oa]\\s+)?(.+)$`,
       "iu",
     ),
+    // "Compare o operador X com o operador Y" (achado testando o lote de
+    // perguntas ao vivo): forma BARE, sem a palavra "carga"/"quantidade de
+    // tickets" — já existia pra área/departamento ("compare a área X com a
+    // área Y"), faltava pra operador. Exige a palavra "operador" explícita
+    // nos 2 lados (mesma cautela das comparações irmãs), senão "Compare
+    // Fulano com Beltrano" (sem nenhuma palavra de dimensão) seria ambíguo
+    // demais pra generalizar.
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:o\\s+)?operador\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?operador\\s+(.+)$`,
+      "iu",
+    ),
     /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
     /^(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
@@ -1914,6 +1952,11 @@ export function extractClientComparisonNames(value) {
     // gulosa (.+?) pra nome1 parar exatamente no conector "com"/"e", igual
     // ao padrão irmão de carga de operador.
     /\bcompar[ae]\s+a\s+atividade\s+(?:d[oa]\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:a\s+)?(?:atividade\s+)?(?:d[oa]\s+)?cliente\s+(.+)$/iu,
+    // "Compare o cliente X com o cliente Y" (achado testando o lote de
+    // perguntas ao vivo): forma BARE, sem a palavra "atividade" — mesmo gap
+    // já corrigido pra operador acima ("compare o operador X com o
+    // operador Y"), aqui pro espelho de cliente.
+    /\bcompar[ae]\s+(?:o\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:o\s+)?cliente\s+(.+)$/iu,
     // "abr(?:e|em|iu|iram)" (achado testando o lote de perguntas ao vivo):
     // só o passado "abriu" era aceito — "O cliente Acme ABRE mais chamados
     // que o cliente Beta...?" (presente, tão comum quanto o passado) não

@@ -3804,3 +3804,39 @@ test("'status'/'prioridade' usados só como conector ('e por X') não vazam a cl
   const normal = routeTicketQuestion("Resumo por status.");
   assert.equal(normal.intent, "resumo_por_status");
 });
+
+test("'e por X' como conector não vaza mais pra área/operador/departamento/cliente (mesma correção de status/prioridade, estendida)", () => {
+  const area = routeTicketQuestion("Resumo por área e por cliente.");
+  assert.equal(area.entities.area, undefined);
+
+  const operador = routeTicketQuestion("Resumo por operador e por departamento.");
+  assert.equal(operador.entities.operador, undefined);
+
+  const departamento = routeTicketQuestion("Resumo por departamento e por cliente.");
+  assert.equal(departamento.entities.departamento, undefined);
+
+  assert.equal(extractClientName("Resumo por cliente e por operador."), undefined);
+});
+
+test("'sem cliente definido' é reconhecido como estado, não nome de cliente literal", () => {
+  assert.equal(extractClientName("Tickets sem cliente definido."), undefined);
+});
+
+test("canal real ('e-mail'/'telefone') não vaza pro nome de operador capturado, igual a palavra 'canal'", () => {
+  const route = routeTicketQuestion("Tickets abertos por e-mail ou telefone.");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("comparação de operador/cliente aceita a forma BARE 'compare o operador X com o operador Y' (sem 'carga'/'atividade')", () => {
+  assert.deepEqual(
+    extractOperatorComparisonNames("Compare o operador Ana com o operador Bruno."),
+    ["Ana", "Bruno"],
+  );
+  assert.deepEqual(
+    extractClientComparisonNames("Compare o cliente Acme com o cliente Beta, considerando só os vencidos."),
+    ["Acme", "Beta"],
+  );
+
+  const route = routeTicketQuestion("Compare o cliente Acme com o cliente Beta, considerando só os vencidos.");
+  assert.equal(route.intent, "comparar_atividade_cliente");
+});
