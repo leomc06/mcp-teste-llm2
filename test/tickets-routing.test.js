@@ -3691,3 +3691,62 @@ test("cláusula relativa do operador ('que o X atendeu/tratou/fechou') não vaza
   assert.equal(route.entities.departamento, "Coids");
   assert.equal(route.entities.operador, "Rodrigo Fernandes");
 });
+
+test("'setor' é reconhecido como sinônimo de área, não vaza pro nome de operador capturado", () => {
+  const route = routeTicketQuestion("Tickets do setor de Infraestrutura abertos essa semana.");
+  assert.equal(route.entities.area, "Infraestrutura");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'excluindo o <Nome>' (sem a palavra 'operador' antes do nome) é reconhecido como negação, não descartado em silêncio", () => {
+  const route = routeTicketQuestion(
+    "Qual operador tem a maior carga de trabalho na área de TI, excluindo o Fábio?",
+  );
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: minúsculo (valor de catálogo, não nome próprio) não é capturado por engano
+  const semNome = routeTicketQuestion("Quantos tickets tem, excluindo os cancelados?");
+  assert.equal(semNome.intent, "esclarecimento_negacao");
+});
+
+test("'cliente' agora entra na checagem de negação não suportada, igual área/departamento/operador/prioridade/status", () => {
+  const route = routeTicketQuestion("Qual cliente abriu mais chamados, sem contar o cliente Acme?");
+  assert.equal(route.intent, "esclarecimento_negacao");
+});
+
+test("'menos os/as <valor>' (exceto, idioma coloquial) é reconhecido como negação, não filtro positivo", () => {
+  const route = routeTicketQuestion("Tickets com prioridade alta, menos os cancelados, da área de Suporte.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: "menos" como ranking ascendente (sem artigo logo depois) continua funcionando
+  const ranking = routeTicketQuestion("Resumo por operador, do maior pro menor, quem tem menos tickets?");
+  assert.notEqual(ranking.intent, "esclarecimento_negacao");
+});
+
+test("comparação de operadores aceita 'quem tem mais tickets: o operador X ou o operador Y?' (mesmo formato já aceito pra cliente/área/departamento)", () => {
+  const route = routeTicketQuestion("Quem tem mais tickets: o operador Ana Lima ou o operador Bruno Costa?");
+  assert.equal(route.intent, "comparar_carga_operador");
+  assert.deepEqual(route.compare.map((c) => c.args.operador), ["Ana Lima", "Bruno Costa"]);
+});
+
+test("comparação de operadores aceita 'a quantidade de tickets'/'o volume de tickets' como sinônimo de 'carga'", () => {
+  const route = routeTicketQuestion("Compare a quantidade de tickets do operador Ana com o operador Bruno.");
+  assert.equal(route.intent, "comparar_carga_operador");
+  assert.deepEqual(route.compare.map((c) => c.args.operador), ["Ana", "Bruno"]);
+});
+
+test("cláusula de formato ('em um gráfico'/'numa tabela') não vaza pro nome de cliente capturado", () => {
+  const route = routeTicketQuestion("Mostra os tickets do cliente Ana Paula Reis em um gráfico.");
+  assert.equal(route.entities.cliente, "Ana Paula Reis");
+});
+
+test("continuação 'e por X' (re-agrupar por outra dimensão) vence sobre a dimensão do turno anterior, não a ordem fixa dos branches", () => {
+  const efetiva = "Resumo por área. e por operador?";
+  const route = routeTicketQuestion(efetiva);
+  assert.equal(route.intent, "resumo_por_operador");
+
+  // Controle: continuação que NÃO pede outra dimensão (só um filtro a mais)
+  // continua escolhendo a única dimensão mencionada, como antes.
+  const semTroca = routeTicketQuestion("Resumo por área. e desses, só os abertos");
+  assert.equal(semTroca.intent, "resumo_por_area");
+});

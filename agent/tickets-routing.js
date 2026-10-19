@@ -40,6 +40,16 @@ const TRAILING_EXPORT_CLAUSE_PATTERN =
 const TRAILING_METRIC_CLAUSE_PATTERN =
   /\s+em\s+(?:volume|quantidade|numero)\s+de\s+.*$/iu;
 
+// "em um gráfico"/"numa tabela"/"em forma de gráfico" (achado testando o
+// lote de perguntas ao vivo): pedido de formato colado depois do nome
+// capturado — "Mostra os tickets do cliente Ana Paula Reis EM UM GRÁFICO."
+// vazava a cláusula inteira pro nome do cliente (cliente: "Ana Paula Reis
+// em um gráfico"), que nunca bate por substring com nenhum contact_name
+// real. Só poda a cláusula — decision.formato já é resolvido à parte, no
+// texto original, por detectFormatoPreferido.
+const TRAILING_FORMAT_CLAUSE_PATTERN =
+  /\s+em\s+(?:uma?|forma\s+de|formato\s+de)\s+(?:gr[áa]ficos?|tabelas?)\b.*$/iu;
+
 // "mas atendidos/tratados por outro operador" (achado testando o lote de
 // perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
 // OPERADOR." vazava a cláusula inteira pro nome capturado (operador:
@@ -917,6 +927,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
+    .replace(TRAILING_FORMAT_CLAUSE_PATTERN, "")
     .replace(TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN, "")
     .replace(TRAILING_TELL_ME_WHO_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
@@ -1001,7 +1012,12 @@ const VAGUE_TICKET_REFERENCE_PATTERN = new RegExp(
 // "visualizar as OS por categoria" caía em "fora do domínio" só porque o
 // PORTÃO (não a extração) nunca tinha ganhado "categoria". Uma fonte única,
 // reaproveitada nos 3 lugares, evita essa dessincronia se repetir.
-const AREA_SYNONYM_SOURCE = "(?:[áa]rea|categoria|equipe)";
+// "setor" (achado testando o lote de perguntas ao vivo): mesmo sinônimo
+// comum de área/categoria/equipe, faltava — "Tickets do SETOR de
+// Infraestrutura" caía no fallback genérico de operador (extractOperatorName
+// capturando "setor de Infraestrutura" via "do/da X"), em vez de reconhecer
+// "setor" como filtro de área.
+const AREA_SYNONYM_SOURCE = "(?:[áa]rea|categoria|equipe|setor)";
 
 // Mesma ideia, pro vocabulário de "cliente" — "solicitante" é sinônimo comum
 // fora do vocabulário interno do sistema, faltava tanto na extração quanto
@@ -1232,7 +1248,7 @@ export function extractDepartmentName(value) {
 // cleanFreeText podar (mesmo problema estrutural de "nesse ano" sozinho
 // acima, resolvido aqui excluindo a origem em vez de tentar podar depois).
 const OPERATOR_BY_EXCLUSION_SOURCE =
-  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
+  "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|setor\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
@@ -1338,6 +1354,23 @@ export function extractOperatorName(value) {
     // "Mostra os tickets que o Fábio Gali tratou." não capturava operador
     // nenhum, caindo no fallback genérico sem filtro algum.
     new RegExp(`\\bque\\s+(?:o\\s+|a\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b`, "iu"),
+    // "excluindo o Fábio"/"tirando a Ana"/"exceto o Carlos" (achado testando
+    // o lote de perguntas ao vivo): "Qual operador tem a maior carga de
+    // trabalho na área de TI, EXCLUINDO O FÁBIO?" não capturava operador
+    // nenhum (nenhum padrão acima exige a palavra "operador" antes do nome),
+    // então a exclusão era descartada em silêncio em vez de recusada por
+    // detectaNegacaoNaoSuportada (que só reage a uma negação encontrada
+    // perto de um valor JÁ capturado). Exige que o nome comece com letra
+    // maiúscula (heurística de nome próprio) pra não capturar valores de
+    // catálogo em minúsculo de outra dimensão (ex.: "excluindo os
+    // cancelados" não bate aqui — "cancelados" é minúsculo). Não precisa de
+    // exclusão própria de palavras de domínio: catálogo (status/prioridade/
+    // etc.) é sempre pedido em minúsculo nas perguntas reais, então o filtro
+    // de maiúscula já é suficiente.
+    new RegExp(
+      `\\b${NEGATION_MARKER_SOURCE}\\s+(?:o\\s+|a\\s+)?(\\p{Lu}[\\p{L}'-]*(?:\\s+\\p{Lu}[\\p{L}'-]*)*)`,
+      "u",
+    ),
   ]);
 }
 
@@ -1435,8 +1468,17 @@ export function extractClientActivityName(value) {
 // cancelados"): forma imperativa/presente de "tirar", tão comum na fala
 // quanto o gerúndio "tirando" (já coberto) — mesma classe de verbo informal
 // vs. formal já tratada em write-policy.js pros verbos de escrita.
+// "menos" + artigo (achado testando o lote de perguntas ao vivo): "Tickets
+// com prioridade alta, MENOS OS CANCELADOS." usa "menos" como "exceto"
+// (idioma coloquial comum), mas "cancelados" virava filtro POSITIVO (o
+// oposto do pedido) porque "menos" sozinho nunca entrou nesta lista — só
+// exigindo um artigo plural/singular logo depois ("o/a/os/as"), pra não
+// colidir com os outros 2 sentidos já existentes de "menos" no roteador:
+// ranking ascendente (ordemRanking, "operador com MENOS tickets") e limiar
+// numérico ("MENOS de 30 dias") — nenhum dos dois tem um artigo colado bem
+// depois de "menos".
 const NEGATION_MARKER_SOURCE =
-  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem\\s+contar|excluindo)";
+  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem\\s+contar|excluindo|menos\\s+(?:o|a|os|as)\\b)";
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
@@ -1719,11 +1761,22 @@ export function extractOperatorWorkloadName(value) {
 // palavra "carga" — mesmo vocabulário comparativo já aceito no singular por
 // extractOperatorWorkloadName ("Fulano está com muitos tickets"), só que
 // entre 2 nomes em vez de 1.
+// "a quantidade de tickets"/"o volume de tickets" (achado testando o lote
+// de perguntas ao vivo): "Compare A QUANTIDADE DE TICKETS do operador Ana
+// com o operador Bruno." usa outro jeito comum de dizer "carga", mas só a
+// palavra literal "carga" era aceita no 1º padrão abaixo — a comparação
+// inteira caía no fallback genérico, perdendo o 2º nome por completo.
+const CARGA_SYNONYM_SOURCE = "(?:carga|quantidade\\s+de\\s+tickets?|volume\\s+de\\s+tickets?)";
+
 export function extractOperatorComparisonNames(value) {
   const text = String(value ?? "");
 
   const patterns = [
-    /\bcompar[ae]\s+a\s+carga\s+(?:d[oa]\s+)?(.+?)\s+(?:com|e)\s+(?:a\s+(?:carga\s+)?d[oa]\s+)?(.+)$/iu,
+    new RegExp(
+      `\\bcompar[ae]\\s+a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e)\\s+`
+        + `(?:a\\s+(?:${CARGA_SYNONYM_SOURCE}\\s+)?d[oa]\\s+)?(.+)$`,
+      "iu",
+    ),
     /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
     /^(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
@@ -1731,6 +1784,22 @@ export function extractOperatorComparisonNames(value) {
     // perguntas ao vivo — Img 28): mesma ideia comparativa de "tem"/"está
     // com", só que com o verbo "atender", também comum na fala natural.
     /^(.+?)\s+atendem?\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
+    // "Quem tem mais tickets: o operador X ou o operador Y?" (achado
+    // testando o lote de perguntas ao vivo): mesmo formato "X ou Y" já
+    // aceito pras comparações irmãs de cliente/área/departamento
+    // (extractClientComparisonNames/extractAreaComparisonNames/
+    // extractDepartmentComparisonNames), faltava pra operador — a frase
+    // inteira caía em resumo_por_operador com um nome quebrado ("Ana Lima
+    // ou o operador Bruno Costa"), que nunca resolve no catálogo real.
+    // Exige a palavra "operador" explícita nos dois lados, mesma cautela
+    // das comparações irmãs (evita generalizar "quem tem mais: X ou Y?"
+    // solto, ambíguo demais sem a palavra de dimensão).
+    new RegExp(
+      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
+        + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
+        + `(?:o\\s+)?operador\\s+(.+?)\\s+ou\\s+(?:o\\s+)?operador\\s+(.+)$`,
+      "iu",
+    ),
   ];
 
   for (const pattern of patterns) {
@@ -2709,7 +2778,13 @@ function routeTicketQuestionCore(pergunta) {
   }
 
   function detectaNegacaoNaoSuportada() {
-    for (const valor of [area, departamento, operador, prioridade, status]) {
+    // "cliente" faltava nesta lista (achado testando o lote de perguntas ao
+    // vivo): "Qual cliente abriu mais chamados, SEM CONTAR o cliente Acme?"
+    // já extraía cliente:"Acme" certo (extractClientName), mas a negação
+    // nunca era checada pra essa dimensão — a exclusão era descartada em
+    // silêncio (resumo_por_cliente de TODOS os clientes, incluindo Acme) em
+    // vez de recusada honestamente como as outras 5 dimensões já fazem.
+    for (const valor of [area, departamento, operador, prioridade, status, cliente]) {
       if (valor === undefined) {
         continue;
       }
@@ -2902,6 +2977,54 @@ function routeTicketQuestionCore(pergunta) {
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
   const mentionsClienteDimension = mentionsDimension(text, `${CLIENT_LOOKUP_NOUN_SOURCE}s?`);
 
+  // "Resumo por área." → "e por operador?" (achado testando continuação
+  // multi-turno ao vivo): o marcador "e por X" (agent/continuation.js) existe
+  // justamente pra RE-AGRUPAR por outra dimensão em cima do mesmo contexto —
+  // mas o texto mesclado fica com os 2 conectores "por área" (turno 1) E
+  // "por operador" (turno 2) ao mesmo tempo, e os 6 branches abaixo sempre
+  // checam na mesma ordem fixa (status, prioridade, área, operador,
+  // departamento, cliente), então "área" (mencionada primeiro) sempre
+  // vencia — o oposto exato do que o usuário acabou de pedir no 2º turno.
+  // Acha o conector "por/em cada/cada X" mencionado MAIS TARDE no texto (não
+  // conta a forma de ranking, só a conectora — um "X com mais tickets" sem
+  // "por" não é um pedido explícito de agrupar por X, não compete aqui) e
+  // usa ele pra decidir qual branch vence quando há mais de um. Quando só 1
+  // conector aparece (o caso comum, de 1 turno só), undefined — todo branch
+  // continua exigindo só o mentionsXDimension específico, igual antes.
+  function ultimaDimensaoPorConector() {
+    const candidatos = [
+      ["status", "status"],
+      ["prioridade", "prioridades?"],
+      ["area", `${AREA_SYNONYM_SOURCE}s?`],
+      ["operador", "operador(?:es)?"],
+      ["departamento", "departamentos?"],
+      ["cliente", `${CLIENT_LOOKUP_NOUN_SOURCE}s?`],
+    ];
+
+    let melhor;
+
+    for (const [chave, fonte] of candidatos) {
+      const regex = new RegExp(`\\b${DIMENSION_CONNECTOR_SOURCE}\\s+(?:${fonte})\\b`, "gu");
+      let match = regex.exec(text);
+
+      while (match !== null) {
+        if (melhor === undefined || match.index > melhor.index) {
+          melhor = { chave, index: match.index };
+        }
+
+        match = regex.exec(text);
+      }
+    }
+
+    return melhor?.chave;
+  }
+
+  const dimensaoResumoMaisRecente = ultimaDimensaoPorConector();
+
+  function permiteDimensaoResumo(chave) {
+    return dimensaoResumoMaisRecente === undefined || dimensaoResumoMaisRecente === chave;
+  }
+
   // F2 (auditoria de robustez): "Tickets por área."/"Tickets por status."
   // (sem nenhuma palavra de resumo) caíam no fallback genérico de listagem
   // em vez de resumo_tickets_por_X, porque hasResumoIntent exigia uma
@@ -3030,7 +3153,7 @@ function routeTicketQuestionCore(pergunta) {
   // o guard, a pergunta cai no branch de isSlaVencidoIntent mais abaixo —
   // honesto mesmo sem conseguir agrupar (lista os vencidos de verdade, só
   // não agrupados por prioridade).
-  if (hasResumoIntent && mentionsStatusDimension && !isSlaVencidoIntent) {
+  if (hasResumoIntent && mentionsStatusDimension && !isSlaVencidoIntent && permiteDimensaoResumo("status")) {
     const decision = createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
@@ -3050,7 +3173,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsPriorityDimension && !isSlaVencidoIntent) {
+  if (hasResumoIntent && mentionsPriorityDimension && !isSlaVencidoIntent && permiteDimensaoResumo("prioridade")) {
     const decision = createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
@@ -3070,7 +3193,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsAreaDimension && !isSlaVencidoIntent) {
+  if (hasResumoIntent && mentionsAreaDimension && !isSlaVencidoIntent && permiteDimensaoResumo("area")) {
     const decision = createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
@@ -3090,7 +3213,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent) && !isSlaVencidoIntent) {
+  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent) && !isSlaVencidoIntent && permiteDimensaoResumo("operador")) {
     const decision = createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",
@@ -3111,7 +3234,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsDepartmentDimension && !isSlaVencidoIntent) {
+  if (hasResumoIntent && mentionsDepartmentDimension && !isSlaVencidoIntent && permiteDimensaoResumo("departamento")) {
     const decision = createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
@@ -3126,7 +3249,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsClienteDimension && !isSlaVencidoIntent) {
+  if (hasResumoIntent && mentionsClienteDimension && !isSlaVencidoIntent && permiteDimensaoResumo("cliente")) {
     const decision = createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",
