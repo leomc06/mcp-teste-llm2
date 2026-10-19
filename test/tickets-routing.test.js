@@ -3840,3 +3840,42 @@ test("comparação de operador/cliente aceita a forma BARE 'compare o operador X
   const route = routeTicketQuestion("Compare o cliente Acme com o cliente Beta, considerando só os vencidos.");
   assert.equal(route.intent, "comparar_atividade_cliente");
 });
+
+test("união de área/departamento/operador/cliente com 'ou' pede esclarecimento, em vez de virar um valor-lixo (mesma ideia já aplicada a status)", () => {
+  const area = routeTicketQuestion("Tickets abertos na área de TI ou de Redes.");
+  assert.equal(area.intent, "esclarecimento_uniao_valor");
+
+  // Controle: comparação de verdade com "ou" (quem tem mais: X ou Y) continua OK
+  const comparacao = routeTicketQuestion("Quem tem mais tickets: o operador Ana Lima ou o operador Bruno Costa?");
+  assert.equal(comparacao.intent, "comparar_carga_operador");
+});
+
+test("união de operador/cliente com 'e o'/'e a' (sem repetir 'do/da') pede esclarecimento, sem confundir sobrenome composto real ('... E Souza')", () => {
+  const uniao = routeTicketQuestion("Quantos tickets o Fábio e o Rodrigo trataram juntos essa semana?");
+  assert.equal(uniao.intent, "esclarecimento_uniao_operador_cliente");
+});
+
+test("'operador(es)' no plural também é reconhecido pelo portão de domínio, e 'compare os operadores/clientes X e Y' (plural, sem repetir a palavra) funciona", () => {
+  const operadores = routeTicketQuestion("Compare os operadores Ana e Bruno, excluindo os fechados.");
+  assert.equal(operadores.intent, "comparar_carga_operador");
+  assert.deepEqual(operadores.compare.map((c) => c.args.operador), ["Ana", "Bruno"]);
+
+  const clientes = routeTicketQuestion("Compare os clientes Acme e Beta.");
+  assert.equal(clientes.intent, "comparar_atividade_cliente");
+});
+
+test("'mas sem os congelados' (negação com 'sem' sozinho, não só 'sem contar') é reconhecida como negação, não roteia pro oposto (listar só os congelados)", () => {
+  const route = routeTicketQuestion("Mostra os tickets abertos da área de Suporte, mas sem os congelados.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: "sem operador"/"sem responsável" continua sendo ESTADO, não negação
+  const semOperador = routeTicketQuestion("Tickets sem operador atribuído.");
+  assert.equal(semOperador.intent, "listar_sem_operador");
+});
+
+test("'último dia do mês' é reconhecido como data de calendário, não hijackado como pedido de 'ticket mais recente'", () => {
+  const route = routeTicketQuestion("Tickets no último dia do mês.");
+  assert.notEqual(route.intent, "listar_mais_recentes");
+  assert.equal(route.entities.dataInicio, route.entities.dataFim);
+  assert.notEqual(route.entities.dataInicio, undefined);
+});

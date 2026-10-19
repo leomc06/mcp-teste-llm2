@@ -441,6 +441,23 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(segunda), dataFim: formatIsoDate(sexta) };
   }
 
+  // "último dia do mês" (achado testando o lote de perguntas ao vivo): data
+  // de CALENDÁRIO (o último dia do mês atual), não um pedido de "ticket mais
+  // recente" — checado ANTES de "último mês" (mais específico primeiro,
+  // mesma ordem de leitura do resto do arquivo), embora os 2 regex não
+  // colidam de verdade ("ultimo mes" exige "ultimo" IMEDIATAMENTE antes de
+  // "mes", sem as palavras "dia do" no meio). Sem este caso, "Tickets no
+  // ÚLTIMO DIA DO MÊS." não batia em nenhuma data relativa reconhecida, e
+  // "último" sozinho acabava lido como pedido de recência (isBareMostRecentIntent,
+  // mais abaixo) — virando "me mostre o ticket mais recente", sentido
+  // completamente diferente do período de calendário pedido.
+  if (/\b[uú]ltimo\s+dia\s+(?:d[oe]\s+)?mes\b/.test(text)) {
+    const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
+    const isoUltimoDia = formatIsoDate(ultimoDia);
+
+    return { dataInicio: isoUltimoDia, dataFim: isoUltimoDia };
+  }
+
   // "último mês" (achado testando o lote de perguntas ao vivo): mesma ideia
   // de "última semana" já aceita acima como sinônimo de "semana passada" —
   // faltava o equivalente pra mês ("mês passado" sozinho não cobria essa
@@ -786,6 +803,7 @@ const TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN =
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:d|n)?(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
+    + "|[úu]ltimo\\s+dia\\s+(?:d[oe]\\s+)?m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
@@ -1071,9 +1089,16 @@ const TICKET_CONTEXT_SOURCE = `(?:${TICKET_NOUN_SOURCE}s?|solicitacoes)`;
 // que simplesmente recusar. "Chamados solucionados"/"tickets resolvidos"
 // continuam funcionando normalmente: TICKET_CONTEXT_SOURCE (chamado/
 // ticket/...) já cobre esses casos independente do verbo de fechamento.
+// "operador(?:es)?" (achado testando o lote de perguntas ao vivo): "operador"
+// sozinho (sem plural) nunca batia com "Compare OS OPERADORES Ana e Bruno,
+// excluindo os fechados." — sem nenhuma entidade forte capturada (a
+// comparação em si falhava por outro motivo, ver extractOperatorComparisonNames),
+// esse portão era a última chance de reconhecer a frase como "sobre
+// tickets", e a falha fazia uma pergunta claramente sobre o domínio ser
+// recusada como fora_do_dominio.
 const TICKET_DOMAIN_VOCABULARY_PATTERN = new RegExp(
   `\\b(?:${TICKET_CONTEXT_SOURCE}|resumo|historico|status|prioridade|urgente`
-    + `|critic[oa]s?|${AREA_SYNONYM_SOURCE}s?|departamento|operador|responsavel|atendente|${CLIENT_LOOKUP_NOUN_SOURCE}`
+    + `|critic[oa]s?|${AREA_SYNONYM_SOURCE}s?|departamento|operador(?:es)?|responsavel|atendente|${CLIENT_LOOKUP_NOUN_SOURCE}`
     + `|pendente|${OPEN_STATE_ADJECTIVE_SOURCE}|${OLDEST_PROXY_STATE_SOURCE})\\b`,
   "u",
 );
@@ -1539,8 +1564,20 @@ export function extractClientActivityName(value) {
 // ranking ascendente (ordemRanking, "operador com MENOS tickets") e limiar
 // numérico ("MENOS de 30 dias") — nenhum dos dois tem um artigo colado bem
 // depois de "menos".
+// "sem" SOZINHO, não só "sem contar" (achado testando o lote de perguntas
+// ao vivo): "Mostra os tickets abertos da área de Suporte, MAS SEM OS
+// CONGELADOS." usava "sem" sem o "contar" — isCongeladoIntent reagia só à
+// palavra "congelado" solta, e como "sem" sozinho não era marcador de
+// negação reconhecido, a pergunta inteira roteava pro OPOSTO exato do
+// pedido (listar só os congelados, em vez de excluí-los). Seguro
+// adicionar aqui: os únicos 2 usos de "sem X" que SÃO estado (não
+// exclusão) — "sem operador/responsável/atendente" e "sem prioridade
+// definida" — já são resolvidos antes de chegar em detectaNegacaoNaoSuportada
+// (isSemOperadorIntent tem guard próprio que pula essa função inteira;
+// "sem prioridade X" citando um nível real já retorna true direto, sem
+// depender desta fonte).
 const NEGATION_MARKER_SOURCE =
-  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem\\s+contar|excluindo|menos\\s+(?:o|a|os|as)\\b)";
+  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|menos\\s+(?:o|a|os|as)\\b)";
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
@@ -1867,6 +1904,13 @@ export function extractOperatorComparisonNames(value) {
       `\\bcompar[ae]\\s+(?:o\\s+)?operador\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?operador\\s+(.+)$`,
       "iu",
     ),
+    // "Compare os operadores X e Y" (achado testando o lote de perguntas ao
+    // vivo): palavra no PLURAL ("operadores", não "operador") seguida pelos
+    // 2 nomes direto, sem repetir a palavra de dimensão — forma mais curta e
+    // comum do que a forma BARE acima (que repete "operador" 2x). Sem este
+    // padrão, a comparação inteira caía no fallback genérico sem filtro
+    // nenhum (os 2 nomes perdidos).
+    new RegExp(`\\bcompar[ae]\\s+(?:os\\s+)?operadores\\s+(.+?)\\s+e\\s+(.+)$`, "iu"),
     /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
     /^(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
@@ -1957,6 +2001,10 @@ export function extractClientComparisonNames(value) {
     // já corrigido pra operador acima ("compare o operador X com o
     // operador Y"), aqui pro espelho de cliente.
     /\bcompar[ae]\s+(?:o\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    // "Compare os clientes X e Y" (achado testando o lote de perguntas ao
+    // vivo): mesmo espelho plural já corrigido pra operador acima
+    // ("compare os operadores X e Y").
+    /\bcompar[ae]\s+(?:os\s+)?clientes\s+(.+?)\s+e\s+(.+)$/iu,
     // "abr(?:e|em|iu|iram)" (achado testando o lote de perguntas ao vivo):
     // só o passado "abriu" era aceito — "O cliente Acme ABRE mais chamados
     // que o cliente Beta...?" (presente, tão comum quanto o passado) não
@@ -2658,8 +2706,19 @@ function routeTicketQuestionCore(pergunta) {
   // do"/"e com a do", não "e d[oa]" direto — não colide) — mesma ideia do
   // "status X ou Y"/"prioridades X e Y" já recusados honestamente em vez
   // de silenciosamente quebrados.
-  const operadorPareceUniao = operador !== undefined && /\be\s+d[oa]\b/u.test(normalizeText(operador));
-  const clientePareceUniao = cliente !== undefined && /\be\s+d[oa]\b/u.test(normalizeText(cliente));
+  // "Quantos tickets o Fábio E O Rodrigo trataram juntos essa semana?"
+  // (achado testando o lote de perguntas ao vivo): a checagem original só
+  // reconhecia a conexão "e do"/"e da" (a forma mais comum quando se repete
+  // "do/da" antes do 2º nome, ex. "do Fábio e da Ana") — "e o"/"e a" (sem
+  // repetir "do/da", ex. "o Fábio e o Rodrigo") escapava.
+  // NÃO generalizar pra "\be\b" solto (tentado e revertido rodando a suíte):
+  // sobrenome composto real do catálogo ("Rogerio Da Silva E Souza") também
+  // tem um "e" solto no meio, sem ser união nenhuma — "e" sozinho não é
+  // sinal confiável. O que distingue união de sobrenome composto é o que
+  // vem DEPOIS do "e": um artigo ("o"/"a"/"do"/"da") introduzindo um 2º
+  // nome, nunca mais um pedaço do mesmo nome.
+  const operadorPareceUniao = operador !== undefined && /\be\s+(?:o|a|do|da)\b/u.test(normalizeText(operador));
+  const clientePareceUniao = cliente !== undefined && /\be\s+(?:o|a|do|da)\b/u.test(normalizeText(cliente));
 
   if (operadorPareceUniao || clientePareceUniao) {
     return createClarificationDecision(
@@ -2668,6 +2727,36 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Tickets do operador Fulano.\n"
         + "- Tickets do cliente Acme.",
+    );
+  }
+
+  // "Tickets abertos na área de TI OU DE Redes." (achado testando o lote de
+  // perguntas ao vivo): mesma ideia já aplicada a status mais acima — área/
+  // departamento/operador/cliente são todos texto livre (sem conjunto fixo
+  // pequeno pra listar nos exemplos, por isso a mensagem genérica), então
+  // "ou" dentro do valor capturado nunca resolve como 1 valor real, só
+  // falha em silêncio. Checado DEPOIS de todas as comparações de verdade
+  // acima — "quem tem mais tickets: operador X OU operador Y?" já é uma
+  // comparação válida reconhecida antes de chegar aqui, então "ou" só
+  // sobra num valor final capturado quando NENHUMA comparação bateu (ou
+  // seja, é mesmo uma união ambígua, não uma comparação com "ou" disfarçada
+  // de união).
+  const uniaoOuPorDimensao = [
+    ["área", area],
+    ["departamento", departamento],
+    ["operador", operador],
+    ["cliente", cliente],
+  ].find(([, valor]) => valor !== undefined && /\bou\b/u.test(normalizeText(valor)));
+
+  if (uniaoOuPorDimensao !== undefined) {
+    const [nomeDimensao] = uniaoOuPorDimensao;
+
+    return createClarificationDecision(
+      "esclarecimento_uniao_valor",
+      `Essa pergunta parece pedir mais de um(a) ${nomeDimensao} ao mesmo tempo — hoje só consigo filtrar por um valor de cada vez. Pode perguntar sobre cada um separadamente?`
+        + "\n\nExemplos:\n"
+        + "- Tickets da área Suporte.\n"
+        + "- Tickets da área WEB.",
     );
   }
 
@@ -3635,7 +3724,11 @@ function routeTicketQuestionCore(pergunta) {
   const mentionsUltimoComoRecencia =
     /\bultimos?\b/.test(text)
     && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text)
-    && !/\bultim[oa]\s+(?:semana|mes|ano|trimestre|quinzena)\b/.test(text);
+    && !/\bultim[oa]\s+(?:semana|mes|ano|trimestre|quinzena)\b/.test(text)
+    // "último dia do mês" (achado testando o lote de perguntas ao vivo):
+    // mesma exclusão de "último mês" acima, pro caso mais específico de dia
+    // de calendário que extractRelativeDateRange passou a reconhecer.
+    && !/\bultimo\s+dia\s+(?:d[oe]\s+)?mes\b/.test(text);
 
   const isMostRecentIntent =
     (/\brecent/.test(text)
