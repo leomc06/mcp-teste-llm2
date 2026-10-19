@@ -762,12 +762,22 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN =
   /\s+entre\s+(?:o\s+)?dia\s+\d{1,2}\s+e\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d|n)?(?:esse|este)\s+m[êe]s\b.*$/iu;
 
+// "(?![\\p{L}\\p{N}])" no fim do grupo, não "\\b" (achado testando o lote de
+// perguntas ao vivo): "amanh[ãa]" pode terminar em "ã" (acento no ÚLTIMO
+// caractere, diferente de "área"/"página", onde o acento fica no meio e a
+// última letra é ASCII) — \b do JS só reconhece [A-Za-z0-9_] como "palavra",
+// então bem depois de um "ã" ele NUNCA fecha fronteira (os dois lados do
+// ponto contam como "não-palavra" pro \b), mesmo contra um espaço em
+// seguida. "Tickets da área Suporte AMANHÃ." não podava "amanhã" (ficava
+// "Suporte amanhã" inteiro no nome capturado) por esse motivo. O lookahead
+// unicode funciona igual pras outras alternativas do grupo (todas terminam
+// em ASCII), então não muda nada pra elas.
 const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
   "\\s+(?:n[oa]\\s+)?(?:hoje|ontem|amanh[ãa]"
     + "|(?:d|n)?(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
-    + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)\\b.*$",
+    + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
   "iu",
 );
 
@@ -1150,8 +1160,13 @@ export function extractAreaName(value) {
     // vocabulário interno do sistema (quem pergunta não necessariamente sabe
     // que a API chama isso de "área") — resolveMetaId falha graciosamente se
     // não for um nome de área real, então o risco de falso positivo é baixo.
+    // "(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)" (achado testando o lote de
+    // perguntas ao vivo): "Quantos tickets SEM ÁREA DEFINIDA existem?" não é
+    // um nome de área de verdade — mesma ideia já corrigida pra prioridade
+    // (ver UNSET_VALUE_ADJECTIVE_SOURCE), sem ela "definida existem" inteiro
+    // virava area: "definida existem".
     new RegExp(
-      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
       "iu",
     ),
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
@@ -1247,11 +1262,26 @@ export function extractDepartmentName(value) {
 // março" inteiro — sem nome nenhum antes da cláusula de data pra
 // cleanFreeText podar (mesmo problema estrutural de "nesse ano" sozinho
 // acima, resolvido aqui excluindo a origem em vez de tentar podar depois).
+// "manha\b" (achado testando o lote de perguntas ao vivo): "Tickets
+// fechados PELA MANHÃ de ontem." capturava operador: "manhã de" via o
+// fallback genérico "pel[ao] X" — não há tool que filtre por horário do
+// dia, então a cláusula é descartada (igual "canal"/"fornecedor" acima),
+// não inventa um operador fantasma. "tarde\b"/"noite\b" entram pela mesma
+// família (período do dia), mesmo sem ter sido testado ao vivo ainda.
+// "(?![\p{L}\p{N}])" em vez de "\b" só pra essa alternativa (achado testando
+// a própria correção acima): "manh[ãa]" pode terminar acentuado ("ã" é a
+// ÚLTIMA letra, diferente de "área"/"página", onde o acento fica no meio) —
+// \b do JS só reconhece [A-Za-z0-9_] como "palavra", então nunca fecha
+// fronteira bem depois de um "ã", mesmo com espaço em seguida. Sem essa
+// troca, a correção acima não bloquearia nada de verdade (lookahead sempre
+// passava), já que esta fonte é usada dentro de `(?!...)` em todo lugar
+// abaixo.
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|setor\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
+  + "|manh[ãa](?![\\p{L}\\p{N}])|tarde\\b|noite\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
@@ -1324,7 +1354,12 @@ export function extractOperatorName(value) {
     // cobre os casos mais prováveis de falso positivo.
     new RegExp(
       `\\b${TICKET_NOUN_SOURCE}s?\\s+de\\s+`
-        + `(?!hoje\\b)(?!ontem\\b)(?!amanh[ãa]\\b)(?!\\d)(?!(?:${MONTH_NAME_SOURCE})\\b)`
+        // "(?![\\p{L}\\p{N}])", não "\\b", depois de "amanh[ãa]" (achado
+        // testando o lote de perguntas ao vivo): \b do JS nunca fecha
+        // fronteira bem depois de um "ã" (não é [A-Za-z0-9_]), então
+        // "Quantos tickets DE AMANHÃ existem?" nunca era excluído por essa
+        // negative lookahead — "amanhã" virava operador fantasma.
+        + `(?!hoje\\b)(?!ontem\\b)(?!amanh[ãa](?![\\p{L}\\p{N}]))(?!\\d)(?!(?:${MONTH_NAME_SOURCE})\\b)`
         // "alta"/"baixa"/"media" + "prioridade" (achado testando o lote de
         // perguntas ao vivo): "tickets DE ALTA PRIORIDADE" tem "prioridade"
         // como a 2ª palavra, não a 1ª — a exclusão de OPERATOR_DO_DA_
@@ -1482,8 +1517,14 @@ const NEGATION_MARKER_SOURCE =
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
+    // "(?!e\\s+por\\b)" (achado testando o lote de perguntas ao vivo):
+    // "Resumo POR STATUS e por área." usa "status" só como CONECTOR de
+    // resumo (a dimensão real pedida é outra, mencionada depois), não como
+    // valor de catálogo — sem essa exclusão, "e por área" inteiro virava
+    // status: "e por área" (nunca resolve no catálogo real), mesmo a rota
+    // certa (resumo_por_area) já tendo sido escolhida em outro lugar.
     new RegExp(
-      `\\bstatus\\s+(?:de\\s+)?(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+      `\\bstatus\\s+(?:de\\s+)?(?!e\\s+por\\b)(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
       "iu",
     ),
   ]);
@@ -1642,11 +1683,22 @@ const PRIORITY_LEVEL_UNIAO_PATTERNS = [
 // EXCLUSÃO de valor, não suportada) e devolvendo um esclarecimento errado. A
 // pergunta certa (prioridade sempre preenchida nos dados reais — 0 tickets
 // bateriam esse filtro) nem chega a ser uma exclusão.
-const PRIORITY_UNSET_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especificad)[ao]s?";
+// Nome genérico (não só "PRIORITY_"): reaproveitado também por extractAreaName
+// (achado testando o lote de perguntas ao vivo) — "Quantos tickets SEM ÁREA
+// DEFINIDA existem?" tinha o mesmo bug (area: "definida"), mesmo vocabulário
+// de adjetivo "vazio" se aplicando a qualquer dimensão, não só prioridade.
+const UNSET_VALUE_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especificad)[ao]s?";
 
 export function extractPriorityName(value) {
   return extractByPatterns(value, [
-    new RegExp(`\\bprioridade\\s+(?:de\\s+)?(?!${PRIORITY_UNSET_ADJECTIVE_SOURCE}\\b)(.+)$`, "iu"),
+    // "(?!e\\s+por\\b)" (mesmo achado de extractTicketStatusName, achado
+    // testando o lote de perguntas ao vivo): "Resumo por prioridade E POR
+    // ÁREA." usa "prioridade" só como conector, não valor — sem essa
+    // exclusão, "e por área" inteiro virava prioridade: "e por área".
+    new RegExp(
+      `\\bprioridade\\s+(?:de\\s+)?(?!e\\s+por\\b)(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+      "iu",
+    ),
     // Ordem substantivo-nível invertida ("alta prioridade", tão natural
     // quanto "prioridade alta") — achado testando o lote de perguntas ao
     // vivo: "Tickets de ALTA PRIORIDADE." não resolvia prioridade nenhuma
@@ -2554,6 +2606,28 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Liste os tickets do Fábio e da Ana." (achado testando o lote de
+  // perguntas ao vivo): união de 2 operadores/clientes com "e" — cada
+  // tool só filtra por 1 operador/1 cliente (campo de texto único), então
+  // "do Fábio e da Ana" inteiro virava um nome-lixo capturado ("Fábio e da
+  // Ana"), que nunca bate por substring com nenhum contact_name/operador
+  // real. Checado DEPOIS das comparações de verdade acima (que usam "com a
+  // do"/"e com a do", não "e d[oa]" direto — não colide) — mesma ideia do
+  // "status X ou Y"/"prioridades X e Y" já recusados honestamente em vez
+  // de silenciosamente quebrados.
+  const operadorPareceUniao = operador !== undefined && /\be\s+d[oa]\b/u.test(normalizeText(operador));
+  const clientePareceUniao = cliente !== undefined && /\be\s+d[oa]\b/u.test(normalizeText(cliente));
+
+  if (operadorPareceUniao || clientePareceUniao) {
+    return createClarificationDecision(
+      "esclarecimento_uniao_operador_cliente",
+      "Essa pergunta parece pedir tickets de mais de um operador/cliente ao mesmo tempo — hoje só consigo filtrar por um de cada vez. Pode perguntar sobre cada um separadamente?"
+        + "\n\nExemplos:\n"
+        + "- Tickets do operador Fulano.\n"
+        + "- Tickets do cliente Acme.",
+    );
+  }
+
   // "Qual a diferença entre os status/prioridades/áreas/departamentos X e
   // Y?" (achado testando o lote de perguntas ao vivo — Complexas 1,
   // pergunta 17): pergunta CONCEITUAL (pede pra EXPLICAR o que cada valor
@@ -2760,9 +2834,28 @@ function routeTicketQuestionCore(pergunta) {
       return false;
     }
 
-    const index = haystack.indexOf(needle);
+    // Busca por PALAVRA INTEIRA, não substring crua (achado testando o lote
+    // de perguntas ao vivo): "Tickets abertos, EXCETO OS DA ÁREA DE TI." nunca
+    // detectava a negação porque haystack.indexOf("ti") achava o "ti"
+    // escondido dentro da primeira palavra da frase ("TIckets"!), bem antes
+    // do "TI" de verdade — a janela calculada a partir desse índice errado
+    // ficava vazia (slice(0, 0)), sem nenhuma chance de conter o marcador
+    // "exceto" que vem bem mais adiante.
+    // "\\b" só no INÍCIO; no fim, "s?(?![\\p{L}\\p{N}])" em vez de "\\b"
+    // (achado rodando a suíte depois desta mesma correção): um "\\b" nos 2
+    // lados rejeitava "cancelado" dentro de "cancelados" (plural) — mesma
+    // forma como "ti" ficava preso dentro de "tickets", a troca/s continua
+    // sendo caractere de palavra, sem fronteira — quebrando "Tickets
+    // DIFERENTES DE cancelados." (status já resolvido como "Cancelado",
+    // singular, contra o texto real no plural). O "s" opcional cobre o
+    // plural regular mais comum em português sem abrir mão da proteção
+    // contra "ti" dentro de "tickets" (ali não há "s" logo depois, o
+    // próximo caractere é "c", que ainda é letra — a verificação final
+    // continua rejeitando).
+    const needleEscapado = needle.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const match = new RegExp(`\\b${needleEscapado}s?(?![\\p{L}\\p{N}])`, "u").exec(haystack);
 
-    if (index === -1) {
+    if (match === null) {
       return false;
     }
 
@@ -2772,7 +2865,7 @@ function routeTicketQuestionCore(pergunta) {
     // negação e o nome capturado, mais larga que qualquer exemplo visto até
     // então ("que NÃO seja urgente" etc.) — a janela de 5 cortava "sem
     // contar" fora, perdendo a negação por completo.
-    const janela = haystack.slice(0, index).trim().split(/\s+/u).slice(-10).join(" ");
+    const janela = haystack.slice(0, match.index).trim().split(/\s+/u).slice(-10).join(" ");
 
     return NEGATION_MARKER_PATTERN.test(janela);
   }
@@ -2966,13 +3059,23 @@ function routeTicketQuestionCore(pergunta) {
   // nenhum, em vez do resumo por prioridade (que mostraria o balde "não
   // informada", 0 nos dados reais de hoje — todo ticket já tem prioridade).
   const mentionsPriorityUnsetPhrase = new RegExp(
-    `\\bsem\\s+prioridade\\s+${PRIORITY_UNSET_ADJECTIVE_SOURCE}\\b`,
+    `\\bsem\\s+prioridade\\s+${UNSET_VALUE_ADJECTIVE_SOURCE}\\b`,
+    "u",
+  ).test(text);
+
+  // "sem área definida" (achado testando o lote de perguntas ao vivo):
+  // mesma ideia do pedido de prioridade "vazia" acima, pra área — resumo_
+  // tickets_por_area já devolve um balde "não informada" pros tickets sem
+  // área (confirmado ao vivo), então vale rotear pra lá em vez do fallback
+  // de listagem sem filtro nenhum.
+  const mentionsAreaUnsetPhrase = new RegExp(
+    `\\bsem\\s+${AREA_SYNONYM_SOURCE}\\s+${UNSET_VALUE_ADJECTIVE_SOURCE}\\b`,
     "u",
   ).test(text);
 
   const mentionsStatusDimension = mentionsDimension(text, "status");
   const mentionsPriorityDimension = mentionsDimension(text, "prioridades?") || mentionsPriorityUnsetPhrase;
-  const mentionsAreaDimension = mentionsDimension(text, `${AREA_SYNONYM_SOURCE}s?`);
+  const mentionsAreaDimension = mentionsDimension(text, `${AREA_SYNONYM_SOURCE}s?`) || mentionsAreaUnsetPhrase;
   const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
   const mentionsClienteDimension = mentionsDimension(text, `${CLIENT_LOOKUP_NOUN_SOURCE}s?`);

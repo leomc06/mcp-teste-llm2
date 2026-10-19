@@ -3750,3 +3750,57 @@ test("continuação 'e por X' (re-agrupar por outra dimensão) vence sobre a dim
   const semTroca = routeTicketQuestion("Resumo por área. e desses, só os abertos");
   assert.equal(semTroca.intent, "resumo_por_area");
 });
+
+test("negação de valor curto que é prefixo de outra palavra ('TI' dentro de 'tickets') agora é detectada corretamente", () => {
+  const route = routeTicketQuestion("Tickets abertos, exceto os da área de TI.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: a mesma busca não deve quebrar quando o valor catalogado é
+  // singular mas o texto real está no plural (ex.: "Cancelado" vs.
+  // "cancelados") — \b nos 2 lados rejeitaria esse caso por engano.
+  const plural = routeTicketQuestion("Tickets diferentes de cancelados.");
+  assert.equal(plural.intent, "esclarecimento_negacao");
+});
+
+test("'pela manhã'/'pela tarde'/'pela noite' não vazam pro nome de operador capturado", () => {
+  const route = routeTicketQuestion("Tickets fechados pela manhã de ontem.");
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.dataInicio, route.entities.dataFim);
+});
+
+test("'tickets de amanhã'/'área X amanhã' não vazam 'amanhã' pro nome capturado (acento no fim da palavra quebra \\b do JS)", () => {
+  const operador = routeTicketQuestion("Quantos tickets de amanhã existem?");
+  assert.equal(operador.entities.operador, undefined);
+
+  const area = routeTicketQuestion("Tickets da área Suporte amanhã.");
+  assert.equal(area.entities.area, "Suporte");
+});
+
+test("união de 2 operadores/clientes com 'e' pede esclarecimento, em vez de virar um nome-lixo", () => {
+  const operadores = routeTicketQuestion("Liste os tickets do Fábio e da Ana.");
+  assert.equal(operadores.intent, "esclarecimento_uniao_operador_cliente");
+
+  // Controle: comparação de verdade ("com a do", não "e da") continua OK
+  const comparacao = routeTicketQuestion("Compare a carga do Fábio Gali com a do Rodrigo Fernandes.");
+  assert.equal(comparacao.intent, "comparar_carga_operador");
+});
+
+test("'sem área definida' é reconhecido como estado (resumo por área, balde 'não informada'), não nome de área literal", () => {
+  const route = routeTicketQuestion("Quantos tickets sem área definida existem?");
+  assert.equal(route.intent, "resumo_por_area");
+  assert.equal(route.entities.area, undefined);
+});
+
+test("'status'/'prioridade' usados só como conector ('e por X') não vazam a cláusula seguinte pro valor capturado", () => {
+  const status = routeTicketQuestion("Resumo por status e por área.");
+  assert.equal(status.intent, "resumo_por_area");
+  assert.equal(status.entities.status, undefined);
+
+  const prioridade = routeTicketQuestion("Resumo por prioridade e por área.");
+  assert.equal(prioridade.intent, "resumo_por_area");
+  assert.equal(prioridade.entities.prioridade, undefined);
+
+  // Controle: uso normal de "status"/"prioridade" sozinho continua igual
+  const normal = routeTicketQuestion("Resumo por status.");
+  assert.equal(normal.intent, "resumo_por_status");
+});
