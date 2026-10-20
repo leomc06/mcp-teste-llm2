@@ -48,7 +48,7 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // real. Só poda a cláusula — decision.formato já é resolvido à parte, no
 // texto original, por detectFormatoPreferido.
 const TRAILING_FORMAT_CLAUSE_PATTERN =
-  /\s+em\s+(?:uma?|forma\s+de|formato\s+de)\s+(?:gr[áa]ficos?|tabelas?)\b.*$/iu;
+  /\s+em\s+(?:uma?|forma\s+de|formato\s+de)\s+(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
 
 // "mas atendidos/tratados por outro operador" (achado testando o lote de
 // perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
@@ -936,6 +936,19 @@ const TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN =
 const TRAILING_OPERATOR_RELATIVE_CLAUSE_PATTERN =
   /\s+que\s+(?:o\s+|a\s+)?.+?\s+(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))\b.*$/iu;
 
+// "ordenados da mais antiga pra mais nova"/"em ordem do maior pro menor"
+// (achado testando o lote de perguntas ao vivo): pedido de ordenação de
+// LISTAGEM (não suportado — só as tools de resumo têm campo `ordem`, ver
+// ordemRanking mais abaixo) vazava inteiro pro nome capturado antes dele
+// (ex.: "Liste os tickets do operador Carlos Eduardo ORDENADOS DA MAIS
+// ANTIGA PRA MAIS NOVA" virava operador: "Carlos Eduardo ordenados da mais
+// antiga pra mais nova"). Corta a partir de "ordenado(s)/ordenada(s)"
+// inteiro — igual a outros TRAILING_*_PATTERN que cortam a partir de um
+// verbo/adjetivo até o fim da frase, sem tentar interpretar a ordem em si
+// (pedido de ordenação de listagem continua não suportado, só honestamente
+// não vaza mais pro nome).
+const TRAILING_ORDER_CLAUSE_PATTERN = /\s+(?:em\s+ordem|ordenad[oa]s?)\b.*$/iu;
+
 function cleanFreeText(value) {
   const text = String(value ?? "")
     .split(/[,.!?;:]/u, 1)[0]
@@ -981,6 +994,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
     .replace(TRAILING_OPERATOR_RELATIVE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_ORDER_CLAUSE_PATTERN, "")
     .replace(TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN, "")
     // Por último de propósito: só depois que uma cláusula de data já foi
     // cortada (ex.: "no último mês" por TRAILING_RELATIVE_DATE_CLAUSE_
@@ -1496,6 +1510,22 @@ export function extractClientName(value) {
       `\\bque\\s+(?:o\\s+|a\\s+)?(?!(?:mais|menos)\\b)(.+?)\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\b`,
       "iu",
     ),
+    // "Quantos tickets o Carlos e a Ana abriram juntos?" (achado testando o
+    // lote de perguntas ao vivo): mesma ideia do padrão "que X abriu"
+    // acima, mas SEM a palavra "que" — "quantos tickets <sujeito> abriu/
+    // abriram" também identifica quem abre como cliente/contato, igual o
+    // padrão irmão "quantos tickets <nome> tem" já aceito pra carga de
+    // operador (ver extractOperatorWorkloadName). Sem este padrão, a frase
+    // não batia em NENHUM extrator (nem este, nem o de "que X abriu" acima,
+    // que exige a palavra "que"), e a união de 2 nomes ("Carlos e a Ana")
+    // nunca chegava a ser capturada pra a checagem de união (mais abaixo em
+    // routeTicketQuestionCore) perceber o problema — a pergunta caía direto
+    // no fallback de listagem sem filtro nenhum, com os 2 nomes perdidos em
+    // silêncio.
+    new RegExp(
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?:o\\s+|a\\s+)?(.+?)\\s+${CLIENT_ACTIVITY_VERB_SOURCE}\\b`,
+      "iu",
+    ),
   ]);
 }
 
@@ -1917,8 +1947,14 @@ export function extractOperatorComparisonNames(value) {
     // nos 2 lados (mesma cautela das comparações irmãs), senão "Compare
     // Fulano com Beltrano" (sem nenhuma palavra de dimensão) seria ambíguo
     // demais pra generalizar.
+    // USER_LOOKUP_NOUN_SOURCE em vez de "operador" literal (achado testando
+    // o lote de perguntas ao vivo): "Compare o TÉCNICO X com o ATENDENTE Y."
+    // não batia, porque só a palavra "operador" era aceita aqui — os outros
+    // sinônimos de operador (técnico/atendente/responsável/usuário) já são
+    // reconhecidos em todo o resto do arquivo via essa mesma constante, só
+    // faltava aqui. Os 2 lados não precisam usar o MESMO sinônimo.
     new RegExp(
-      `\\bcompar[ae]\\s+(?:o\\s+)?operador\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?operador\\s+(.+)$`,
+      `\\bcompar[ae]\\s+(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+)$`,
       "iu",
     ),
     // "Compare os operadores X e Y" (achado testando o lote de perguntas ao
@@ -1926,8 +1962,12 @@ export function extractOperatorComparisonNames(value) {
     // 2 nomes direto, sem repetir a palavra de dimensão — forma mais curta e
     // comum do que a forma BARE acima (que repete "operador" 2x). Sem este
     // padrão, a comparação inteira caía no fallback genérico sem filtro
-    // nenhum (os 2 nomes perdidos).
-    new RegExp(`\\bcompar[ae]\\s+(?:os\\s+)?operadores\\s+(.+?)\\s+e\\s+(.+)$`, "iu"),
+    // nenhum (os 2 nomes perdidos). Plurais dos outros sinônimos (técnicos/
+    // atendentes) junto pelo mesmo motivo da forma singular acima.
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+)?(?:operadores|t[ée]cnicos|atendentes|usu[áa]rios|respons[áa]veis)\\s+(.+?)\\s+e\\s+(.+)$`,
+      "iu",
+    ),
     /\bdiferen[cç]a\s+de\s+carga\s+entre\s+(.+?)\s+e\s+(.+)$/iu,
     /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
     /^(.+?)\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+|a\s+)?(.+)$/iu,
@@ -2279,22 +2319,33 @@ const OBJECT_REFERENCE_SOURCE = "(?:isso|isto|esses?\\s+dados?|ess[ae]s?\\s+resu
 // ortográfica do português, mesma classe de troca de "fazer"/"faça" já
 // tratada acima), achado testando "Coloque isso em uma tabela.".
 const PLACE_VERB_SOURCE = "colo(?:c|qu)[ae]";
+// "planilha" (achado testando o lote de perguntas ao vivo): sinônimo comum
+// de "tabela" no vocabulário de escritório (Excel/Sheets) — mesmo conceito
+// pro usuário final, mas a palavra nunca entrava em nenhuma alternativa de
+// FORMATO_TABELA_SOURCE abaixo.
+const TABLE_WORD_SOURCE = "(?:tabelas?|planilhas?)";
+// "ger[ae]" em vez de "gera" literal (achado testando o lote de perguntas
+// ao vivo, junto da correção de "planilha" acima): só a forma indicativa
+// ("gera uma tabela") era aceita — "GERE uma planilha com esses dados"
+// (imperativo, tão comum quanto "gera" num pedido) não batia em nenhuma
+// das 2 alternativas que usam esse verbo. Mesmo motivo de "faça"/"faz" já
+// tratado 2 linhas abaixo (2 formas verbais comuns do mesmo verbo).
 const FORMATO_TABELA_SOURCE =
-  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|gera)\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?tabelas?`
-  + "|(?:mostr[ae]|exib[ae]|gera|monta|crie)\\w*\\s+(?:uma\\s+)?tabelas?\\b"
+  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|ger[ae])\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?${TABLE_WORD_SOURCE}`
+  + `|(?:mostr[ae]|exib[ae]|ger[ae]|monta|crie)\\w*\\s+(?:uma\\s+)?${TABLE_WORD_SOURCE}\\b`
   // Espelha a forma solta de gráfico logo abaixo ("em gráfico" sem verbo
   // logo antes): achado ao vivo que "mostre quantos tickets tem por
   // departamento em tabelas" não batia em nenhuma alternativa acima porque
   // todas exigem o verbo IMEDIATAMENTE antes de "em tabela" — qualquer
   // texto no meio (bem comum: "mostre <conteúdo> em tabela") já quebrava.
-  + "|\\bem\\s+(?:uma\\s+)?(?:formato\\s+de\\s+)?tabelas?\\b"
-  + "|\\btabelas?\\s*,?\\s*por\\s+favor\\b"
-  + "|\\bformato\\s+de\\s+tabelas?\\b";
+  + `|\\bem\\s+(?:uma\\s+)?(?:formato\\s+de\\s+)?${TABLE_WORD_SOURCE}\\b`
+  + `|\\b${TABLE_WORD_SOURCE}\\s*,?\\s*por\\s+favor\\b`
+  + `|\\bformato\\s+de\\s+${TABLE_WORD_SOURCE}\\b`;
 // "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
 // virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
 // gráfico" (bem comum) nunca bateria, só a forma "faz".
 const FORMATO_GRAFICO_SOURCE =
-  "\\b(?:fa[cz]|crie|gera|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]ficos?\\b"
+  "\\b(?:fa[cz]|crie|ger[ae]|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]ficos?\\b"
   // "em um gráfico" (achado na mesma auditoria): o "um/uma" opcional faltava
   // aqui — só "em gráfico"/"em forma de gráfico" batiam, sem artigo.
   + "|\\bem\\s+(?:uma?\\s+)?(?:forma\\s+de\\s+)?gr[áa]ficos?\\b"
@@ -2872,6 +2923,37 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Quantos tickets estão com status Em atendimento?\n"
         + "- Tickets com status Em estudo.",
+    );
+  }
+
+  // "Qual o ticket mais caro?" / "Qual o tempo médio de resolução dos
+  // tickets?" (achado testando o lote de perguntas ao vivo): pedem um
+  // atributo que não existe no sistema (preço/custo de ticket, duração
+  // média de resolução) — sem nenhuma entidade forte capturada, a pergunta
+  // caía no fallback genérico de listagem (sem filtro nenhum), como se
+  // "mais caro"/"tempo médio" tivesse sido entendido e silenciosamente
+  // ignorado. Mesma lógica honesta de isConceptualTermQuestion acima, só
+  // que pra uma MÉTRICA inexistente em vez de uma definição de termo.
+  // Vocabulário restrito a frases específicas (não a palavra "custo"/
+  // "preço" solta em qualquer canto), pra não interceptar uma busca de
+  // texto livre legítima que mencione esses termos de outro jeito (ex.:
+  // "busque tickets sobre o custo do projeto X").
+  const isUnsupportedMetricQuestion =
+    /\b(?:mais|menos)\s+car[oa]s?\b/.test(text)
+    || /\bqual\s+(?:o\s+|a\s+)?(?:pre[çc]o|custo)\b/.test(text)
+    || /\bpre[çc]o\s+(?:m[ée]dio|total)\b/.test(text)
+    || /\btempo\s+m[ée]dio\b/.test(text)
+    || /\bm[ée]dia\s+de\s+tempo\b/.test(text)
+    || /\bdura[çc][ãa]o\s+m[ée]dia\b/.test(text)
+    || /\bsla\s+m[ée]dio\b/.test(text);
+
+  if (isUnsupportedMetricQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_metrica_nao_suportada",
+      "Não tenho dados de preço/custo de ticket, nem calculo médias de tempo — só consigo contar e filtrar tickets por status, prioridade, área, departamento, operador, cliente ou período. Pode perguntar usando um desses filtros?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets estão com prioridade Alta?\n"
+        + "- Tickets abertos na área Suporte.",
     );
   }
 
@@ -3595,6 +3677,36 @@ function routeTicketQuestionCore(pergunta) {
     );
 
     return decision;
+  }
+
+  // "Mostra os tickets por canal de atendimento." (achado testando o lote
+  // de perguntas ao vivo): nenhuma tool resumo_tickets_por_* agrupa por
+  // canal, e nenhum filtro de listagem aceita canal (só listar_canais_
+  // tickets lista o catálogo de canais existentes — ver TICKET_NOUN_
+  // SOURCE/exclusões de "canal" nos extratores de operador/dimensão mais
+  // acima, que já descartam a palavra honestamente em vez de inventar um
+  // filtro errado). Sem este guard, a cláusula virava um fallback de
+  // listagem SEM FILTRO NENHUM e sem avisar — como se "canal" tivesse sido
+  // entendido e ignorado, em vez de reconhecer que não há suporte.
+  // Vocabulário restrito a "canal" usado como DIMENSÃO/FILTRO (por/cada/
+  // pelo/do/no canal, ou "canal de atendimento" — a forma mais comum na
+  // prática), não "canal" solto em qualquer lugar da frase — uma busca de
+  // texto livre que mencione "canal" incidentalmente (ex.: "busque tickets
+  // sobre problema no canal de pagamentos") ainda deve seguir pra
+  // extractSearchText, mais abaixo, sem ser hijackada por este guard.
+  const mencionaCanalComoFiltroOuDimensao =
+    /\bpor\s+canal\b|\bcada\s+canal\b|\bpelo\s+canal\b|\bdo\s+canal\b|\bno\s+canal\b|\bcanal\s+de\s+atendimento\b/.test(
+      text,
+    );
+
+  if (mencionaCanalComoFiltroOuDimensao) {
+    return createClarificationDecision(
+      "esclarecimento_canal_nao_suportado",
+      "Não consigo filtrar nem agrupar tickets por canal de atendimento hoje — só consigo listar os canais que existem no catálogo. Pode perguntar usando outro filtro (status, área, departamento, operador, cliente ou período)?"
+        + "\n\nExemplos:\n"
+        + "- Quais canais de ticket existem?\n"
+        + "- Tickets abertos na área Suporte.",
+    );
   }
 
   if (numero !== undefined) {

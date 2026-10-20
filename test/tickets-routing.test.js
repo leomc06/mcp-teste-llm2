@@ -3428,9 +3428,9 @@ test("verbosidade ('detalhado'/'resumido') chega nos 6 branches de listagem que 
   }
 });
 
-test("'canal' não vaza pro nome de operador capturado (nenhuma tool filtra por canal hoje)", () => {
+test("'canal' não vaza pro nome de operador capturado (nenhuma tool filtra por canal hoje) e agora pede esclarecimento em vez de ignorar o filtro em silêncio", () => {
   const route = routeTicketQuestion("Tickets abertos pelo canal Telefone.");
-  assert.deepEqual(route.toolNames, ["listar_tickets_abertos"]);
+  assert.equal(route.intent, "esclarecimento_canal_nao_suportado");
   assert.equal(route.entities.operador, undefined);
 });
 
@@ -3940,4 +3940,72 @@ test("'tem o maior/menor número de tickets' é reconhecido como ranking por dim
   assert.equal(route.intent, "resumo_por_area");
   assert.equal(route.entities.area, undefined);
   assert.equal(route.entities.ordem, "asc");
+});
+
+test("comparação de operador aceita sinônimos ('técnico'/'atendente'), não só a palavra literal 'operador', nos 2 lados", () => {
+  assert.deepEqual(
+    extractOperatorComparisonNames("Compare o técnico Lucas Andrade com o atendente Marcos Paulo."),
+    ["Lucas Andrade", "Marcos Paulo"],
+  );
+
+  const route = routeTicketQuestion("Compare o técnico Lucas Andrade com o atendente Marcos Paulo.");
+  assert.equal(route.intent, "comparar_carga_operador");
+
+  const plural = routeTicketQuestion("Compare os técnicos Ana e Bruno.");
+  assert.equal(plural.intent, "comparar_carga_operador");
+});
+
+test("'ordenados da mais antiga pra mais nova' (pedido de ordenação de listagem, não suportado) não vaza pro nome capturado", () => {
+  const route = routeTicketQuestion(
+    "Liste os tickets do operador Carlos Eduardo ordenados da mais antiga pra mais nova.",
+  );
+  assert.equal(route.entities.operador, "Carlos Eduardo");
+});
+
+test("'planilha' é reconhecida como sinônimo de 'tabela' em qualquer forma de pedido de formato, e o verbo 'gere' (imperativo) é aceito igual a 'gera'", () => {
+  assert.equal(routeTicketQuestion("Mostre os tickets abertos em formato de planilha.").formato, "tabela");
+  assert.equal(routeTicketQuestion("Resumo por área em uma planilha.").formato, "tabela");
+  assert.equal(routeTicketQuestion("Gere uma planilha com os tickets abertos.").formato, "tabela");
+  assert.equal(routeTicketQuestion("Gere um gráfico de tickets por área.").formato, "grafico");
+});
+
+test("pedido de métrica inexistente no sistema (preço/custo, tempo médio) pede esclarecimento em vez de cair na listagem genérica sem avisar", () => {
+  const maisCaro = routeTicketQuestion("Qual o ticket mais caro?");
+  assert.equal(maisCaro.intent, "esclarecimento_metrica_nao_suportada");
+  assert.deepEqual(maisCaro.toolNames, []);
+
+  const tempoMedio = routeTicketQuestion("Qual o tempo médio de resolução dos tickets?");
+  assert.equal(tempoMedio.intent, "esclarecimento_metrica_nao_suportada");
+
+  const custo = routeTicketQuestion("Qual o custo médio de um chamado?");
+  assert.equal(custo.intent, "esclarecimento_metrica_nao_suportada");
+
+  // Controle: busca de texto livre que menciona "custo" de outro jeito
+  // continua funcionando normalmente, sem ser hijackada por este guard.
+  const buscaTexto = routeTicketQuestion("Busque tickets sobre o custo do projeto X.");
+  assert.equal(buscaTexto.intent, "buscar_por_texto");
+});
+
+test("'canal' usado como filtro/dimensão (nenhuma tool suporta) pede esclarecimento em vez de cair na listagem sem avisar que o filtro foi ignorado", () => {
+  const porCanal = routeTicketQuestion("Mostra os tickets por canal de atendimento.");
+  assert.equal(porCanal.intent, "esclarecimento_canal_nao_suportado");
+  assert.deepEqual(porCanal.toolNames, []);
+
+  const peloCanal = routeTicketQuestion("Tickets abertos pelo canal Telefone.");
+  assert.equal(peloCanal.intent, "esclarecimento_canal_nao_suportado");
+
+  // Controle: o catálogo de canais em si (listar_canais_tickets) continua
+  // funcionando normalmente — "canais de ticket" não bate no vocabulário
+  // restrito de filtro/dimensão deste guard.
+  const catalogo = routeTicketQuestion("Quais canais de ticket existem?");
+  assert.equal(catalogo.intent, "listar_canais_tickets");
+});
+
+test("'quantos tickets o X e o/a Y abriram' (sem a palavra 'que') também é reconhecido como união de 2 clientes, pedindo esclarecimento em vez de cair na listagem sem filtro nenhum", () => {
+  const uniao = routeTicketQuestion("Quantos tickets o Carlos e a Ana abriram juntos?");
+  assert.equal(uniao.intent, "esclarecimento_uniao_operador_cliente");
+
+  // Controle: 1 nome só continua funcionando normalmente.
+  const singular = routeTicketQuestion("Quantos tickets o Carlos abriu?");
+  assert.equal(singular.entities.cliente, "Carlos");
 });
