@@ -108,6 +108,44 @@ const infinitiveVerbs = [
   "reatribuir",
 ];
 
+// Particípio dos mesmos verbos de escrita acima — cobre a voz passiva com
+// "ser" (achado testando o lote de perguntas ao vivo): "O ticket 1050 PODE
+// SER MARCADO COMO RESOLVIDO?" e "Isso aqui precisa SER CANCELADO" não
+// batiam em nenhuma lista (imperativo/subjuntivo/infinitivo são outra
+// conjugação), então um pedido de escrita disfarçado em "ser + particípio"
+// passava como se fosse leitura. Só "ser" (infinitivo) dispara — "foi
+// marcado"/"está cancelado" (particípio depois de um verbo CONJUGADO no
+// passado/presente) é uma pergunta sobre o estado atual, não um pedido pra
+// mudar; a frase real de pedido sempre usa "ser" cru, depois de um modal
+// (pode/deve/precisa/vai) ou isolado.
+const participleVerbs = [
+  "criado",
+  "cadastrado",
+  "registrado",
+  "alterado",
+  "atualizado",
+  "modificado",
+  "mudado",
+  "trocado",
+  "editado",
+  "marcado",
+  "concluido",
+  "encerrado",
+  "fechado",
+  "cancelado",
+  "excluido",
+  "apagado",
+  "removido",
+  "reaberto",
+  "atribuido",
+  "reatribuido",
+];
+
+const passivePattern = new RegExp(
+  `\\bser\\s+(?:${participleVerbs.join("|")})\\b`,
+  "u",
+);
+
 const sqlWritePattern =
   /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke)\b/u;
 
@@ -162,5 +200,6 @@ export function isWriteRequest(pergunta) {
     || subjunctivePattern.test(text)
     || directInfinitivePattern.test(text)
     || requestPrefixPattern.test(text)
+    || passivePattern.test(text)
   );
 }

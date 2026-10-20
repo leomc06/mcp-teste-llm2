@@ -411,6 +411,31 @@ function formatIsoDate(date) {
   return `${ano}-${mes}-${dia}`;
 }
 
+// "Tickets abertos no dia 31 de abril." (achado testando o lote de
+// perguntas ao vivo): abril não tem dia 31, mas nada validava isso — o
+// filtro virava o literal "2026-04-31" (data que não existe), e a resposta
+// final era só "nenhum ticket encontrado", como se a pergunta fosse válida
+// e só não tivesse resultado, em vez de avisar que a DATA em si é
+// impossível. JS normaliza datas invalidas construindo um Date com
+// rollover silencioso (new Date(2026,3,31) vira 1º de maio) — construir o
+// Date e conferir se mês/dia batem com o que foi pedido é o jeito mais
+// simples de detectar isso sem reimplementar o calendário.
+function isDataCalendarInvalida(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate ?? "");
+
+  if (!match) {
+    return false;
+  }
+
+  const [, anoStr, mesStr, diaStr] = match;
+  const ano = Number(anoStr);
+  const mes = Number(mesStr);
+  const dia = Number(diaStr);
+  const data = new Date(ano, mes - 1, dia);
+
+  return data.getFullYear() !== ano || data.getMonth() + 1 !== mes || data.getDate() !== dia;
+}
+
 // Segunda-feira da semana que contém `date`.
 function startOfWeek(date) {
   const resultado = new Date(date);
@@ -566,6 +591,34 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: `${ano}-${mes}-${diaInicio}`, dataFim: `${ano}-${mes}-${diaFim}` };
   }
 
+  // "entre o dia 25 deste mês e o dia 5 do mês que vem" (achado testando o
+  // lote de perguntas ao vivo): mesma ideia do intervalo de dias acima, mas
+  // cruzando a virada do mês — o qualificador de mês vem 1 vez PRA CADA dia
+  // (não 1 vez só no final, como no padrão irmão), por isso é um padrão à
+  // parte, checado ANTES do fallback genérico de "esse/este mês" (que
+  // estava engolindo a frase inteira e devolvendo o mês atual inteiro,
+  // ignorando o intervalo de dias real pedido). "mês que vem"/"próximo mês"
+  // como sinônimos do mês seguinte.
+  const entreDiasVirandoMesMatch = text.match(
+    /\bentre\s+(?:o\s+)?dia\s+(\d{1,2})\s+(?:d|n)?(?:esse|este)\s+mes\s+e\s+(?:o\s+)?dia\s+(\d{1,2})\s+(?:d[oe]\s+)?(?:mes\s+que\s+vem|proximo\s+mes)\b/iu,
+  );
+
+  if (entreDiasVirandoMesMatch) {
+    const diaInicio = entreDiasVirandoMesMatch[1].padStart(2, "0");
+    const diaFim = entreDiasVirandoMesMatch[2].padStart(2, "0");
+    const primeiroDiaMesAtual = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    const anoInicio = primeiroDiaMesAtual.getFullYear();
+    const mesInicio = String(primeiroDiaMesAtual.getMonth() + 1).padStart(2, "0");
+    const primeiroDiaMesSeguinte = new Date(agora.getFullYear(), agora.getMonth() + 1, 1);
+    const anoFim = primeiroDiaMesSeguinte.getFullYear();
+    const mesFim = String(primeiroDiaMesSeguinte.getMonth() + 1).padStart(2, "0");
+
+    return {
+      dataInicio: `${anoInicio}-${mesInicio}-${diaInicio}`,
+      dataFim: `${anoFim}-${mesFim}-${diaFim}`,
+    };
+  }
+
   if (/\b(?:d|n)?(?:esse|este)\s+mes\b/.test(text)) {
     const primeiroDia = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
@@ -580,6 +633,34 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return {
       dataInicio: formatIsoDate(new Date(anoPassado, 0, 1)),
       dataFim: formatIsoDate(new Date(anoPassado, 11, 31)),
+    };
+  }
+
+  // "segundo trimestre desse ano" (achado testando o lote de perguntas ao
+  // vivo): trimestre NUMERADO (1º a 4º), diferente de "último trimestre"
+  // abaixo (que é sempre o trimestre calendário ANTERIOR ao atual) — aqui
+  // o número é explícito, então usa o ano mencionado (ou o atual, se
+  // nenhum "ano passado"/ano específico for dito). Checado ANTES do
+  // "último trimestre" de propósito: sem isso, "segundo trimestre desse
+  // ano" caía inteiro no fallback de "esse ano" (ano inteiro), perdendo o
+  // recorte de trimestre por completo.
+  const trimestreNumeradoMatch = text.match(
+    /\b(primeiro|segundo|terceiro|quarto)\s+trimestre(?:\s+d[eo]\s+(\d{4})|\s+(?:d|n)?(?:esse|este)\s+ano|\s+do\s+ano\s+passado)?\b/iu,
+  );
+
+  if (trimestreNumeradoMatch) {
+    const ORDINAL_TRIMESTRE = { primeiro: 0, segundo: 1, terceiro: 2, quarto: 3 };
+    const trimestreNumero = ORDINAL_TRIMESTRE[trimestreNumeradoMatch[1].toLowerCase()];
+    const ano = trimestreNumeradoMatch[2] !== undefined
+      ? Number(trimestreNumeradoMatch[2])
+      : /\bdo\s+ano\s+passado\b/.test(trimestreNumeradoMatch[0])
+        ? agora.getFullYear() - 1
+        : agora.getFullYear();
+    const primeiroMes = trimestreNumero * 3;
+
+    return {
+      dataInicio: formatIsoDate(new Date(ano, primeiroMes, 1)),
+      dataFim: formatIsoDate(new Date(ano, primeiroMes + 3, 0)),
     };
   }
 
@@ -848,6 +929,13 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN =
   /\s+entre\s+(?:o\s+)?dia\s+\d{1,2}\s+e\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d|n)?(?:esse|este)\s+m[êe]s\b.*$/iu;
 
+// "entre o dia 25 deste mês e o dia 5 do mês que vem" (achado testando o
+// lote de perguntas ao vivo) — mesma ideia do padrão acima, pro intervalo
+// de dias cruzando a virada do mês que extractRelativeDateRange também
+// passou a reconhecer.
+const TRAILING_ENTRE_DIAS_VIRANDO_MES_CLAUSE_PATTERN =
+  /\s+entre\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d|n)?(?:esse|este)\s+m[êe]s\s+e\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d[oe]\s+)?(?:m[êe]s\s+que\s+vem|pr[óo]ximo\s+m[êe]s)\b.*$/iu;
+
 // "num intervalo de 10 a 20 de outubro" (achado testando o lote de
 // perguntas ao vivo) — mesma ideia do padrão acima, pro intervalo de dias
 // dentro de um MÊS NOMEADO que extractRelativeDateRange também passou a
@@ -873,6 +961,7 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
     + "|[úu]ltimo\\s+dia\\s+(?:d[oe]\\s+)?m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
+    + "|(?:primeiro|segundo|terceiro|quarto)\\s+trimestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?"
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
   "iu",
 );
@@ -1043,6 +1132,17 @@ function cleanFreeText(value) {
     .trim()
     .replace(QUOTE_CHARACTERS_PATTERN, "")
     .trim()
+    // Achado testando o lote de perguntas ao vivo: "cliente O Boticário"
+    // (empresa real cujo nome começa com artigo) perde o "O" aqui, virando
+    // cliente: "Boticário" — tentativa de corrigir via case-sensitivity
+    // (só podar a forma minúscula) foi revertida: um artigo GRAMATICAL
+    // capturado no INÍCIO DA FRASE (ex.: "O Rodrigo Fernandes está com mais
+    // tickets...", onde "O" é só a maiúscula de início de frase, não parte
+    // do nome) também vem capitalizado, então case sozinho não distingue os
+    // dois casos — confirmado ao rodar a suíte (3 testes existentes
+    // quebraram). Limitação conhecida, não corrigida: um nome de
+    // cliente/operador que comece com artigo (raro) pode perder essa
+    // palavra.
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
     .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
     .replace(TRAILING_CONTINUATION_CLAUSE_PATTERN, "")
@@ -1066,6 +1166,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN, "")
+    .replace(TRAILING_ENTRE_DIAS_VIRANDO_MES_CLAUSE_PATTERN, "")
     .replace(TRAILING_INTERVALO_DIAS_MES_NOMEADO_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
@@ -1298,7 +1399,19 @@ export function extractTicketComparisonNumbers(value) {
     .map((match) => Number(match[1]))
     .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647);
 
-  return numeros.length >= 2 ? [numeros[0], numeros[1]] : undefined;
+  // "Compare os tickets 100, 200 e 300." (achado testando o lote de
+  // perguntas ao vivo): com 3+ números, essa função truncava pros 2
+  // primeiros e descartava o resto em silêncio (comparava só 100 e 200,
+  // ignorando o 300 sem avisar). Em vez de truncar, devolve undefined pra
+  // deixar a extração cair em extractMultipleTicketNumbers logo abaixo, que
+  // já é genérica pra N itens (reusa o mesmo mecanismo de comparação) — só
+  // muda o nome da intent (detalhar_varios_tickets em vez de
+  // comparar_tickets), sem perder nenhum número.
+  if (numeros.length > 2) {
+    return undefined;
+  }
+
+  return numeros.length === 2 ? [numeros[0], numeros[1]] : undefined;
 }
 
 // "Detalhe os tickets 100, 200 e 300." (achado testando o lote de perguntas
@@ -1341,6 +1454,48 @@ export function extractMultipleTicketNumbers(value) {
 
   return numeros.length >= 2 ? numeros : undefined;
 }
+
+// Uma sequência de Nomes Próprios (1+ palavras capitalizadas cada) — usada
+// pelos 2 padrões abaixo pra detectar uma ENUMERAÇÃO de pessoas/clientes
+// (não tickets, que já têm seu próprio mecanismo de N itens acima), sem
+// tentar resolver quem são de verdade. Contra o texto CRU (não normalizado),
+// de propósito: capitalização é o único sinal barato de "isto é um nome
+// próprio" disponível aqui.
+const NOME_PROPRIO_SOURCE = "\\p{Lu}[\\p{L}.]*(?:\\s+\\p{Lu}[\\p{L}.]*)*";
+
+// "sem contar o Fabio Gali e o Diego Mota" (achado testando o lote de
+// perguntas ao vivo): negação de 2+ NOMES PRÓPRIOS específicos — diferente
+// de negar um valor de catálogo com complemento fixo (fechado/congelado/
+// etc., já coberto por detectaNegacaoNaoSuportada), aqui nenhum extrator
+// chega a capturar nada (os de nome único não esperam "e" no meio, os de
+// comparação exigem "compare"), então a exclusão inteira era ignorada em
+// silêncio — o resumo saía CHEIO, com os nomes que deviam ser excluídos
+// aparecendo normalmente. Detectado por um sinal mais simples (sem resolver
+// os nomes): marcador de negação (reusa os mesmos 4 já aceitos em
+// detectaNegacaoNaoSuportada) seguido de 2+ Nomes Próprios ligados por "e".
+const EXCLUSAO_DE_NOMES_PATTERN = new RegExp(
+  `\\b(?:sem\\s+contar|tirando|excluindo|exceto)\\s+(?:o\\s+|a\\s+)?`
+    + `${NOME_PROPRIO_SOURCE}\\s+e\\s+(?:o\\s+|a\\s+)?${NOME_PROPRIO_SOURCE}\\b`,
+  "u",
+);
+
+// "Detalhe os tickets do Fabio Gali, do Diego Mota e do Cesar." (achado
+// testando o lote de perguntas ao vivo): 3+ NOMES PRÓPRIOS enumerados via
+// "do/da X, do/da Y e do/da Z" — diferente de extractMultipleTicketNumbers
+// acima (que já cobre "detalhe os TICKETS 100, 200 e 300" sem a palavra
+// "compare"), aqui são pessoas/clientes, não números de ticket, e não
+// existe tool nenhuma que detalhe/compare 3+ operadores ou clientes de uma
+// vez (analisar_carga_operador/analisar_atividade_cliente só trabalham em
+// pares) — sem este guard, o 1º nome virava operador e os outros 2 somem
+// em silêncio. Exige a palavra ticket/chamado/etc. em algum lugar da frase
+// (TICKET_NOUN_SOURCE), pra não disparar numa frase qualquer fora do
+// domínio que por acaso enumere 3 nomes (ex.: um convite, não relacionado a
+// tickets).
+const TRES_OU_MAIS_NOMES_DO_DA_PATTERN = new RegExp(
+  `\\bd[oa]\\s+${NOME_PROPRIO_SOURCE}\\s*,\\s*d[oa]\\s+${NOME_PROPRIO_SOURCE}`
+    + `(?:\\s*,\\s*d[oa]\\s+${NOME_PROPRIO_SOURCE})*\\s+e\\s+d[oa]\\s+${NOME_PROPRIO_SOURCE}\\b`,
+  "u",
+);
 
 // "(?!(?:mais|menos)\b)" no início da captura evita que perguntas de ranking
 // com "mais"/"menos" invertido ("qual área MAIS tem tickets", "cliente que
@@ -1498,6 +1653,12 @@ const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|setor\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b|e-?mail\\b|telefone\\b|whatsapp\\b|chat\\b"
   + "|favor\\b|gentileza\\b|[úu]ltimo\\b|[úu]ltima\\b|enquanto\\b|exemplo\\b|engano\\b|nome\\b|menor\\b|maior\\b"
+  // "pior(es)"/"melhor(es)" (achado testando o lote de perguntas ao vivo):
+  // "Mostra os tickets vencidos ordenados DO PIOR pro melhor." capturava
+  // operador: "pior pro melhor" via o fallback genérico "do/da X" — mesma
+  // classe de bug de "menor"/"maior" (já excluídos) só que no vocabulário
+  // de ranking qualitativo, não quantitativo.
+  + "|pior(?:es)?\\b|melhor(?:es)?\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
   + "|manh[ãa](?![\\p{L}\\p{N}])|tarde\\b|noite\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
@@ -1639,8 +1800,32 @@ export function extractOperatorName(value) {
 // verdade — sem essa exclusão virava filtro cliente:"responsável", que nunca
 // bate por substring com nenhum contact_name real (resultado some em
 // silêncio, "nenhum ticket encontrado").
+// "Tickets com o e-mail renato.ferreira@inpe.br." (achado testando o lote
+// de perguntas ao vivo): e-mail como contact_name é um padrão REAL nos
+// dados (vários clientes só existem como "nome.sobrenome@inpe.br", ver
+// resumo_tickets_por_cliente) — sem este caso, o endereço inteiro era
+// descartado em silêncio e a pergunta caía num listar_tickets SEM FILTRO
+// NENHUM, devolvendo a base inteira como se fosse a resposta certa.
+const EMAIL_CLIENTE_PATTERN =
+  /\be-?mails?\s+(?:d[oe]\s+)?(?:cliente\s+)?([\w.+-]+@[\w.-]+\.[a-z]{2,})\b/iu;
+
 export function extractClientName(value) {
-  return extractByPatterns(value, [
+  const text = String(value ?? "");
+
+  // Checado ANTES de extractByPatterns/cleanFreeText de propósito:
+  // cleanFreeText trunca o valor capturado no primeiro "." (ver
+  // `.split(/[,.!?;:]/u, 1)[0]` no topo da função), o que cortaria
+  // "renato.ferreira@inpe.br" em só "renato" — o endereço é devolvido
+  // direto daqui, sem passar por essa limpeza genérica (não precisa:
+  // o próprio regex já delimita exatamente o token do e-mail, sem
+  // nenhuma cauda pra podar).
+  const emailMatch = text.match(EMAIL_CLIENTE_PATTERN);
+
+  if (emailMatch) {
+    return emailMatch[1];
+  }
+
+  return extractByPatterns(text, [
     // "(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})" e "(?!${UNSET_VALUE_ADJECTIVE_
     // SOURCE}\\b)" (achado testando o lote de perguntas ao vivo): mesmos 2
     // bugs já corrigidos pra área/operador/departamento (conector "e por X"
@@ -1789,6 +1974,14 @@ export function extractClientActivityName(value) {
 // várias vezes pros outros sinônimos de exclusão.
 const NEGATION_MARKER_SOURCE =
   "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|ignorando|ignor[ae]"
+  // "fora da área X"/"fora do departamento X" (achado testando o lote de
+  // perguntas ao vivo): "Tickets FORA DA ÁREA de Suporte." capturava area:
+  // "Suporte" como filtro POSITIVO — sentido exatamente invertido ("fora
+  // de" exclui, não inclui). Exige a palavra de dimensão logo depois de
+  // "fora d[ao]" (não só "fora" solto) pra não colidir com "fora do prazo"/
+  // "fora do SLA" (OLDEST_PROXY_STATE_SOURCE), que é um sentido totalmente
+  // diferente (vencido) e não uma negação de catálogo.
+  + `|fora\\s+d[ao]\\s+(?:${AREA_SYNONYM_SOURCE}|departamento|operador|${CLIENT_LOOKUP_NOUN_SOURCE}|status|prioridade)`
   + "|menos\\s+(?:o|a|os|as)\\b)";
 
 export function extractTicketStatusName(value) {
@@ -2402,6 +2595,19 @@ export function extractAreaComparisonNames(value) {
         + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
+    // "Quantos tickets a área X fechou COMPARADO COM a área Y?" (achado
+    // testando o lote de perguntas ao vivo): forma comparativa afirmativa,
+    // sem a palavra "compare" — sem este padrão, a 2ª área citada era
+    // descartada em silêncio (a resposta só considerava a 1ª). O verbo
+    // entre a 1ª área e "comparado" (fechou/teve/abriu/...) é podado depois
+    // por cleanFreeText, que já reconhece esses verbos como cauda — por
+    // isso a captura aqui é só "até a palavra comparado", sem listar verbo
+    // nenhum explicitamente.
+    new RegExp(
+      `\\b(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+comparad[oa]\\s+(?:com|a)\\s+`
+        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
   ];
 
   for (const pattern of patterns) {
@@ -2879,6 +3085,20 @@ function routeTicketQuestionCore(pergunta) {
   const pagina = extractPage(pergunta);
   const { dataInicio, dataFim } = extractDateRange(pergunta);
 
+  // "dia 31 de abril" (achado testando o lote de perguntas ao vivo): data
+  // de calendário impossível — checado logo aqui, antes de qualquer branch
+  // usar dataInicio/dataFim, pra nunca devolver uma listagem "vazia" como
+  // se a pergunta fosse válida e só não tivesse resultado.
+  if (isDataCalendarInvalida(dataInicio) || isDataCalendarInvalida(dataFim)) {
+    return createClarificationDecision(
+      "esclarecimento_data_invalida",
+      "Essa data não existe no calendário (confira o dia e o mês). Pode conferir e perguntar de novo?"
+        + "\n\nExemplos:\n"
+        + "- Tickets abertos no dia 30 de abril.\n"
+        + "- Tickets abertos entre 01/04/2026 e 30/04/2026.",
+    );
+  }
+
   const entities = compactEntities({
     status,
     area,
@@ -2908,14 +3128,25 @@ function routeTicketQuestionCore(pergunta) {
     return matches === null ? 0 : matches.length;
   }
 
+  // "Detalhe os tickets do Fabio Gali, do Diego Mota e do Cesar." (achado
+  // testando o lote de perguntas ao vivo): mesma ideia do guard acima
+  // (3+ itens, nenhuma tool suporta), mas pra uma ENUMERAÇÃO de nomes
+  // próprios via "do/da X, do/da Y e do/da Z" — contaMencoesDimensao não
+  // pega esse caso porque a palavra "operador"/"cliente" nunca aparece,
+  // só os nomes soltos (ver TRES_OU_MAIS_NOMES_DO_DA_PATTERN acima).
+  const mencionaTresOuMaisNomesProprios =
+    new RegExp(`\\b${TICKET_NOUN_SOURCE}s?\\b`, "iu").test(pergunta)
+    && TRES_OU_MAIS_NOMES_DO_DA_PATTERN.test(pergunta);
+
   const mencionaComparacaoDe3OuMais =
-    /\bcompar[ae]\b/.test(text)
-    && [
-      contaMencoesDimensao(AREA_SYNONYM_SOURCE),
-      contaMencoesDimensao("departamento"),
-      contaMencoesDimensao(USER_LOOKUP_NOUN_SOURCE),
-      contaMencoesDimensao(CLIENT_LOOKUP_NOUN_SOURCE),
-    ].some((contagem) => contagem >= 3);
+    (/\bcompar[ae]\b/.test(text)
+      && [
+        contaMencoesDimensao(AREA_SYNONYM_SOURCE),
+        contaMencoesDimensao("departamento"),
+        contaMencoesDimensao(USER_LOOKUP_NOUN_SOURCE),
+        contaMencoesDimensao(CLIENT_LOOKUP_NOUN_SOURCE),
+      ].some((contagem) => contagem >= 3))
+    || mencionaTresOuMaisNomesProprios;
 
   if (mencionaComparacaoDe3OuMais) {
     return createClarificationDecision(
@@ -3630,6 +3861,23 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Resumo por cliente, mas sem contar o Fabio Gali e o Diego Mota."
+  // (achado testando o lote de perguntas ao vivo): negação de 2+ nomes
+  // próprios específicos (ver EXCLUSAO_DE_NOMES_PATTERN acima) — checado à
+  // parte de detectaNegacaoNaoSuportada() porque aqui nenhum valor chega a
+  // ser capturado em area/departamento/operador/prioridade/status/cliente
+  // (os extratores de nome único não esperam "e" no meio), então aquela
+  // função não tinha nada pra negar e a exclusão era ignorada por completo.
+  if (EXCLUSAO_DE_NOMES_PATTERN.test(pergunta)) {
+    return createClarificationDecision(
+      "esclarecimento_negacao",
+      "Não consigo excluir 2 ou mais nomes/valores específicos ao mesmo tempo — as consultas disponíveis só filtram por um valor citado, não por exclusão de uma lista. Pode perguntar sobre cada um separadamente?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets o cliente Fabio Gali tem?\n"
+        + "- Resumo de tickets por cliente.",
+    );
+  }
+
   // Achado P6 da auditoria end-to-end: perguntas com 2 valores mutuamente
   // exclusivos da mesma dimensão (ex.: "tickets urgentes de baixa
   // prioridade", "tickets encerrados que estão em atendimento") eram
@@ -3863,6 +4111,21 @@ function routeTicketQuestionCore(pergunta) {
   // também bate (ex.: "por departamento"), então não hijacka listagens
   // comuns (que filtram por um nome específico, não pela palavra solta da
   // dimensão).
+  // "3 piores operadores"/"2 melhores técnicos" (achado testando o lote de
+  // perguntas ao vivo): forma ADJETIVO + SUBSTANTIVO ("piores operadores"),
+  // ao contrário de mentionsDimension (que exige o substantivo ANTES do cue
+  // de ranking, ex.: "operadores com mais tickets") — sem isso, "Lista os 3
+  // piores operadores em atendimento esse mês." caía num listar_tickets
+  // genérico, perdendo o ranking inteiro (o "3" também era descartado, ver
+  // correção irmã em extractLimit/routing-utils.js). "pior" é o mesmo
+  // sentido ascendente de "menos"/"menor" (pior = menor volume de tickets
+  // atendidos), "melhor" o sentido descendente de "mais"/"maior" — mesma
+  // leitura de ordemRanking mais abaixo.
+  const isWorstBestOperatorRankingIntent = new RegExp(
+    `\\b(?:pior(?:es)?|melhor(?:es)?)\\s+(?:${USER_LOOKUP_NOUN_SOURCE})(?:es|s)?\\b`,
+    "u",
+  ).test(text);
+
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -3873,7 +4136,8 @@ function routeTicketQuestionCore(pergunta) {
     || /\btop\s+\d+\b/.test(text)
     || formatoPreferido !== undefined
     || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text)
-    || mentionsAnyDimensionConnector;
+    || mentionsAnyDimensionConnector
+    || isWorstBestOperatorRankingIntent;
 
   // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
   // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
@@ -3895,9 +4159,15 @@ function routeTicketQuestionCore(pergunta) {
   // pro menor" (não um pedido de ascendente). Só conta como ascendente
   // quando "menor" NÃO está nessa construção "maior...pro/para...menor".
   const pedidoMaiorParaMenor = /\bmaior\s+(?:pro|para)\s+(?:o\s+)?menor\b/.test(text);
+  // "pior(es)" é o mesmo sentido ascendente de "menos"/"menor" (achado
+  // junto da correção de isWorstBestOperatorRankingIntent acima): "os 3
+  // PIORES operadores" pede o fim da lista (menor volume), não o topo —
+  // "melhor(es)" já cai no padrão descendente (mesmo de "mais"/"maior"/
+  // nada), por isso não precisa de alternativa própria aqui.
   const ordemRanking =
     (/\bmenos\b(?!\s+de\b)/.test(text) && !/\bpelo\s+menos\b/.test(text))
     || (/\bmenor\b/.test(text) && !pedidoMaiorParaMenor)
+    || /\bpior(?:es)?\b/.test(text)
       ? "asc"
       : undefined;
 
@@ -4015,7 +4285,7 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent) && !isSlaVencidoIntent && permiteDimensaoResumo("operador")) {
+  if (hasResumoIntent && (mentionsOperatorDimension || isOperatorRankingIntent || isWorstBestOperatorRankingIntent) && !isSlaVencidoIntent && permiteDimensaoResumo("operador")) {
     const decision = createTicketDecision(
       "resumo_por_operador",
       "resumo_tickets_por_operador",

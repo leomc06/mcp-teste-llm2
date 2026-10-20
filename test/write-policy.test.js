@@ -61,6 +61,14 @@ const blockedQuestions = [
   "Dava pra você atualizar o status do ticket 4830?",
   "Dá pra você fechar o ticket 4830?",
   "Seria possível cancelar o chamado 4830?",
+  // Voz passiva com "ser" (achado testando o lote de perguntas ao vivo):
+  // "pode/precisa/deve ser <particípio>" é um pedido de escrita disfarçado,
+  // diferente de "foi"/"está <particípio>" (pergunta sobre o estado atual,
+  // já coberta em allowedQuestions abaixo).
+  "O ticket 1050 pode ser marcado como resolvido?",
+  "Isso aqui parece que precisa ser cancelado, o chamado 980.",
+  "Esse chamado deve ser encerrado hoje.",
+  "O ticket 1003 vai ser reaberto?",
 ];
 
 const allowedQuestions = [
@@ -80,6 +88,11 @@ const allowedQuestions = [
   "Quando a prioridade foi atualizada?",
   "Quais tickets foram encerrados?",
   "Mostre os tickets modificados nesta semana.",
+  // Controle negativo da correção de voz passiva acima: "foi"/"está" (verbo
+  // CONJUGADO no passado/presente) é pergunta sobre o estado atual, não um
+  // pedido pra mudar — só "ser" (infinitivo cru) deve disparar o bloqueio.
+  "Esse ticket já foi marcado como resolvido?",
+  "O chamado já está cancelado?",
 ];
 
 test("bloqueia intenção de escrita", () => {

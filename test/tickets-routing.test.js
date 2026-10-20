@@ -4249,3 +4249,111 @@ test("'X tem mais tickets que Y' quando os 2 lados mencionam área/departamento 
   const controle = routeTicketQuestion("O Fábio tem mais tickets que o Rodrigo?");
   assert.equal(controle.intent, "comparar_carga_operador");
 });
+
+test("'entre o dia X deste mês e o dia Y do mês que vem' é reconhecido como intervalo cruzando a virada do mês, não o mês inteiro", () => {
+  const route = routeTicketQuestion("Tickets abertos entre o dia 25 deste mês e o dia 5 do mês que vem.");
+  const agora = new Date();
+  const inicio = new Date(agora.getFullYear(), agora.getMonth(), 25);
+  const fim = new Date(agora.getFullYear(), agora.getMonth() + 1, 5);
+
+  assert.equal(route.entities.dataInicio, inicio.toISOString().slice(0, 10));
+  assert.equal(route.entities.dataFim, fim.toISOString().slice(0, 10));
+});
+
+test("'segundo trimestre desse ano' (trimestre NUMERADO) é reconhecido com o recorte certo, não vira o ano inteiro", () => {
+  const route = routeTicketQuestion("Qual o segundo trimestre desse ano teve mais chamados abertos?");
+  const ano = new Date().getFullYear();
+
+  assert.equal(route.entities.dataInicio, `${ano}-04-01`);
+  assert.equal(route.entities.dataFim, `${ano}-06-30`);
+
+  const comAno = routeTicketQuestion("Tickets abertos no primeiro trimestre de 2025.");
+  assert.equal(comAno.entities.dataInicio, "2025-01-01");
+  assert.equal(comAno.entities.dataFim, "2025-03-31");
+});
+
+test("'ordenados do pior pro melhor' não vira nome de operador (pior/melhor entram na exclusão, igual menor/maior)", () => {
+  const route = routeTicketQuestion("Mostra os tickets vencidos ordenados do pior pro melhor.");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'N piores/melhores operadores' é reconhecido como ranking por operador, com limite e ordem corretos", () => {
+  const route = routeTicketQuestion("Lista os 3 piores operadores em atendimento esse mês.");
+  assert.equal(route.intent, "resumo_por_operador");
+  assert.equal(route.entities.limite, 3);
+  assert.equal(route.entities.ordem, "asc");
+
+  const melhores = routeTicketQuestion("Quais os 2 melhores técnicos desse mês?");
+  assert.equal(melhores.intent, "resumo_por_operador");
+  assert.equal(melhores.entities.limite, 2);
+  assert.equal(melhores.entities.ordem, undefined);
+});
+
+test("'X comparado com Y' (forma afirmativa, sem a palavra 'compare') dispara comparação de área, em vez de descartar o 2º lado em silêncio", () => {
+  const route = routeTicketQuestion("Quantos tickets a área de Redes e Segurança fechou comparado com a área WEB?");
+  assert.equal(route.intent, "comparar_tickets_area");
+  assert.deepEqual(route.compare.map((c) => c.args.area), ["Redes e Segurança", "WEB"]);
+});
+
+test("'fora da área/do departamento/do cliente X' é reconhecido como negação não suportada (sentido invertido), em vez de virar filtro positivo de X", () => {
+  const area = routeTicketQuestion("Tickets fora da área de Suporte.");
+  assert.equal(area.intent, "esclarecimento_negacao");
+  assert.equal(area.entities.area, undefined);
+
+  // Controle: "fora do prazo"/"fora do SLA" continuam com o sentido real
+  // (vencido), sem colidir com a negação nova (exige um substantivo de
+  // dimensão logo depois de "fora d[ao]", não só a palavra solta).
+  const vencido = routeTicketQuestion("Tickets fora do prazo na área Suporte.");
+  assert.equal(vencido.intent, "listar_vencidos");
+  assert.equal(vencido.entities.area, "Suporte");
+});
+
+test("'sem contar o X e o Y' (negação de 2+ nomes próprios num resumo) pede esclarecimento, em vez de ignorar a exclusão e devolver o resumo cheio", () => {
+  const route = routeTicketQuestion("Resumo por cliente, mas sem contar o Fabio Gali e o Diego Mota.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+  assert.equal(route.toolNames.length, 0);
+
+  // Controle: "excluindo" com 1 nome só também continua recusando (via
+  // detectaNegacaoNaoSuportada normal — "Fabio Gali" acaba capturado como
+  // operador pelo fallback genérico "do/da X" — já testado em outro
+  // lugar), só que por um caminho diferente deste guard novo (que exige
+  // 2+ nomes ligados por "e").
+  const umNomeSo = routeTicketQuestion("Resumo por cliente, excluindo o Fabio Gali.");
+  assert.equal(umNomeSo.intent, "esclarecimento_negacao");
+});
+
+test("'compare os tickets X, Y e Z' (3+ tickets) detalha os 3, em vez de truncar silenciosamente pros 2 primeiros", () => {
+  const route = routeTicketQuestion("Compare os tickets 100, 200 e 300.");
+  assert.equal(route.intent, "detalhar_varios_tickets");
+  assert.deepEqual(route.compare.map((c) => c.args.numero), [100, 200, 300]);
+
+  // Controle: comparação de exatamente 2 tickets continua igual.
+  const doisTickets = routeTicketQuestion("Compare o ticket 100 com o ticket 200.");
+  assert.equal(doisTickets.intent, "comparar_tickets");
+  assert.deepEqual(doisTickets.compare.map((c) => c.args.numero), [100, 200]);
+});
+
+test("'dia 31 de abril'/'29 de fevereiro' num ano não bissexto (data impossível no calendário) pede esclarecimento, em vez de devolver uma listagem vazia como se a pergunta fosse válida", () => {
+  const route = routeTicketQuestion("Tickets abertos no dia 31 de abril.");
+  assert.equal(route.intent, "esclarecimento_data_invalida");
+
+  const naoBissexto = routeTicketQuestion("Tickets abertos no dia 29 de fevereiro de 2026.");
+  assert.equal(naoBissexto.intent, "esclarecimento_data_invalida");
+
+  // Controles: data válida (inclusive 29/02 bissexto) continua normal.
+  const valido = routeTicketQuestion("Tickets abertos no dia 30 de abril.");
+  assert.equal(valido.entities.dataInicio, "2026-04-30");
+
+  const bissexto = routeTicketQuestion("Tickets abertos no dia 29 de fevereiro de 2024.");
+  assert.equal(bissexto.entities.dataInicio, "2024-02-29");
+});
+
+test("'detalhe os tickets do X, do Y e do Z' (3+ nomes próprios, sem a palavra 'compare') pede esclarecimento, em vez de capturar só o 1º nome e descartar o resto", () => {
+  const route = routeTicketQuestion("Detalhe os tickets do Fabio Gali, do Diego Mota e do Cesar.");
+  assert.equal(route.intent, "esclarecimento_comparacao_3_ou_mais");
+});
+
+test("'tickets com o e-mail X' reconhece o endereço inteiro como filtro de cliente, sem truncar no primeiro ponto nem cair numa listagem sem filtro nenhum", () => {
+  const route = routeTicketQuestion("Tickets com o e-mail renato.ferreira@inpe.br.");
+  assert.equal(route.entities.cliente, "renato.ferreira@inpe.br");
+});

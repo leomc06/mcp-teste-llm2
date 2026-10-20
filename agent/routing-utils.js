@@ -76,6 +76,12 @@ export function extractLimit(value) {
     // lugar de "com" (ex.: "que mais fecharam/atenderam/trataram", um verbo
     // de ação em vez de "com mais tickets").
     /\b(\d+)\s+\p{L}+\s+que\s+(?:mais|menos)\b/u,
+    // "os 3 piores operadores"/"as 2 melhores áreas" (achado testando o
+    // lote de perguntas ao vivo): mesma ideia dos 2 padrões acima ("N
+    // <dimensão> com/que mais/menos"), mas com o adjetivo ANTES do
+    // substantivo, sem "com"/"que" nenhum no meio — "Lista os 3 PIORES
+    // operadores em atendimento esse mês." ignorava o "3" por completo.
+    /\b(\d+)\s+(?:pior(?:es)?|melhor(?:es)?)\s+\p{L}+\b/u,
     // "Liste 5 tickets abertos." (achado testando o lote de perguntas ao
     // vivo): número bare direto depois de um verbo de listagem, sem
     // "primeiros"/"top"/"com mais" — nenhum padrão acima cobria essa forma
