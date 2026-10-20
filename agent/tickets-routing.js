@@ -513,6 +513,29 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     };
   }
 
+  // "num intervalo de 10 a 20 de outubro" (achado testando o lote de
+  // perguntas ao vivo): intervalo de DIAS dentro de um mês NOMEADO — mesma
+  // ideia do "entre o dia 1 e o dia 15 deste mês" logo abaixo, só com outra
+  // construção ("num intervalo de X a Y de <mês>") e um mês explícito em
+  // vez de "esse/este mês". Checado antes do padrão de mês nomeado sozinho
+  // (diaMesNomeadoMatch, mais abaixo) pra não perder o intervalo de dias e
+  // virar só 1 dia (dataInicio = dataFim) por engano.
+  const intervaloDiasMesNomeadoMatch = text.match(
+    new RegExp(
+      `\\b(?:num|em\\s+um)\\s+intervalo\\s+de\\s+(\\d{1,2})\\s+a\\s+(\\d{1,2})\\s+de\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`,
+      "iu",
+    ),
+  );
+
+  if (intervaloDiasMesNomeadoMatch) {
+    const diaInicio = intervaloDiasMesNomeadoMatch[1].padStart(2, "0");
+    const diaFim = intervaloDiasMesNomeadoMatch[2].padStart(2, "0");
+    const mes = MONTH_NUMBERS[intervaloDiasMesNomeadoMatch[3].toLowerCase()];
+    const ano = agora.getFullYear();
+
+    return { dataInicio: `${ano}-${mes}-${diaInicio}`, dataFim: `${ano}-${mes}-${diaFim}` };
+  }
+
   // "entre o dia 1 e o dia 15 deste mês" (achado testando o lote de
   // perguntas ao vivo): intervalo de DIAS dentro do mês atual — mais
   // específico que "esse mês" sozinho (mês inteiro), checado ANTES pra não
@@ -812,6 +835,15 @@ const TRAILING_DATE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN =
   /\s+entre\s+(?:o\s+)?dia\s+\d{1,2}\s+e\s+(?:o\s+)?dia\s+\d{1,2}\s+(?:d|n)?(?:esse|este)\s+m[êe]s\b.*$/iu;
 
+// "num intervalo de 10 a 20 de outubro" (achado testando o lote de
+// perguntas ao vivo) — mesma ideia do padrão acima, pro intervalo de dias
+// dentro de um MÊS NOMEADO que extractRelativeDateRange também passou a
+// reconhecer.
+const TRAILING_INTERVALO_DIAS_MES_NOMEADO_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:num|em\\s+um)\\s+intervalo\\s+de\\s+\\d{1,2}\\s+a\\s+\\d{1,2}\\s+de\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
+  "iu",
+);
+
 // "(?![\\p{L}\\p{N}])" no fim do grupo, não "\\b" (achado testando o lote de
 // perguntas ao vivo): "amanh[ãa]" pode terminar em "ã" (acento no ÚLTIMO
 // caractere, diferente de "área"/"página", onde o acento fica no meio e a
@@ -839,6 +871,18 @@ const TRAILING_NAMED_MONTH_CLAUSE_PATTERN = new RegExp(
   `\\s+(?:dia\\s+\\d{1,2}\\s+de|no\\s+m[êe]s\\s+de|em)\\s+(?:${MONTH_NAME_SOURCE})\\b.*$`,
   "iu",
 );
+
+// "tem comparado ao mês passado" (achado testando o lote de perguntas ao
+// vivo): "Quantos tickets o departamento Financeiro TEM COMPARADO AO mês
+// passado?" pede uma comparação de PERÍODO (não suportada — não há cálculo
+// de tendência/delta entre 2 janelas de tempo), mas o período em si
+// ("mês passado") já é podado certo pelos TRAILING_*_DATE_* acima — sobra
+// só "tem comparado ao" dangling no fim do nome capturado (ex.:
+// departamento: "Financeiro tem comparado ao"), porque nenhum pattern
+// prunava esse verbo+preposição residual. Checado DEPOIS de todos os
+// padrões de data acima de propósito — só limpa o que sobra depois que a
+// cláusula de período já foi removida.
+const TRAILING_COMPARED_TO_CLAUSE_PATTERN = /\s+(?:tem\s+)?comparado\s+a[oa]?\s*$/iu;
 
 // "desde agosto"/"a partir de agosto" (mês nomeado solto, sem data
 // completa) — mesma ideia do padrão acima, pro intervalo aberto que
@@ -997,12 +1041,14 @@ function cleanFreeText(value) {
     .replace(TRAILING_CLIENT_ACTIVITY_CLAUSE_PATTERN, "")
     .replace(TRAILING_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_ENTRE_DIAS_DESSE_MES_CLAUSE_PATTERN, "")
+    .replace(TRAILING_INTERVALO_DIAS_MES_NOMEADO_CLAUSE_PATTERN, "")
     .replace(TRAILING_RELATIVE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN, "")
     .replace(TRAILING_HA_MAIS_DE_CLAUSE_PATTERN, "")
     .replace(TRAILING_ULTIMOS_N_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
+    .replace(TRAILING_COMPARED_TO_CLAUSE_PATTERN, "")
     .replace(TRAILING_PAGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
@@ -1977,11 +2023,35 @@ export function extractUserName(value) {
 // resumo por filtro citado; sem essa exclusão, o padrão de carga (que roda
 // antes na cascata) venceria primeiro e tentaria (e falharia) resolver
 // "área Suporte" como operador.
+// "O time de Suporte está sobrecarregado?" (achado testando o lote de
+// perguntas ao vivo): os 3 padrões bare abaixo (sem palavra-marcador antes
+// do nome, ex. "operador") não tinham NENHUMA exclusão — qualquer texto
+// antes de "está sobrecarregado"/"tem muitos tickets" era aceito como
+// nome de PESSOA, mesmo quando na verdade é uma dimensão inteira sendo
+// perguntada (ex.: "o time de Suporte", "a área de TI"), não um indivíduo.
+// "time" não entra no vocabulário geral de área (AREA_SYNONYM_SOURCE) de
+// propósito — é uma palavra comum demais fora do domínio de tickets (ex.:
+// "o time resolveu trocar de fornecedor", sem relação nenhuma com
+// suporte) pra servir de sinal confiável de domínio em outro lugar; aqui o
+// risco é baixo porque só entra em jogo quando JÁ combinado com "está
+// sobrecarregado"/"tem muitos tickets" (frase que só faz sentido dentro
+// deste domínio).
+const WORKLOAD_SUBJECT_EXCLUSION_SOURCE = `(?:o\\s+|a\\s+)?(?:time|${AREA_SYNONYM_SOURCE}|departamento)\\s+de\\b`;
+
 export function extractOperatorWorkloadName(value) {
   return extractByPatterns(value, [
-    /^(.+?)\s+(?:esta|está|estao|estão)\s+com\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
-    /^(.+?)\s+(?:esta|está|estao|estão)\s+sobrecarregad[oa]s?\b/iu,
-    /^(.+?)\s+tem\s+muito[s]?\s+(?:ticket|chamado|atendimento)/iu,
+    new RegExp(
+      `^(?!${WORKLOAD_SUBJECT_EXCLUSION_SOURCE})(.+?)\\s+(?:esta|está|estao|estão)\\s+com\\s+muito[s]?\\s+(?:ticket|chamado|atendimento)`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?!${WORKLOAD_SUBJECT_EXCLUSION_SOURCE})(.+?)\\s+(?:esta|está|estao|estão)\\s+sobrecarregad[oa]s?\\b`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?!${WORKLOAD_SUBJECT_EXCLUSION_SOURCE})(.+?)\\s+tem\\s+muito[s]?\\s+(?:ticket|chamado|atendimento)`,
+      "iu",
+    ),
     // "Quantos tickets a Ana Costa tem?" — mesma pergunta de carga, só em
     // ordem de pergunta ("quantos X <nome> tem") em vez de afirmação
     // ("<nome> tem muitos X"). O "$" no final (permitindo só pontuação
@@ -2026,12 +2096,21 @@ export function extractOperatorWorkloadName(value) {
 // inteira caía no fallback genérico, perdendo o 2º nome por completo.
 const CARGA_SYNONYM_SOURCE = "(?:carga|quantidade\\s+de\\s+tickets?|volume\\s+de\\s+tickets?)";
 
+// "vs"/"x" como conector de comparação (achado testando o lote de
+// perguntas ao vivo): "Compare a área WEB X área Suporte." usa "x"
+// (jeito informal comum de dizer "versus"), mas só "com"/"e" eram
+// aceitos em todos os extratores de comparação (operador/cliente/área/
+// departamento) — sem isso, "WEB x área Suporte" vazava inteiro pro 1º
+// nome capturado (ex.: area: "WEB x Suporte"), já que nenhuma alternativa
+// batia e a captura genérica de 1 nome só (fallback) tomava a frase
+// inteira. "(?:com|e|vs|x)" é reaproveitado em todos os 6 lugares que
+// precisam reconhecer essa conexão (ver ocorrências abaixo).
 export function extractOperatorComparisonNames(value) {
   const text = String(value ?? "");
 
   const patterns = [
     new RegExp(
-      `\\bcompar[ae]\\s+a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e)\\s+`
+      `\\bcompar[ae]\\s+a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
         + `(?:a\\s+(?:${CARGA_SYNONYM_SOURCE}\\s+)?d[oa]\\s+)?(.+)$`,
       "iu",
     ),
@@ -2049,7 +2128,14 @@ export function extractOperatorComparisonNames(value) {
     // reconhecidos em todo o resto do arquivo via essa mesma constante, só
     // faltava aqui. Os 2 lados não precisam usar o MESMO sinônimo.
     new RegExp(
-      `\\bcompar[ae]\\s+(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+)$`,
+      // 2º sinônimo de dimensão OPCIONAL (achado testando o lote de
+      // perguntas ao vivo): "Compare o operador Ana VS Bruno." (sem
+      // repetir "operador" no 2º lado, jeito comum na fala quando o
+      // conector já deixa claro que é a mesma dimensão) não batia — a
+      // palavra era exigida nos 2 lados, perdendo "Bruno" por completo
+      // (vazava junto do 1º nome). Mesma ideia aplicada aqui e nos outros
+      // 3 pares de comparação (cliente/área/departamento) abaixo.
+      `\\bcompar[ae]\\s+(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:o\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE})\\s+)?(.+)$`,
       "iu",
     ),
     // "Compare os operadores X e Y" (achado testando o lote de perguntas ao
@@ -2153,7 +2239,7 @@ export function extractClientComparisonNames(value) {
     // faltava aqui — "Compare os SOLICITANTES Ana e Beto." não batia em
     // nenhum padrão e caía em fora_do_dominio.
     new RegExp(
-      `\\bcompar[ae]\\s+a\\s+atividade\\s+(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e)\\s+(?:a\\s+)?(?:atividade\\s+)?(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      `\\bcompar[ae]\\s+a\\s+atividade\\s+(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:a\\s+)?(?:atividade\\s+)?(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+)?(.+)$`,
       "iu",
     ),
     // "Compare o cliente X com o cliente Y" (achado testando o lote de
@@ -2161,7 +2247,7 @@ export function extractClientComparisonNames(value) {
     // já corrigido pra operador acima ("compare o operador X com o
     // operador Y"), aqui pro espelho de cliente.
     new RegExp(
-      `\\bcompar[ae]\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      `\\bcompar[ae]\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+)?(.+)$`,
       "iu",
     ),
     // "Compare os clientes X e Y" (achado testando o lote de perguntas ao
@@ -2240,8 +2326,8 @@ export function extractAreaComparisonNames(value) {
     // abaixo (todas tinham essa mesma lacuna), caindo no fallback genérico
     // de extractAreaName e perdendo a 2ª área por completo.
     new RegExp(
-      `\\bcompar[ae]\\s+(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e)\\s+`
-        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      `\\bcompar[ae]\\s+(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
+        + `(?:(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?)?(.+)$`,
       "iu",
     ),
     // "Quem tem mais CHAMADOS VENCIDOS: X ou Y?" (achado testando o lote de
@@ -2296,7 +2382,7 @@ export function extractDepartmentComparisonNames(value) {
   const text = String(value ?? "");
 
   const patterns = [
-    /\bcompar[ae]\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+?)\s+(?:com|e)\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+)$/iu,
+    /\bcompar[ae]\s+(?:o\s+)?departamento\s+(?:de\s+)?(.+?)\s+(?:com|e|vs|x)\s+(?:(?:o\s+)?departamento\s+(?:de\s+)?)?(.+)$/iu,
     new RegExp(
       `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
         + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
@@ -3088,7 +3174,11 @@ function routeTicketQuestionCore(pergunta) {
     || /\btempo\s+m[ée]dio\b/.test(text)
     || /\bm[ée]dia\s+de\s+tempo\b/.test(text)
     || /\bdura[çc][ãa]o\s+m[ée]dia\b/.test(text)
-    || /\bsla\s+m[ée]dio\b/.test(text);
+    || /\bsla\s+m[ée]dio\b/.test(text)
+    // "Qual o ticket com mais comentários?" (achado testando o lote de
+    // perguntas ao vivo): mesma família de atributo inexistente — não há
+    // contagem de comentários exposta em nenhuma tool.
+    || /\b(?:mais|menos)\s+coment[áa]rios\b/.test(text);
 
   if (isUnsupportedMetricQuestion) {
     return createClarificationDecision(
@@ -3407,6 +3497,26 @@ function routeTicketQuestionCore(pergunta) {
       }
     }
 
+    // "Tickets abertos pela Ana Paula, EXCETO os de hoje." (achado testando
+    // o lote de perguntas ao vivo): dataInicio/dataFim vêm de um mecanismo
+    // totalmente separado (extractRelativeDateRange), nunca checado contra
+    // negação — "exceto os de hoje" resolvia "hoje" normalmente e virava um
+    // filtro de data POSITIVO (só hoje), o oposto exato do pedido (tudo,
+    // exceto hoje). Vocabulário restrito aos períodos mais comuns de
+    // aparecer negados na fala (hoje/ontem/amanhã/essa semana/esse mês/esse
+    // ano) — períodos mais raros de negar (ex.: "exceto o mês passado") não
+    // estão cobertos aqui, mesma lógica de escopo conservador já usada
+    // pelos outros casos especiais acima (SLA vencido, congelado).
+    if (dataInicio !== undefined || dataFim !== undefined) {
+      const match = /\b(?:hoje|ontem|amanh[ãa]|(?:d|n)?(?:ess[ae]|est[ae])\s+semana|(?:d|n)?(?:esse|este)\s+m[êe]s|(?:d|n)?(?:esse|este)\s+ano)\b/u.exec(
+        text,
+      );
+
+      if (match && hasNegationBefore(text, match[0])) {
+        return true;
+      }
+    }
+
     // "Tickets com prioridade Alta, mas SEM CONTAR os urgentes." (achado
     // testando o lote de perguntas ao vivo): "urgente" é tratado como
     // palavra solta (não tem a forma "<nível> prioridade", por isso fica de
@@ -3576,7 +3686,14 @@ function routeTicketQuestionCore(pergunta) {
   const mentionsStatusDimension = mentionsDimension(text, "status");
   const mentionsPriorityDimension = mentionsDimension(text, "prioridades?") || mentionsPriorityUnsetPhrase;
   const mentionsAreaDimension = mentionsDimension(text, `${AREA_SYNONYM_SOURCE}s?`) || mentionsAreaUnsetPhrase;
-  const mentionsOperatorDimension = mentionsDimension(text, "operador(?:es)?");
+  // USER_LOOKUP_NOUN_SOURCE (não só "operador(es)" literal) — achado
+  // testando o lote de perguntas ao vivo: "Qual TÉCNICO fechou mais
+  // chamados essa semana?" não reconhecia "técnico" como a dimensão de
+  // ranking (só "operador"/"operadores" eram aceitos aqui, apesar de
+  // técnico/atendente/responsável/usuário já serem sinônimos aceitos em
+  // todo o resto do arquivo) — a pergunta caía em listar_tickets_fechados
+  // genérico, perdendo o ranking por operador por completo.
+  const mentionsOperatorDimension = mentionsDimension(text, `(?:${USER_LOOKUP_NOUN_SOURCE})(?:es|s)?`);
   const mentionsDepartmentDimension = mentionsDimension(text, "departamentos?");
   const mentionsClienteDimension = mentionsDimension(text, `${CLIENT_LOOKUP_NOUN_SOURCE}s?`);
 

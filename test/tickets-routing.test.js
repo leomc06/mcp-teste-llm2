@@ -4145,3 +4145,62 @@ test("extractMultipleTicketNumbers detalha 2+ tickets específicos sem a palavra
   const comparacao = routeTicketQuestion("Compare o ticket 100 com o ticket 200.");
   assert.equal(comparacao.intent, "comparar_tickets");
 });
+
+test("ranking por dimensão reconhece sinônimos de operador (técnico/atendente/responsável/usuário), não só a palavra literal 'operador(es)'", () => {
+  const route = routeTicketQuestion("Qual técnico fechou mais chamados essa semana?");
+  assert.equal(route.intent, "resumo_por_operador");
+});
+
+test("'mais/menos comentários' é reconhecido como métrica inexistente, pedindo esclarecimento em vez de cair na listagem genérica", () => {
+  const route = routeTicketQuestion("Qual o ticket com mais comentários?");
+  assert.equal(route.intent, "esclarecimento_metrica_nao_suportada");
+});
+
+test("'num intervalo de X a Y de <mês>' é reconhecido como intervalo de dias dentro de um mês nomeado", () => {
+  const route = routeTicketQuestion("Tickets abertos num intervalo de 10 a 20 de outubro.");
+  assert.equal(route.entities.dataInicio, "2026-10-10");
+  assert.equal(route.entities.dataFim, "2026-10-20");
+});
+
+test("comparação aceita 'vs'/'x' como conector, além de 'com'/'e', e o 2º sinônimo de dimensão passa a ser opcional (jeito comum de dizer 'X vs Y' sem repetir a palavra)", () => {
+  assert.deepEqual(extractAreaComparisonNames("Compare a área WEB x área Suporte."), ["WEB", "Suporte"]);
+  assert.deepEqual(extractAreaComparisonNames("Compare a área WEB VS Suporte."), ["WEB", "Suporte"]);
+  assert.deepEqual(extractOperatorComparisonNames("Compare o operador Ana VS Bruno."), ["Ana", "Bruno"]);
+  assert.deepEqual(extractClientComparisonNames("Compare o cliente Acme vs Beta."), ["Acme", "Beta"]);
+
+  const route = routeTicketQuestion("Compare a área WEB VS Suporte.");
+  assert.equal(route.intent, "comparar_tickets_area");
+
+  // Controle: a forma já aceita antes (repetindo a palavra, com "com")
+  // continua funcionando normalmente.
+  const controle = routeTicketQuestion("Compare a área de Suporte com a área de Redes e Segurança.");
+  assert.equal(controle.intent, "comparar_tickets_area");
+});
+
+test("'X está sobrecarregado'/'X tem muitos tickets' (forma bare, sem palavra-marcador) não trata uma dimensão inteira ('o time de Suporte') como se fosse o nome de uma pessoa", () => {
+  const route = routeTicketQuestion("O time de Suporte está sobrecarregado?");
+  assert.notEqual(route.intent, "analisar_carga_operador");
+
+  // Controle: nome de pessoa de verdade continua funcionando.
+  const controle = routeTicketQuestion("O Fábio está sobrecarregado?");
+  assert.equal(controle.intent, "analisar_carga_operador");
+  assert.equal(controle.entities.operador, "Fábio");
+});
+
+test("'tem comparado ao <período>' (comparação de período, não suportada) não vaza pro nome capturado, mesmo sem dar a comparação de verdade", () => {
+  const route = routeTicketQuestion("Quantos tickets o departamento Financeiro tem comparado ao mês passado?");
+  assert.equal(route.entities.departamento, "Financeiro");
+});
+
+test("negação de período relativo ('exceto os de hoje', 'sem contar os de ontem') pede esclarecimento, em vez de usar o período como filtro positivo (o oposto do pedido)", () => {
+  const exceto = routeTicketQuestion("Tickets abertos pela Ana Paula, exceto os de hoje.");
+  assert.equal(exceto.intent, "esclarecimento_negacao");
+
+  const semContar = routeTicketQuestion("Tickets abertos, sem contar os de ontem.");
+  assert.equal(semContar.intent, "esclarecimento_negacao");
+
+  // Controles: período sem negação continua funcionando normalmente.
+  const controle1 = routeTicketQuestion("Tickets abertos pela Ana Paula hoje.");
+  assert.equal(controle1.entities.dataInicio, controle1.entities.dataFim);
+  assert.equal(routeTicketQuestion("Tickets abertos essa semana.").intent, "listar_abertos");
+});
