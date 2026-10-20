@@ -307,7 +307,20 @@ const RANKING_CUE_SOURCE =
 // (NEGATION_PREFIX_SOURCE) porque essa exige "de" logo depois — aqui o
 // \b fecha o match bem em "diferentes", sem nada depois.
 function mentionsDimension(text, dimensionSource) {
-  const connector = new RegExp(`\\b${DIMENSION_CONNECTOR_SOURCE}\\s+(?:${dimensionSource})\\b`);
+  // "(?<!ordenad[oa]s?\\s)" (achado testando o lote de perguntas ao vivo):
+  // "Mostra os tickets abertos da área Suporte, ORDENADOS POR prioridade."
+  // pede uma LISTAGEM ordenada (não suportado — nenhuma tool de listagem
+  // aceita ordenação por campo arbitrário, só as tools de resumo têm
+  // `ordem` crescente/decrescente), mas "ordenados POR prioridade" batia
+  // no mesmo conector "por X" usado pra reconhecer pedido de RESUMO
+  // (agrupamento), hijackando a pergunta inteira pra resumo_por_prioridade
+  // (números agrupados) em vez da listagem de tickets abertos que o
+  // usuário pediu. "ordenado(s)/ordenada(s) por X" nunca significa
+  // "agrupe por X" — sempre significa "classifique a listagem por X", um
+  // pedido diferente (e sem suporte hoje, ver TRAILING_ORDER_CLAUSE_
+  // PATTERN, que só poda a cláusula das capturas de nome, não reinterpreta
+  // a intenção).
+  const connector = new RegExp(`(?<!ordenad[oa]s?\\s)\\b${DIMENSION_CONNECTOR_SOURCE}\\s+(?:${dimensionSource})\\b`);
   const ranking = new RegExp(`\\b(?:${dimensionSource})\\b.*\\b${RANKING_CUE_SOURCE}\\b`);
   const distinctCount = new RegExp(`\\b(?:${dimensionSource})\\s+diferentes\\b`);
 
@@ -898,6 +911,18 @@ const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
 const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
   /\s+(?:h[áa]\s+mais\s+de|passou\s+de|passaram\s+de)\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
 
+// "fechados pelo Carlos EM MENOS DE 1 DIA" (achado testando o lote de
+// perguntas ao vivo): limiar de duração de RESOLUÇÃO (não suportado —
+// nenhuma tool filtra por quanto tempo um ticket levou pra ser fechado,
+// diferente de "há mais de N dias" acima, que é sobre a idade do ticket
+// desde a ABERTURA) vazava inteiro pro nome capturado (ex.: operador:
+// "Carlos em menos de 1 dia"). Só poda a cláusula — a mesma lógica
+// honesta de "canal"/outras dimensões sem suporte: descarta em silêncio
+// em vez de inventar um filtro errado, mas sem corromper o nome que FOI
+// capturado corretamente (Carlos).
+const TRAILING_DURATION_THRESHOLD_CLAUSE_PATTERN =
+  /\s+em\s+(?:menos|mais)\s+de\s+\d+\s+(?:dias?|horas?|semanas?|mes|meses|anos?)\b.*$/iu;
+
 // "nos últimos N dias/semanas/meses/anos" — mesma ideia, pro intervalo
 // fechado que extractRelativeDateRange também passou a reconhecer. ".*$" no
 // fim de propósito: a cláusula costuma vir seguida de mais texto solto
@@ -1046,6 +1071,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_NAMED_MONTH_RANGE_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN, "")
     .replace(TRAILING_HA_MAIS_DE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_DURATION_THRESHOLD_CLAUSE_PATTERN, "")
     .replace(TRAILING_ULTIMOS_N_CLAUSE_PATTERN, "")
     .replace(TRAILING_NAMED_MONTH_CLAUSE_PATTERN, "")
     .replace(TRAILING_COMPARED_TO_CLAUSE_PATTERN, "")
@@ -2201,6 +2227,35 @@ export function extractOperatorComparisonNames(value) {
       continue;
     }
 
+    // "Área WEB tem mais tickets que a área de Redes, Segurança e
+    // Infraestrutura?" (achado testando o lote de perguntas ao vivo):
+    // mesma ideia do guard de cliente acima, mas pra ÁREA/DEPARTAMENTO —
+    // o padrão BARE "X tem mais tickets que Y" (sem exigir a palavra
+    // "operador" nos 2 lados, pensado pro caso ambíguo "Fulano tem mais
+    // chamados que Beltrano") também batia quando os 2 lados mencionam
+    // "área"/"departamento" explicitamente, roubando o match ANTES de
+    // extractAreaComparisonNames/extractDepartmentComparisonNames (que
+    // rodam depois, na rota certa) conseguirem resolver a comparação de
+    // verdade — virava operador: "Área WEB" / "área de Redes" (nome-lixo,
+    // nunca bate no catálogo real de operadores).
+    // normalizeText() antes de testar (não direto contra match[1]/match[2]
+    // crus) — achado testando esta própria correção: "\\b" do JS nunca
+    // reconhece "á"/"Á" como caractere de palavra (mesmo com as flags "iu"),
+    // então "\\bárea\\b" nunca bate contra o texto CRU desta função
+    // (diferente do resto do arquivo, que testa contra texto já normalizado
+    // — ver mesmo cuidado em extractOperatorName, comentário sobre
+    // TICKET_NOUN_SOURCE tolerante a acento). AREA_SYNONYM_SOURCE sem
+    // acento (só "area", não "[áa]rea") basta aqui porque normalizeText já
+    // removeu o acento de "área".
+    const AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE = "\\b(?:areas?|categorias?|equipes?|setores?)\\b|\\bdepartamentos?\\b";
+    const mencionaAreaOuDepartamentoNoMatch =
+      new RegExp(AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE, "u").test(normalizeText(match[1]))
+      || new RegExp(AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE, "u").test(normalizeText(match[2]));
+
+    if (mencionaAreaOuDepartamentoNoMatch) {
+      continue;
+    }
+
     const nome1 = cleanFreeText(match[1]);
     const nome2 = cleanFreeText(match[2]);
 
@@ -3048,6 +3103,33 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Compare a carga do operador Fulano com a do operador Beltrano.\n"
         + "- Compare a atividade do cliente X com a do cliente Y.",
+    );
+  }
+
+  // "Compare a prioridade Alta com a prioridade Baixa." (achado testando o
+  // lote de perguntas ao vivo): pedido de comparação entre 2 valores de
+  // PRIORIDADE (ou STATUS) — nenhum dos 4 extratores de comparação acima
+  // (operador/cliente/área/departamento) bate, essa dimensão nunca teve
+  // suporte de comparação. Sem este guard, a frase caía mais abaixo em
+  // detectaContradicao (que lê "prioridade Alta" + "prioridade Baixa" como
+  // 2 valores EXIGIDOS ao mesmo tempo, não como uma comparação pedida) e
+  // devolvia uma mensagem de categoria errada ("duas coisas que não podem
+  // ser verdade ao mesmo tempo"), confusa pra um pedido que na verdade é
+  // uma comparação válida, só que de uma dimensão sem suporte. Checado
+  // DEPOIS de todos os extratores reais acima, pra não interceptar uma
+  // comparação de operador/cliente/área/departamento que só MENCIONE
+  // prioridade/status de passagem como qualificador (ex.: "...considerando
+  // só prioridade alta").
+  const mencionaComparacaoPrioridadeOuStatus =
+    /\bcompar[ae]\b/.test(text) && /\bprioridades?\b|\bstatus\b/.test(text);
+
+  if (mencionaComparacaoPrioridadeOuStatus) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_dimensao_nao_suportada",
+      "Só consigo comparar operadores, clientes, áreas ou departamentos — não comparo valores de prioridade ou status diretamente. Pode perguntar a contagem de cada valor separadamente?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets têm prioridade Alta?\n"
+        + "- Quantos tickets têm prioridade Baixa?",
     );
   }
 

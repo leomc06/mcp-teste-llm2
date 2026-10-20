@@ -4204,3 +4204,48 @@ test("negação de período relativo ('exceto os de hoje', 'sem contar os de ont
   assert.equal(controle1.entities.dataInicio, controle1.entities.dataFim);
   assert.equal(routeTicketQuestion("Tickets abertos essa semana.").intent, "listar_abertos");
 });
+
+test("comparação de prioridade/status (dimensão sem suporte de comparação) pede esclarecimento certo, em vez de cair em 'contradição' (categoria errada de erro)", () => {
+  const prioridade = routeTicketQuestion("Compare a prioridade Alta com a prioridade Baixa.");
+  assert.equal(prioridade.intent, "esclarecimento_comparacao_dimensao_nao_suportada");
+
+  const status = routeTicketQuestion("Compare o status Em atendimento com o status Em estudo.");
+  assert.equal(status.intent, "esclarecimento_comparacao_dimensao_nao_suportada");
+
+  // Controle: comparação de operador que só MENCIONA prioridade de
+  // passagem (qualificador, não o alvo da comparação) continua
+  // funcionando normalmente.
+  const controle = routeTicketQuestion(
+    "Compare o operador Ana com o operador Bruno, considerando só prioridade alta.",
+  );
+  assert.equal(controle.intent, "comparar_carga_operador");
+});
+
+test("'em menos/mais de N dias/horas' (limiar de duração de resolução, sem suporte) não vaza pro nome capturado", () => {
+  const route = routeTicketQuestion("Tickets fechados pelo Carlos em menos de 1 dia.");
+  assert.equal(route.entities.operador, "Carlos");
+});
+
+test("'ordenado(s) por X' (pedido de ORDEM de listagem) não é confundido com 'por X' de pedido de RESUMO (agrupamento) — são intenções diferentes que só compartilham o conector 'por'", () => {
+  const route = routeTicketQuestion("Mostra os tickets abertos da área Suporte, ordenados por prioridade.");
+  assert.equal(route.intent, "listar_abertos");
+  assert.equal(route.entities.area, "Suporte");
+
+  // Controles: "resumo por X"/"X por Y" de verdade (sem "ordenado(s)"
+  // antes) continuam funcionando normalmente.
+  assert.equal(routeTicketQuestion("Resumo por prioridade.").intent, "resumo_por_prioridade");
+  assert.equal(routeTicketQuestion("Tickets por área.").intent, "resumo_por_area");
+});
+
+test("'X tem mais tickets que Y' quando os 2 lados mencionam área/departamento explicitamente não é capturado como comparação de operador (nome-lixo), e sim resolvido pelo extrator certo de área/departamento", () => {
+  const area = routeTicketQuestion("Área WEB tem mais tickets que a área de Redes?");
+  assert.equal(area.intent, "comparar_tickets_area");
+
+  const departamento = routeTicketQuestion("O departamento Financeiro tem mais tickets que o departamento Suporte?");
+  assert.equal(departamento.intent, "comparar_tickets_departamento");
+
+  // Controle: a forma ambígua de verdade (sem nenhuma palavra de
+  // dimensão, nome de pessoa dos 2 lados) continua default pra operador.
+  const controle = routeTicketQuestion("O Fábio tem mais tickets que o Rodrigo?");
+  assert.equal(controle.intent, "comparar_carga_operador");
+});
