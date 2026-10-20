@@ -76,6 +76,14 @@ export function extractLimit(value) {
     // lugar de "com" (ex.: "que mais fecharam/atenderam/trataram", um verbo
     // de ação em vez de "com mais tickets").
     /\b(\d+)\s+\p{L}+\s+que\s+(?:mais|menos)\b/u,
+    // "Liste 5 tickets abertos." (achado testando o lote de perguntas ao
+    // vivo): número bare direto depois de um verbo de listagem, sem
+    // "primeiros"/"top"/"com mais" — nenhum padrão acima cobria essa forma
+    // (bem comum), e o "5" era descartado em silêncio, devolvendo o limite
+    // padrão da tool em vez do pedido. Direção do número (ANTES da palavra
+    // de ticket) evita colidir com "ticket 1050" (número de identificação,
+    // não limite — ver extractTicketNumber, que lê a ordem inversa).
+    /\b(?:list[ae]|mostr[ae]|exib[ae]|trag[ae])\w*\s+(\d+)\s+(?:tickets?|chamados?|atendimentos?)\b/u,
   ];
 
   for (const pattern of patterns) {

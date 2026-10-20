@@ -4088,6 +4088,23 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
+  // "Quantos tickets estão abertos? E quantos fechados?" (achado testando o
+  // lote de perguntas ao vivo): 2 perguntas concatenadas na mesma mensagem
+  // — isAbertoIntent e isFechadoIntent ficam os 2 true (situacaoInequivoca
+  // undefined), e nenhum dos 2 branches abaixo (que exigem UM dos dois, não
+  // os 2 juntos) bate — a pergunta caía no fallback de listagem sem filtro
+  // nenhum, perdendo os 2 números pedidos. resumo_operacional_tickets já
+  // devolve abertos/fechados (entre outros) juntos numa resposta só — mais
+  // útil que escolher arbitrariamente 1 dos 2 lados ou que devolver a
+  // listagem crua sem filtro.
+  if (isAbertoIntent && isFechadoIntent) {
+    return createTicketDecision(
+      "resumo_operacional",
+      "resumo_operacional_tickets",
+      compactEntities({ area, departamento, dataInicio, dataFim }),
+    );
+  }
+
   if (isAbertoIntent && !isFechadoIntent) {
     const decision = createTicketDecision(
       "listar_abertos",

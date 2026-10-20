@@ -4061,3 +4061,23 @@ test("'nunca atendeu/tratou' não vaza pro nome capturado, e 'nunca foi/foram at
   const semOperador = routeTicketQuestion("Tickets que nunca foram atendidos.");
   assert.equal(semOperador.intent, "listar_sem_operador");
 });
+
+test("'liste/mostre N tickets' (número bare, sem 'primeiros'/'top'/'com mais') define o limite", () => {
+  const route = routeTicketQuestion("Liste 5 tickets abertos.");
+  assert.equal(route.entities.limite, 5);
+
+  const outroVerbo = routeTicketQuestion("Mostre 3 chamados fechados.");
+  assert.equal(outroVerbo.entities.limite, 3);
+
+  // Controle: "ticket 1050" (número DEPOIS da palavra) continua sendo lido
+  // como número de ticket, não como limite.
+  const porNumero = routeTicketQuestion("Liste os tickets do ticket 1050.");
+  assert.equal(porNumero.intent, "buscar_por_numero");
+  assert.equal(porNumero.entities.numero, 1050);
+});
+
+test("2 perguntas concatenadas ('abertos? E quantos fechados?') caem no resumo operacional, que já devolve os 2 números juntos, em vez de uma listagem sem filtro nenhum", () => {
+  const route = routeTicketQuestion("Quantos tickets estão abertos? E quantos fechados?");
+  assert.equal(route.intent, "resumo_operacional");
+  assert.deepEqual(route.toolNames, ["resumo_operacional_tickets"]);
+});
