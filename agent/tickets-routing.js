@@ -268,10 +268,17 @@ const DIMENSION_CONNECTOR_SOURCE = "(?:por|em\\s+cada|por\\s+cada|de\\s+cada|cad
 // genérico, perdendo o ranking "3 operadores que mais X" por completo. Mesmo
 // vocabulário de verbo já aceito em OPERATOR_WORKLOAD_VERB_SOURCE, reusado
 // aqui pelo mesmo motivo (evitar 2 listas divergentes do mesmo verbo).
+// "abr(?:e|em|iu|iram)" (achado testando o lote de perguntas ao vivo):
+// faltava a forma plural do passado ("abriram") — todos os outros verbos
+// aqui já tinham sua forma plural (fech(?:ou|aram), atend(?:eu|eram),
+// trat(?:ou|aram)), só "abrir" tinha ficado pra trás (só e/em/iu). "Quais
+// os 3 clientes que mais ABRIRAM chamados este mês?" não batia em nenhuma
+// das 2 alternativas, perdendo o ranking por completo (caía num
+// listar_tickets genérico, sem agrupar por cliente nem ordenar).
 const RANKING_CUE_SOURCE =
-  "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram)|com)"
+  "(?:(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu|iram)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram)|com)"
   + "\\s+(?:mais|menos)(?!\\s+de\\b)"
-  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram))"
+  + "|(?:mais|menos)\\s+(?:possu(?:i|em)|tem|teve|tiveram|abr(?:e|em|iu|iram)|fech(?:ou|aram)|atend(?:eu|eram)|trat(?:ou|aram))"
   + "|tem\\s+a\\s+(?:maior|menor)\\s+carga(?:\\s+de\\s+trabalho)?"
   // "tem o maior/menor número de tickets" (achado testando o lote de
   // perguntas ao vivo): "Qual área TEM O MENOR NÚMERO DE TICKETS abertos?"
@@ -912,7 +919,12 @@ const TRAILING_SINGLE_DATE_CLAUSE_PATTERN = new RegExp(
 // "tickets que a equipe X atendeu/tratou" — o verbo de atividade sobra no
 // fim depois da data já ser podada acima (Img 16: "equipe web atendeu essa
 // semana" virava area: "web atendeu" sem isso).
-const TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN = /\s+(?:trat(?:ou|aram)|atend(?:eu|eram))\s*$/iu;
+// "nunca " opcional antes do verbo (achado testando o lote de perguntas ao
+// vivo): "Quais tickets o operador Carlos NUNCA atendeu?" deixava "nunca"
+// sobrando no nome capturado (operador: "Carlos nunca") — o corte só
+// reconhecia o verbo sozinho, sem o advérbio que costuma vir antes dele
+// nessa construção.
+const TRAILING_TEAM_ACTIVITY_CLAUSE_PATTERN = /\s+(?:nunca\s+)?(?:trat(?:ou|aram)|atend(?:eu|eram))\s*$/iu;
 
 // "O operador Fulano TRATOU quantos tickets urgentes esse mês?" (achado
 // testando o lote de perguntas ao vivo — Lote extra 2, pergunta 15): mesma
@@ -1084,6 +1096,13 @@ const AREA_SYNONYM_SOURCE = "(?:[áa]rea|categoria|equipe|setor)";
 // fora do vocabulário interno do sistema, faltava tanto na extração quanto
 // no portão de domínio.
 const CLIENT_LOOKUP_NOUN_SOURCE = "(?:cliente|solicitante)";
+// Forma PLURAL de CLIENT_LOOKUP_NOUN_SOURCE — usada só em extractClientComparisonNames
+// (achado testando o lote de perguntas ao vivo): "Compare os SOLICITANTES
+// Ana e Beto." não batia em nenhum padrão de comparação (que hardcodava
+// "clientes" literal, sem o sinônimo), e a frase inteira acabava em
+// fora_do_dominio por não ter nenhuma outra palavra do vocabulário de
+// tickets.
+const CLIENT_LOOKUP_NOUN_PLURAL_SOURCE = "(?:clientes|solicitantes)";
 
 // Mesmo vocabulário acima, mas aceitando plural — "solicitação" tem plural
 // irregular ("solicitações" normaliza pra "solicitacoes", não
@@ -1623,8 +1642,15 @@ export function extractClientActivityName(value) {
 // (isSemOperadorIntent tem guard próprio que pula essa função inteira;
 // "sem prioridade X" citando um nível real já retorna true direto, sem
 // depender desta fonte).
+// "ignorando"/"ignore"/"ignora" (achado testando o lote de perguntas ao
+// vivo): mesma família de "tirando"/"excluindo"/"sem contar" — "Quantos
+// tickets existem no total, IGNORANDO os cancelados?" não batia em nenhum
+// marcador reconhecido, e "cancelados" virava filtro POSITIVO (o oposto
+// exato do pedido), a mesma classe de inversão silenciosa já corrigida
+// várias vezes pros outros sinônimos de exclusão.
 const NEGATION_MARKER_SOURCE =
-  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|menos\\s+(?:o|a|os|as)\\b)";
+  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|ignorando|ignor[ae]"
+  + "|menos\\s+(?:o|a|os|as)\\b)";
 
 export function extractTicketStatusName(value) {
   return extractByPatterns(value, [
@@ -2052,24 +2078,44 @@ export function extractClientComparisonNames(value) {
     // sobrava só "Acme com a" — o "Beta" sumia por completo. Captura não
     // gulosa (.+?) pra nome1 parar exatamente no conector "com"/"e", igual
     // ao padrão irmão de carga de operador.
-    /\bcompar[ae]\s+a\s+atividade\s+(?:d[oa]\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:a\s+)?(?:atividade\s+)?(?:d[oa]\s+)?cliente\s+(.+)$/iu,
+    // CLIENT_LOOKUP_NOUN_SOURCE (não "cliente" literal) em todos os
+    // padrões abaixo (achado testando o lote de perguntas ao vivo):
+    // "solicitante" já é sinônimo aceito em todo o resto do arquivo, só
+    // faltava aqui — "Compare os SOLICITANTES Ana e Beto." não batia em
+    // nenhum padrão e caía em fora_do_dominio.
+    new RegExp(
+      `\\bcompar[ae]\\s+a\\s+atividade\\s+(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e)\\s+(?:a\\s+)?(?:atividade\\s+)?(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      "iu",
+    ),
     // "Compare o cliente X com o cliente Y" (achado testando o lote de
     // perguntas ao vivo): forma BARE, sem a palavra "atividade" — mesmo gap
     // já corrigido pra operador acima ("compare o operador X com o
     // operador Y"), aqui pro espelho de cliente.
-    /\bcompar[ae]\s+(?:o\s+)?cliente\s+(.+?)\s+(?:com|e)\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e)\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      "iu",
+    ),
     // "Compare os clientes X e Y" (achado testando o lote de perguntas ao
     // vivo): mesmo espelho plural já corrigido pra operador acima
     // ("compare os operadores X e Y").
-    /\bcompar[ae]\s+(?:os\s+)?clientes\s+(.+?)\s+e\s+(.+)$/iu,
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+)?${CLIENT_LOOKUP_NOUN_PLURAL_SOURCE}\\s+(.+?)\\s+e\\s+(.+)$`,
+      "iu",
+    ),
     // "abr(?:e|em|iu|iram)" (achado testando o lote de perguntas ao vivo):
     // só o passado "abriu" era aceito — "O cliente Acme ABRE mais chamados
     // que o cliente Beta...?" (presente, tão comum quanto o passado) não
     // batia em nenhum padrão, e a comparação inteira caía no fallback
     // genérico de resumo por cliente, perdendo o 2º nome ("Beta") por
     // completo.
-    /\bquem\s+abr(?:e|em|iu|iram)\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s*:?\s*(?:o\s+)?cliente\s+(.+?)\s+ou\s+(?:o\s+)?cliente\s+(.+)$/iu,
-    /^(?:o\s+)?cliente\s+(.+?)\s+abr(?:e|em|iu|iram)\s+mais\s+(?:tickets?|chamados?|atendimentos?)\s+(?:do\s+)?que\s+(?:o\s+)?cliente\s+(.+)$/iu,
+    new RegExp(
+      `\\bquem\\s+abr(?:e|em|iu|iram)\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)\\s*:?\\s*(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+ou\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      "iu",
+    ),
+    new RegExp(
+      `^(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+abr(?:e|em|iu|iram)\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?:do\\s+)?que\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      "iu",
+    ),
   ];
 
   for (const pattern of patterns) {
@@ -2117,9 +2163,16 @@ export function extractAreaComparisonNames(value) {
     // comparações irmãs de operador/cliente — sem ele, "Compare a área de
     // Suporte com a área de Redes e Segurança." caía no fallback genérico,
     // perdendo a 2ª área por completo.
+    // "(?:o\\s+|a\\s+)?" em vez de só "(?:a\\s+)?" (achado testando o lote
+    // de perguntas ao vivo): AREA_SYNONYM_SOURCE mistura sinônimos
+    // femininos (área/categoria/equipe) com um masculino ("setor") — só o
+    // artigo feminino era aceito antes da palavra, então "Compare O SETOR
+    // de TI com o setor de Redes." não batia em nenhuma das 3 alternativas
+    // abaixo (todas tinham essa mesma lacuna), caindo no fallback genérico
+    // de extractAreaName e perdendo a 2ª área por completo.
     new RegExp(
-      `\\bcompar[ae]\\s+(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e)\\s+`
-        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      `\\bcompar[ae]\\s+(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e)\\s+`
+        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
     // "Quem tem mais CHAMADOS VENCIDOS: X ou Y?" (achado testando o lote de
@@ -2129,14 +2182,14 @@ export function extractAreaComparisonNames(value) {
     new RegExp(
       `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
         + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
-        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+ou\\s+`
-        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+ou\\s+`
+        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
     new RegExp(
-      `^(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+tem\\s+mais\\s+`
+      `^(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+tem\\s+mais\\s+`
         + `(?:tickets?|chamados?|atendimentos?)\\s+(?:do\\s+)?que\\s+`
-        + `(?:a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+        + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
   ];
@@ -2998,6 +3051,8 @@ function routeTicketQuestionCore(pergunta) {
     + "|tira\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|tire\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|excluindo\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|ignorando\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
+    + "|ignor[ae]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|menos\\s+(?:o\\s+|a\\s+|os\\s+|as\\s+)?)";
   const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
@@ -3080,7 +3135,14 @@ function routeTicketQuestionCore(pergunta) {
     // só com o verbo antes de "ninguém" em vez de depois — ordem de frase
     // comum que ainda não estava coberta.
     || /\bpor\s+ninguem\b/.test(text)
-    || /\baguardando\s+atribuicao\b/.test(text);
+    || /\baguardando\s+atribuicao\b/.test(text)
+    // "nunca foi/foram atendido(s)/tratado(s)" (achado testando o lote de
+    // perguntas ao vivo): mesmo sentido de "sem operador"/"ninguém
+    // atendendo" (ticket que nunca teve atenção de ninguém), só com outra
+    // construção — sem este sinônimo, "Tickets abertos nunca foram
+    // atendidos." não batia em nenhuma entidade e caía no filtro genérico
+    // de abertos, perdendo o refinamento "nunca atendido" por completo.
+    || /\bnunca\s+(?:foi|foram)\s+(?:atendid[oa]s?|tratad[oa]s?)\b/.test(text);
 
   // "Mais antigo"/"mais velho"/"há mais tempo" pede ordem cronológica —
   // não necessariamente estourou o SLA. Fica separado da intenção de
@@ -3225,6 +3287,24 @@ function routeTicketQuestionCore(pergunta) {
     // inversão segura.
     if (isCongeladoIntent) {
       const match = /\b(?:congelad\w*|travad\w*|paralisad\w*|emperrad\w*)\b/u.exec(text);
+
+      if (match && hasNegationBefore(text, match[0])) {
+        return true;
+      }
+    }
+
+    // "Tickets com prioridade Alta, mas SEM CONTAR os urgentes." (achado
+    // testando o lote de perguntas ao vivo): "urgente" é tratado como
+    // palavra solta (não tem a forma "<nível> prioridade", por isso fica de
+    // fora de PRIORITY_LEVEL_LITERAL_PATTERNS — ver detectaContradicao mais
+    // abaixo), então o loop de valorNormalizado acima (que só olha o valor
+    // JÁ RESOLVIDO, "Alta") nunca percebe a negação em "urgentes". Sem este
+    // guard, detectaContradicao tratava a frase como CONTRADIÇÃO (duas
+    // prioridades ao mesmo tempo) em vez do que ela realmente pede: excluir
+    // um valor — mesma família de "sem operador"/"excluindo cancelados" já
+    // tratada aqui, não uma contradição.
+    if (prioridade !== undefined && normalizeText(prioridade) !== "urgente") {
+      const match = /\burgentes?\b/u.exec(text);
 
       if (match && hasNegationBefore(text, match[0])) {
         return true;

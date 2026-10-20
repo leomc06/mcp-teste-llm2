@@ -4009,3 +4009,55 @@ test("'quantos tickets o X e o/a Y abriram' (sem a palavra 'que') também é rec
   const singular = routeTicketQuestion("Quantos tickets o Carlos abriu?");
   assert.equal(singular.entities.cliente, "Carlos");
 });
+
+test("ranking por dimensão reconhece 'abriram' (plural do passado de 'abrir'), igual já aceito pros outros verbos", () => {
+  const route = routeTicketQuestion("Quais os 3 clientes que mais abriram chamados este mês?");
+  assert.equal(route.intent, "resumo_por_cliente");
+  assert.equal(route.entities.limite, 3);
+  assert.equal(route.entities.cliente, undefined);
+});
+
+test("comparação de área aceita sinônimo masculino 'setor' (artigo 'o', não só 'a')", () => {
+  assert.deepEqual(
+    extractAreaComparisonNames("Compare o setor de TI com o setor de Redes."),
+    ["TI", "Redes"],
+  );
+
+  const route = routeTicketQuestion("Compare o setor de TI com o setor de Redes.");
+  assert.equal(route.intent, "comparar_tickets_area");
+});
+
+test("'prioridade X, mas sem contar os urgentes' é reconhecido como negação (excluir valor), não como contradição (duas prioridades ao mesmo tempo)", () => {
+  const route = routeTicketQuestion("Tickets com prioridade Alta, mas sem contar os urgentes.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: contradição de verdade (sem negação) continua funcionando.
+  const contradicao = routeTicketQuestion("Tickets urgentes de baixa prioridade.");
+  assert.equal(contradicao.intent, "esclarecimento_contradicao");
+});
+
+test("comparação de cliente aceita o sinônimo 'solicitante' (singular e plural), igual já aceito em todo o resto do arquivo", () => {
+  assert.deepEqual(
+    extractClientComparisonNames("Compare os solicitantes Ana e Beto."),
+    ["Ana", "Beto"],
+  );
+
+  const route = routeTicketQuestion("Compare os solicitantes Ana e Beto.");
+  assert.equal(route.intent, "comparar_atividade_cliente");
+});
+
+test("'ignorando'/'ignore'/'ignora' são reconhecidos como marcador de negação, igual 'tirando'/'excluindo'", () => {
+  const route = routeTicketQuestion("Quantos tickets existem no total, ignorando os cancelados?");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  const negadoFechado = routeTicketQuestion("Tickets abertos na área Suporte, ignorando os fechados.");
+  assert.equal(negadoFechado.intent, "listar_abertos");
+});
+
+test("'nunca atendeu/tratou' não vaza pro nome capturado, e 'nunca foi/foram atendido(s)' é reconhecido como sinônimo de 'sem operador'", () => {
+  const route = routeTicketQuestion("Quais tickets o operador Carlos nunca atendeu?");
+  assert.equal(route.entities.operador, "Carlos");
+
+  const semOperador = routeTicketQuestion("Tickets que nunca foram atendidos.");
+  assert.equal(semOperador.intent, "listar_sem_operador");
+});
