@@ -1374,6 +1374,46 @@ export function extractTicketNumber(value) {
   return undefined;
 }
 
+// "Detalhe o ticket -5."/"Detalhe o ticket 999999999999999." (achado
+// testando o lote de perguntas ao vivo): 2 jeitos de uma referência a
+// ticket parecer válida mas não ser:
+// (1) número NEGATIVO — normalizeText remove "-" como pontuação (mesma
+//     regra usada em toda palavra do arquivo), então "-5" virava
+//     silenciosamente "5" em extractTicketNumber, e a resposta mostrava o
+//     ticket 5 DE VERDADE como se fosse o que foi pedido, sem avisar que
+//     o "-5" original não faz sentido nenhum. Checado contra o texto CRU
+//     (não normalizado) de propósito — é o único jeito de ainda enxergar
+//     o "-" antes dele sumir.
+// (2) número FORA do intervalo aceito (> 2147483647) — extractTicketNumber
+//     já rejeita e devolve undefined (correto), mas sem este guard a
+//     rejeição silenciosa caía direto no fallback de listagem SEM filtro
+//     nenhum (despejando a base inteira), em vez de avisar que o número
+//     em si é grande demais pra ser um ticket real.
+const NEGATIVE_TICKET_NUMBER_PATTERN = new RegExp(
+  `\\b(?:${TICKET_NOUN_SOURCE}|n[úu]mero|n[°º])\\.?\\s*-\\s*\\d+\\b`,
+  "iu",
+);
+
+function detectaReferenciaDeTicketInvalida(pergunta) {
+  if (NEGATIVE_TICKET_NUMBER_PATTERN.test(pergunta)) {
+    return true;
+  }
+
+  const text = normalizeText(pergunta);
+  const match =
+    text.match(new RegExp(`\\b${TICKET_NOUN_SOURCE}\\s+(?:numero\\s+)?(\\d+)\\b`))
+    ?? text.match(new RegExp(`\\bnumero\\s+(?:do\\s+)?(?:${TICKET_NOUN_SOURCE}\\s+)?(\\d+)\\b`))
+    ?? text.match(/\bn[°º]\s*(\d+)\b/);
+
+  if (!match) {
+    return false;
+  }
+
+  const numeroBruto = Number(match[1]);
+
+  return !(Number.isSafeInteger(numeroBruto) && numeroBruto > 0 && numeroBruto <= 2147483647);
+}
+
 // "Compare o ticket X com o ticket Y" / "diferença entre os tickets X e Y" —
 // dois números de ticket na mesma pergunta com um conector de comparação.
 // Só ativa quando há de fato um conector de comparação (não é só "atualize
@@ -1442,17 +1482,34 @@ export function extractMultipleTicketNumbers(value) {
     ),
   );
 
-  if (!match) {
-    return undefined;
+  if (match) {
+    const numeros = [...new Set(
+      [...match[1].matchAll(/\d+/g)]
+        .map((numeroMatch) => Number(numeroMatch[0]))
+        .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647),
+    )];
+
+    if (numeros.length >= 2) {
+      return numeros;
+    }
   }
 
-  const numeros = [...new Set(
-    [...match[1].matchAll(/\d+/g)]
-      .map((numeroMatch) => Number(numeroMatch[0]))
-      .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647),
-  )];
+  // "O ticket 100 e o ticket 200 são do mesmo cliente?" (achado testando o
+  // lote de perguntas ao vivo): forma natural que REPETE a palavra ticket/
+  // chamado/etc. antes de CADA número, em vez de dizer o substantivo uma
+  // vez só seguido da lista (padrão acima, que exige exatamente isso) —
+  // sem este fallback, só o 1º número era capturado por extractTicketNumber
+  // (que só olha a 1ª ocorrência da frase inteira), descartando o 2º (e a
+  // pergunta real) em silêncio.
+  const repetidos = [...text.matchAll(
+    new RegExp(`\\b${TICKET_NOUN_SOURCE}\\s+(?:numero\\s+)?(\\d+)\\b`, "gu"),
+  )]
+    .map((repetidoMatch) => Number(repetidoMatch[1]))
+    .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647);
 
-  return numeros.length >= 2 ? numeros : undefined;
+  const numerosRepetidosUnicos = [...new Set(repetidos)];
+
+  return numerosRepetidosUnicos.length >= 2 ? numerosRepetidosUnicos : undefined;
 }
 
 // Uma sequência de Nomes Próprios (1+ palavras capitalizadas cada) — usada
@@ -1473,11 +1530,31 @@ const NOME_PROPRIO_SOURCE = "\\p{Lu}[\\p{L}.]*(?:\\s+\\p{Lu}[\\p{L}.]*)*";
 // aparecendo normalmente. Detectado por um sinal mais simples (sem resolver
 // os nomes): marcador de negação (reusa os mesmos 4 já aceitos em
 // detectaNegacaoNaoSuportada) seguido de 2+ Nomes Próprios ligados por "e".
-const EXCLUSAO_DE_NOMES_PATTERN = new RegExp(
-  `\\b(?:sem\\s+contar|tirando|excluindo|exceto)\\s+(?:o\\s+|a\\s+)?`
-    + `${NOME_PROPRIO_SOURCE}\\s+e\\s+(?:o\\s+|a\\s+)?${NOME_PROPRIO_SOURCE}\\b`,
-  "u",
-);
+// "excluindo os OPERADORES Fulano, Beltrano e Cicrano" (achado testando o
+// lote de perguntas ao vivo): 2 lacunas na 1ª versão deste padrão —
+// (1) só aceitava artigo SINGULAR ("o"/"a") entre o marcador e o 1º nome,
+// não o plural ("os"/"as"); (2) não aceitava a palavra de dimensão
+// ("operadores"/"clientes"/...) que costuma vir ENTRE o artigo e o nome
+// quando são 3+ pessoas enumeradas; (3) só aceitava EXATAMENTE 2 nomes
+// ligados por "e", sem suporte a lista com vírgula pro 3º+ (mesma forma já
+// aceita em TRES_OU_MAIS_NOMES_DO_DA_PATTERN abaixo). Função (não `const`
+// de nível de módulo) de propósito: referencia USER_LOOKUP_NOUN_SOURCE, que
+// só é declarada mais abaixo no arquivo — módulo não aceitaria uma `const`
+// inicializada antes da declaração que ela usa, mas uma função só lê essa
+// constante quando CHAMADA (de dentro de routeTicketQuestionCore, bem
+// depois do módulo inteiro já ter carregado), então a ordem de declaração
+// no arquivo não importa aqui.
+function matchesExclusaoDeNomes(pergunta) {
+  const prefixoSource =
+    `(?:o\\s+|a\\s+|os\\s+|as\\s+)?(?:(?:${USER_LOOKUP_NOUN_SOURCE}|${CLIENT_LOOKUP_NOUN_SOURCE})(?:es|s)?\\s+)?`;
+  const pattern = new RegExp(
+    `\\b(?:sem\\s+contar|tirando|excluindo|exceto)\\s+${prefixoSource}${NOME_PROPRIO_SOURCE}`
+      + `(?:\\s*,\\s*${prefixoSource}${NOME_PROPRIO_SOURCE})*\\s+e\\s+${prefixoSource}${NOME_PROPRIO_SOURCE}\\b`,
+    "u",
+  );
+
+  return pattern.test(pergunta);
+}
 
 // "Detalhe os tickets do Fabio Gali, do Diego Mota e do Cesar." (achado
 // testando o lote de perguntas ao vivo): 3+ NOMES PRÓPRIOS enumerados via
@@ -1763,9 +1840,36 @@ export function extractOperatorName(value) {
     // "o " eram previstos — então "cada operador" passava inteiro pela
     // negação e virava operador: "cada operador" (nome-lixo, nunca bate
     // com nenhum operador real).
+    // "(?!${OPEN_STATE_ADJECTIVE_SOURCE}...)" (achado testando o lote de
+    // perguntas ao vivo): "Quantos tickets ABERTOS E FECHADOS tem o Fabio
+    // Gali?" — aqui quem "tem" vem DEPOIS do verbo, não antes (inversão de
+    // sujeito, comum em pergunta), então o `(.+?)` não-guloso capturava a
+    // única coisa que sobrava ANTES do único "tem" da frase: "abertos e
+    // fechados" (situação, não nome) — virava operador: "abertos e"
+    // (cleanFreeText ainda poda o "fechados" via verbo de fechamento,
+    // sobrando esse resto). Bloqueia a captura quando o que vem logo depois
+    // é só um estado aberto/fechado (sozinho ou com "e" entre 2 estados) —
+    // nenhum nome de operador real é literalmente "aberto"/"fechado".
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+`
+        + `(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))`
+        + `(?!(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE})(?:\\s+e\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b)`
+        + `(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
       "iu",
+    ),
+    // "Quantos tickets abertos e fechados TEM o Fabio Gali?" (achado
+    // testando o lote de perguntas ao vivo, continuação da correção acima):
+    // bloquear a captura errada ("abertos e") não bastava sozinho — o nome
+    // de verdade, que vem DEPOIS de "tem" (sujeito invertido), nunca era
+    // capturado em lugar nenhum. Âncora estreita de propósito: exige
+    // MAIÚSCULA (NOME_PROPRIO_SOURCE, heurística de nome próprio) logo
+    // depois de "tem", pra não arriscar capturar qualquer coisa solta
+    // depois de um "tem" genérico (palavra comuníssima em outros contextos,
+    // ex.: "tem na fila").
+    new RegExp(
+      `\\b(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE})(?:\\s+e\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?`
+        + `\\s+tem\\s+(?:o\\s+|a\\s+)?(${NOME_PROPRIO_SOURCE})\\b`,
+      "u",
     ),
     // "os tickets QUE o Fábio Gali tratou/atendeu/fechou" (achado testando o
     // lote de perguntas ao vivo): mesma ideia de "que X abriu" já aceita
@@ -2799,15 +2903,22 @@ const TABLE_WORD_SOURCE = "(?:tabelas?|planilhas?)";
 // (imperativo, tão comum quanto "gera" num pedido) não batia em nenhuma
 // das 2 alternativas que usam esse verbo. Mesmo motivo de "faça"/"faz" já
 // tratado 2 linhas abaixo (2 formas verbais comuns do mesmo verbo).
+// "num"/"numa" (contração de "em um"/"em uma", tão comum quanto a forma sem
+// contração na fala/escrita cotidiana) — achado testando o lote de
+// perguntas ao vivo: "Mostra isso NUM gráfico de pizza."/"Bota isso NUMA
+// tabela." não batiam em nenhum dos dois pedidos de formato, porque as 2
+// alternativas "em (uma?) X" abaixo exigem a palavra "em" por extenso.
+const EM_UMA_OPCIONAL_SOURCE = "(?:em\\s+(?:uma\\s+)?|numa\\s+)";
+
 const FORMATO_TABELA_SOURCE =
-  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|ger[ae])\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?em\\s+(?:uma\\s+)?${TABLE_WORD_SOURCE}`
+  `(?:mostr[ae]|exib[ae]|apresent[ae]|${PLACE_VERB_SOURCE}|p[oõ]e|visualiz[ae]|transform[ae]|ger[ae])\\w*\\s+(?:${OBJECT_REFERENCE_SOURCE})?${EM_UMA_OPCIONAL_SOURCE}${TABLE_WORD_SOURCE}`
   + `|(?:mostr[ae]|exib[ae]|ger[ae]|monta|crie)\\w*\\s+(?:uma\\s+)?${TABLE_WORD_SOURCE}\\b`
   // Espelha a forma solta de gráfico logo abaixo ("em gráfico" sem verbo
   // logo antes): achado ao vivo que "mostre quantos tickets tem por
   // departamento em tabelas" não batia em nenhuma alternativa acima porque
   // todas exigem o verbo IMEDIATAMENTE antes de "em tabela" — qualquer
   // texto no meio (bem comum: "mostre <conteúdo> em tabela") já quebrava.
-  + `|\\bem\\s+(?:uma\\s+)?(?:formato\\s+de\\s+)?${TABLE_WORD_SOURCE}\\b`
+  + `|\\b${EM_UMA_OPCIONAL_SOURCE}(?:formato\\s+de\\s+)?${TABLE_WORD_SOURCE}\\b`
   + `|\\b${TABLE_WORD_SOURCE}\\s*,?\\s*por\\s+favor\\b`
   + `|\\bformato\\s+de\\s+${TABLE_WORD_SOURCE}\\b`
   // "arquivo excel"/"em excel" (achado testando o lote de perguntas ao
@@ -2824,8 +2935,11 @@ const FORMATO_TABELA_SOURCE =
 const FORMATO_GRAFICO_SOURCE =
   "\\b(?:fa[cz]|crie|ger[ae]|monta|visualiz[ae]|transform[ae])\\w*\\s+(?:um\\s+)?gr[áa]ficos?\\b"
   // "em um gráfico" (achado na mesma auditoria): o "um/uma" opcional faltava
-  // aqui — só "em gráfico"/"em forma de gráfico" batiam, sem artigo.
-  + "|\\bem\\s+(?:uma?\\s+)?(?:forma\\s+de\\s+)?gr[áa]ficos?\\b"
+  // aqui — só "em gráfico"/"em forma de gráfico" batiam, sem artigo. "num"/
+  // "numa" (achado testando o lote de perguntas ao vivo) são a mesma
+  // contração de EM_UMA_OPCIONAL_SOURCE acima, só que tolerando os 2
+  // gêneros ("numa?") igual o resto desta alternativa já fazia com "uma?".
+  + "|\\b(?:em\\s+(?:uma?\\s+)?|numa?\\s+)(?:forma\\s+de\\s+)?gr[áa]ficos?\\b"
   + "|\\bformato\\s+de\\s+gr[áa]ficos?\\b"
   + "|\\bgraficamente\\b"
   + "|\\bde\\s+forma\\s+(?:gr[áa]fica|visual)\\b";
@@ -3005,6 +3119,22 @@ function createCompareDecision(intent, comparisons) {
 
 function routeTicketQuestionCore(pergunta) {
   const text = normalizeText(pergunta);
+
+  // Checado logo aqui, antes de qualquer outra coisa usar `numero` ou cair
+  // no fallback de listagem: uma referência de ticket que PARECE um número
+  // (tem a palavra ticket/chamado/número/nº do lado) mas não é um número
+  // de ticket válido (negativo ou absurdamente grande) merece um aviso
+  // explícito, não um silêncio que mostra o ticket errado ou despeja a
+  // base inteira sem filtro.
+  if (detectaReferenciaDeTicketInvalida(pergunta)) {
+    return createClarificationDecision(
+      "esclarecimento_numero_invalido",
+      "Esse número de ticket não parece válido (negativo, ou grande demais pra existir). Pode conferir o número e perguntar de novo?"
+        + "\n\nExemplos:\n"
+        + "- Detalhe o ticket 1050.\n"
+        + "- Busque o ticket 4830.",
+    );
+  }
 
   const numero = extractTicketNumber(pergunta);
   const formatoPreferido = detectFormatoPreferido(text);
@@ -3863,12 +3993,12 @@ function routeTicketQuestionCore(pergunta) {
 
   // "Resumo por cliente, mas sem contar o Fabio Gali e o Diego Mota."
   // (achado testando o lote de perguntas ao vivo): negação de 2+ nomes
-  // próprios específicos (ver EXCLUSAO_DE_NOMES_PATTERN acima) — checado à
+  // próprios específicos (ver matchesExclusaoDeNomes acima) — checado à
   // parte de detectaNegacaoNaoSuportada() porque aqui nenhum valor chega a
   // ser capturado em area/departamento/operador/prioridade/status/cliente
   // (os extratores de nome único não esperam "e" no meio), então aquela
   // função não tinha nada pra negar e a exclusão era ignorada por completo.
-  if (EXCLUSAO_DE_NOMES_PATTERN.test(pergunta)) {
+  if (matchesExclusaoDeNomes(pergunta)) {
     return createClarificationDecision(
       "esclarecimento_negacao",
       "Não consigo excluir 2 ou mais nomes/valores específicos ao mesmo tempo — as consultas disponíveis só filtram por um valor citado, não por exclusão de uma lista. Pode perguntar sobre cada um separadamente?"
@@ -4680,7 +4810,17 @@ function routeTicketQuestionCore(pergunta) {
   // devolve abertos/fechados (entre outros) juntos numa resposta só — mais
   // útil que escolher arbitrariamente 1 dos 2 lados ou que devolver a
   // listagem crua sem filtro.
-  if (isAbertoIntent && isFechadoIntent) {
+  // "Quantos tickets abertos e fechados tem o Fabio Gali?" (achado testando
+  // o lote de perguntas ao vivo): resumo_operacional_tickets não aceita
+  // filtro de operador/cliente nenhum (só área/departamento/período, ver
+  // schema da tool em src/server.js) — sem este guard, esse redirecionamento
+  // disparava do mesmo jeito e IGNORAVA silenciosamente o cliente/operador
+  // pedido, devolvendo os totais do sistema inteiro como se fosse a
+  // resposta certa pra UMA pessoa. Com operador/cliente presente, cai pro
+  // fallback de listagem comum mais abaixo (sem filtro de situação, já que
+  // "aberto e fechado" = sem restrição nenhuma de status = exatamente o
+  // total certo da pessoa).
+  if (isAbertoIntent && isFechadoIntent && operador === undefined && cliente === undefined) {
     return createTicketDecision(
       "resumo_operacional",
       "resumo_operacional_tickets",

@@ -117,7 +117,7 @@ const infinitiveVerbs = [
 // marcado"/"está cancelado" (particípio depois de um verbo CONJUGADO no
 // passado/presente) é uma pergunta sobre o estado atual, não um pedido pra
 // mudar; a frase real de pedido sempre usa "ser" cru, depois de um modal
-// (pode/deve/precisa/vai) ou isolado.
+// (pode/deve/precisa) ou isolado.
 const participleVerbs = [
   "criado",
   "cadastrado",
@@ -141,8 +141,20 @@ const participleVerbs = [
   "reatribuido",
 ];
 
+// "Será que esse chamado vai ser fechado logo?" (achado testando o lote de
+// perguntas ao vivo): falso positivo da 1ª versão deste padrão, que
+// disparava com "ser + particípio" sozinho, sem exigir nenhum modal antes
+// — essa frase é uma PERGUNTA ESPECULATIVA sobre o que vai acontecer
+// (previsão/expectativa), não um pedido pra fazer algo, mas "vai ser
+// fechado" batia do mesmo jeito. Só os modais que exprimem permissão/
+// obrigação/necessidade (pode/deve/precisa/...) fazem a voz passiva soar
+// como um PEDIDO de verdade — "vai" (futuro simples, só afirma o que vai
+// acontecer) foi removido de propósito, é o caso que não devia disparar.
+const PASSIVE_REQUEST_MODAL_SOURCE =
+  "(?:pode|poderia|deve|deveria|precisa|precisaria|necessita|tem\\s+que|teria\\s+que|teria\\s+de)";
+
 const passivePattern = new RegExp(
-  `\\bser\\s+(?:${participleVerbs.join("|")})\\b`,
+  `\\b${PASSIVE_REQUEST_MODAL_SOURCE}\\s+ser\\s+(?:${participleVerbs.join("|")})\\b`,
   "u",
 );
 

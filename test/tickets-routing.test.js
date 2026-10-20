@@ -4357,3 +4357,49 @@ test("'tickets com o e-mail X' reconhece o endereço inteiro como filtro de clie
   const route = routeTicketQuestion("Tickets com o e-mail renato.ferreira@inpe.br.");
   assert.equal(route.entities.cliente, "renato.ferreira@inpe.br");
 });
+
+test("'excluindo os operadores Fulano, Beltrano e Cicrano' (3+ nomes separados por vírgula, com a palavra de dimensão no meio) é reconhecido como negação, igual já era pra exatamente 2 nomes ligados por 'e'", () => {
+  const route = routeTicketQuestion("Resumo por operador, excluindo os operadores Fulano, Beltrano e Cicrano.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: a forma original de 2 nomes continua funcionando.
+  const doisNomes = routeTicketQuestion("Resumo por cliente, mas sem contar o Fabio Gali e o Diego Mota.");
+  assert.equal(doisNomes.intent, "esclarecimento_negacao");
+});
+
+test("'ticket -N' (número negativo) e 'ticket N' absurdamente grande são reconhecidos como referência inválida, em vez de silenciosamente virar um ticket positivo diferente ou cair numa listagem sem filtro", () => {
+  const negativo = routeTicketQuestion("Detalhe o ticket -5.");
+  assert.equal(negativo.intent, "esclarecimento_numero_invalido");
+
+  const grandeDemais = routeTicketQuestion("Detalhe o ticket 999999999999999.");
+  assert.equal(grandeDemais.intent, "esclarecimento_numero_invalido");
+
+  // Controle: ticket válido continua normal.
+  const valido = routeTicketQuestion("Detalhe o ticket 1050.");
+  assert.equal(valido.entities.numero, 1050);
+});
+
+test("'o ticket X e o ticket Y' (substantivo repetido antes de cada número, sem 'compare') detalha os 2, em vez de só capturar o 1º e descartar o resto", () => {
+  const route = routeTicketQuestion("O ticket 100 e o ticket 200 são do mesmo cliente?");
+  assert.equal(route.intent, "detalhar_varios_tickets");
+  assert.deepEqual(route.compare.map((c) => c.args.numero), [100, 200]);
+});
+
+test("'quantos tickets abertos e fechados tem o <nome>' não ignora o nome (operador/cliente) nem cai no resumo operacional do sistema inteiro quando alguém é citado", () => {
+  const route = routeTicketQuestion("Quantos tickets abertos e fechados tem o Fabio Gali?");
+  assert.notEqual(route.intent, "resumo_operacional");
+  assert.equal(route.entities.operador, "Fabio Gali");
+
+  // Controle: sem nome nenhum, o redirecionamento pro resumo operacional
+  // (que devolve abertos/fechados juntos) continua funcionando.
+  const semNome = routeTicketQuestion("Quantos tickets estão abertos? E quantos fechados?");
+  assert.equal(semNome.intent, "resumo_operacional");
+});
+
+test("contração 'num'/'numa' (= 'em um'/'em uma') é reconhecida nos pedidos de formato, igual a forma sem contração", () => {
+  const grafico = routeTicketQuestion("Resumo por área num gráfico.");
+  assert.equal(grafico.formato, "grafico");
+
+  const tabela = routeTicketQuestion("Resumo por área numa tabela.");
+  assert.equal(tabela.formato, "tabela");
+});

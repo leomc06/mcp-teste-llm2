@@ -64,11 +64,12 @@ const blockedQuestions = [
   // Voz passiva com "ser" (achado testando o lote de perguntas ao vivo):
   // "pode/precisa/deve ser <particípio>" é um pedido de escrita disfarçado,
   // diferente de "foi"/"está <particípio>" (pergunta sobre o estado atual,
-  // já coberta em allowedQuestions abaixo).
+  // já coberta em allowedQuestions abaixo) e de "vai ser <particípio>"
+  // (previsão especulativa, também em allowedQuestions — ver correção do
+  // falso positivo "Será que esse chamado vai ser fechado logo?").
   "O ticket 1050 pode ser marcado como resolvido?",
   "Isso aqui parece que precisa ser cancelado, o chamado 980.",
   "Esse chamado deve ser encerrado hoje.",
-  "O ticket 1003 vai ser reaberto?",
 ];
 
 const allowedQuestions = [
@@ -93,6 +94,14 @@ const allowedQuestions = [
   // pedido pra mudar — só "ser" (infinitivo cru) deve disparar o bloqueio.
   "Esse ticket já foi marcado como resolvido?",
   "O chamado já está cancelado?",
+  // Achado testando o lote de perguntas ao vivo: "Será que esse chamado vai
+  // ser fechado logo?" era um falso positivo do bloqueio de voz passiva —
+  // é uma pergunta especulativa (previsão), não um pedido; "vai ser X"
+  // (futuro simples) foi removido da lista de modais que disparam o
+  // bloqueio, só "pode/deve/precisa ser X" (permissão/obrigação/necessidade)
+  // continuam bloqueando.
+  "Será que esse chamado vai ser fechado logo?",
+  "O ticket 1003 vai ser reaberto?",
 ];
 
 test("bloqueia intenção de escrita", () => {
