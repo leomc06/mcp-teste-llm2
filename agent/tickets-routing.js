@@ -13,8 +13,15 @@ const ESTAR_SOURCE = "est(?:[áa]|[ãa]o)";
 // cobrir "área Suporte SEM operador" — antes só "com/tem/está X" era podado,
 // então "sem X" vazava inteiro pro nome capturado (ex.: area: "Suporte sem
 // operador").
+// "(?:e\\s+)?" antes de "d[oa]"/"n[oa]" (achado testando o lote de
+// perguntas ao vivo): "Tickets abertos na área de TI E NO departamento de
+// Suporte." deixava "e" sobrando no nome capturado (area: "TI e") — o "e"
+// solto já era aceito como conector, mas só quando seguido direto de "o "/
+// "a " + substantivo; "no"/"na" (contração de "em"+"o"/"a") depois de "e"
+// não batia em nenhuma das 2 formas (nem "e" sozinho, que exige "o "/"a "
+// logo depois, nem "n[oa]" sozinho, que não prevê um "e" antes).
 const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|sem|e|que\\s+(?:tem|${ESTAR_SOURCE})|d[oa]|n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
+  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|sem|e|que\\s+(?:tem|${ESTAR_SOURCE})|(?:e\\s+)?d[oa]|(?:e\\s+)?n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
   "iu",
 );
 
@@ -1015,6 +1022,19 @@ function cleanFreeText(value) {
     .replace(TRAILING_BARE_CREATION_VERB_PATTERN, "")
     .trim();
 
+  // "Quantos tickets CADA OPERADOR TEM?" (achado testando o lote de
+  // perguntas ao vivo): "cada" vem ANTES de "operador" (não faz parte do
+  // valor capturado), então o que sobra pra limpar é só " tem?" — nenhum
+  // TRAILING_*_PATTERN acima bate, porque todos exigem `\s+` (espaço) ANTES
+  // do verbo pra cortar, e aqui não sobra nada antes dele dentro do próprio
+  // texto capturado (o "cada" ficou de fora, no lado de fora da captura).
+  // Resultado: "tem" sozinho passava como se fosse um nome válido de 3
+  // letras (operador: "tem"). Guard final: se o texto INTEIRO (não só o
+  // final) não é nada além de um verbo solto, não é um nome de verdade.
+  if (new RegExp(`^${BARE_HAVE_VERB_SOURCE}$`, "iu").test(text)) {
+    return undefined;
+  }
+
   return text.length >= 1 && text.length <= 100 ? text : undefined;
 }
 
@@ -1207,6 +1227,47 @@ export function extractTicketComparisonNumbers(value) {
     .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647);
 
   return numeros.length >= 2 ? [numeros[0], numeros[1]] : undefined;
+}
+
+// "Detalhe os tickets 100, 200 e 300." (achado testando o lote de perguntas
+// ao vivo): pedir o detalhe de 2+ tickets específicos SEM usar "compare"/
+// "diferença entre" (ver COMPARE_CONNECTOR_SOURCE acima, exigido por
+// extractTicketComparisonNumbers) — TICKET_NOUN_SOURCE é singular (sem "s"
+// embutido, mesmo motivo do "s?" avulso logo abaixo), então "tickets 100"
+// no plural nunca batia no padrão de ticket único (extractTicketNumber), e
+// a lista de números inteira era descartada em silêncio, caindo num
+// listar_tickets sem filtro nenhum.
+// Ancorado direto no substantivo + números em sequência (não só "2+
+// números em qualquer lugar da frase") de propósito — pra não confundir
+// com outras frases que também têm 2+ números por motivos diferentes (ex.:
+// "liste os 5 tickets mais antigos, página 2" tem 2 números, mas nenhum
+// dos 2 está numa enumeração direta logo depois do substantivo).
+export function extractMultipleTicketNumbers(value) {
+  const text = normalizeText(value);
+
+  // "," vira espaço em normalizeText (remove toda pontuação) — por isso o
+  // separador aqui é "\\s+" entre os números, não uma vírgula literal
+  // (achado testando esta própria correção: "tickets 100, 200 e 300" só
+  // batia o "100" sozinho até essa troca, porque a vírgula nunca sobrevive
+  // à normalização).
+  const match = text.match(
+    new RegExp(
+      `\\b${TICKET_NOUN_SOURCE}s?\\s+(?:numero\\s+)?(\\d+(?:\\s+\\d+)*(?:\\s+e\\s+\\d+)?)\\b`,
+      "u",
+    ),
+  );
+
+  if (!match) {
+    return undefined;
+  }
+
+  const numeros = [...new Set(
+    [...match[1].matchAll(/\d+/g)]
+      .map((numeroMatch) => Number(numeroMatch[0]))
+      .filter((numero) => Number.isSafeInteger(numero) && numero > 0 && numero <= 2147483647),
+  )];
+
+  return numeros.length >= 2 ? numeros : undefined;
 }
 
 // "(?!(?:mais|menos)\b)" no início da captura evita que perguntas de ranking
@@ -1463,8 +1524,14 @@ export function extractOperatorName(value) {
     // (combinado com o resto da pergunta já resolvido, ex. "em aberto"),
     // não força a rota de carga (que perderia os outros filtros) como
     // extractOperatorWorkloadName faz.
+    // "(?:a\\s+|o\\s+|cada\\s+)?" na negação (achado testando o lote de
+    // perguntas ao vivo): "Quantos tickets CADA OPERADOR tem?" não tinha
+    // "cada" como prefixo reconhecido antes da palavra excluída — só "a "/
+    // "o " eram previstos — então "cada operador" passava inteiro pela
+    // negação e virava operador: "cada operador" (nome-lixo, nunca bate
+    // com nenhum operador real).
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
       "iu",
     ),
     // "os tickets QUE o Fábio Gali tratou/atendeu/fechou" (achado testando o
@@ -1923,8 +1990,10 @@ export function extractOperatorWorkloadName(value) {
     // no departamento coids desde..." também bateriam nesse "tem" solto no
     // meio da frase, atropelando a rota certa (status fechado + operador +
     // departamento) com uma carga de operador incompleta.
+    // Mesmo "cada\\s+" na negação do padrão irmão acima (achado testando o
+    // lote de perguntas ao vivo): mesmo gap, mesma correção.
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
       "iu",
     ),
     // "Me diga a carga de trabalho do operador Helpdesk." / "Qual a carga
@@ -2393,7 +2462,15 @@ const FORMATO_TABELA_SOURCE =
   // texto no meio (bem comum: "mostre <conteúdo> em tabela") já quebrava.
   + `|\\bem\\s+(?:uma\\s+)?(?:formato\\s+de\\s+)?${TABLE_WORD_SOURCE}\\b`
   + `|\\b${TABLE_WORD_SOURCE}\\s*,?\\s*por\\s+favor\\b`
-  + `|\\bformato\\s+de\\s+${TABLE_WORD_SOURCE}\\b`;
+  + `|\\bformato\\s+de\\s+${TABLE_WORD_SOURCE}\\b`
+  // "arquivo excel"/"em excel" (achado testando o lote de perguntas ao
+  // vivo): "Excel" é tão comum quanto "tabela"/"planilha" pra pedir o
+  // mesmo formato, mas numa construção diferente ("um ARQUIVO excel",
+  // não "em/formato de tabela") — nenhuma alternativa acima cobria.
+  // Palavra bare "excel" é segura o bastante pra não precisar de uma
+  // palavra de ligação antes (baixo risco de colisão com outro sentido
+  // dentro do domínio de tickets).
+  + "|\\bexcel\\b";
 // "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
 // virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
 // gráfico" (bem comum) nunca bateria, só a forma "faz".
@@ -2709,6 +2786,49 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Compare a área de TI com o departamento Financeiro e com a área WEB."
+  // (achado testando o lote de perguntas ao vivo): mistura de dimensões
+  // DIFERENTES (2 áreas + 1 departamento) — checado AQUI, antes de qualquer
+  // extrator específico de 2 itens (área/departamento/operador/cliente),
+  // não depois. Checar depois (como era antes) deixava a porta aberta pra
+  // um bug sutil: extractAreaComparisonNames tem uma captura não-gulosa que
+  // consegue "pular" por cima da cláusula "com o departamento Financeiro e"
+  // inteira (tratando-a como se fosse parte do nome1, e cleanFreeText então
+  // limpa esse nome1 "sujo" de volta pra um valor limpo "TI" via
+  // TRAILING_FILTER_CLAUSE_PATTERN) — o resultado parecia uma comparação
+  // válida de 2 áreas (TI x WEB), mas descartava o departamento Financeiro
+  // em silêncio, sem avisar que a comparação de 3 itens misturados não foi
+  // feita de verdade. Calculado cedo, nenhum extrator chega a rodar antes.
+  const comparaDimensaoOperador = new RegExp(
+    `\\bcarga\\b|\\b(?:${USER_LOOKUP_NOUN_SOURCE})(?:es|s)?\\b`,
+    "u",
+  ).test(text);
+  const comparaDimensaoCliente = new RegExp(
+    `\\batividade\\b|\\b${CLIENT_LOOKUP_NOUN_SOURCE}(?:s)?\\b`,
+    "u",
+  ).test(text);
+  const comparaDimensaoArea = new RegExp(`\\b${AREA_SYNONYM_SOURCE}(?:s)?\\b`, "u").test(text);
+  const comparaDimensaoDepartamento = /\bdepartamentos?\b/u.test(text);
+  const quantasDimensoesComparadas = [
+    comparaDimensaoOperador,
+    comparaDimensaoCliente,
+    comparaDimensaoArea,
+    comparaDimensaoDepartamento,
+  ].filter(Boolean).length;
+
+  const mencionaComparacaoDimensoesMisturadas =
+    /\bcompar[ae]\b/.test(text) && quantasDimensoesComparadas >= 2;
+
+  if (mencionaComparacaoDimensoesMisturadas) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_dimensoes_diferentes",
+      "Só consigo comparar dentro da mesma dimensão — dois operadores, dois clientes ou duas áreas — não dá pra comparar a carga de um operador com a atividade de um cliente (ou outra dimensão) diretamente."
+        + "\n\nExemplos:\n"
+        + "- Compare a carga do operador Fulano com a do operador Beltrano.\n"
+        + "- Compare a atividade do cliente X com a do cliente Y.",
+    );
+  }
+
   // Comparação entre 2 tickets ou 2 operadores — checado antes de qualquer
   // outra intenção, já que "compare o ticket X com o Y" não deve cair no
   // caminho de número único (buscaria só o primeiro e ignoraria o segundo).
@@ -2719,6 +2839,25 @@ function routeTicketQuestionCore(pergunta) {
       { toolName: "buscar_ticket_por_numero", args: { numero: comparacaoTickets[0] } },
       { toolName: "buscar_ticket_por_numero", args: { numero: comparacaoTickets[1] } },
     ]);
+  }
+
+  // "Detalhe os tickets 100, 200 e 300." (achado testando o lote de
+  // perguntas ao vivo, respondendo decisão explícita do usuário de não
+  // ficar limitado a 1 ticket por vez): pedido de detalhe de 2+ tickets
+  // SEM "compare"/"diferença entre" (esse caso já é resolvido acima por
+  // comparacaoTickets, por isso o "undefined" não é redundante — evita
+  // tentar esta rota de novo quando a de cima já teria bastado). Reusa o
+  // MESMO mecanismo de "compare" (createCompareDecision/runCompare/
+  // formatComparison), que já é genérico pra N itens, não só 2 — só muda
+  // o nome da intent, pra não chamar de "comparação" uma frase que não
+  // pede nenhuma comparação, só o detalhe de cada um lado a lado.
+  const detalheVariosTickets = extractMultipleTicketNumbers(pergunta);
+
+  if (detalheVariosTickets !== undefined) {
+    return createCompareDecision(
+      "detalhar_varios_tickets",
+      detalheVariosTickets.map((numero) => ({ toolName: "buscar_ticket_por_numero", args: { numero } })),
+    );
   }
 
   // "Compare a carga do Fábio Gali com a do Rodrigo Fernandes E COM A DO
@@ -2795,55 +2934,6 @@ function routeTicketQuestionCore(pergunta) {
       { toolName: "listar_tickets", args: { departamento: comparacaoDepartamentos[0], limite: 1 } },
       { toolName: "listar_tickets", args: { departamento: comparacaoDepartamentos[1], limite: 1 } },
     ]);
-  }
-
-  // "Compare a carga do Fábio com a atividade do cliente Acme." (achado
-  // testando o lote de perguntas ao vivo — Complexas, pergunta 15): pedido
-  // de comparação que mistura duas dimensões diferentes (carga de operador
-  // de um lado, atividade de cliente do outro) — cada extrator específico
-  // acima exige a MESMA dimensão nos dois lados, então nenhum bate aqui
-  // (extractOperatorComparisonNames já recusa esse match, ver guard nele).
-  // Sem este guard a pergunta cairia no "sem nome" genérico logo abaixo
-  // (mensagem errada, já que nomes FORAM dados) ou, pior, no fallback de
-  // listagem sem filtro algum. Basta 2 dimensões diferentes mencionadas
-  // (operador/carga, cliente/atividade, área) numa frase de comparação pra
-  // já ser ambíguo o bastante pra recusar, mesmo sem checar os nomes em si.
-  const comparaDimensaoOperador = new RegExp(
-    `\\bcarga\\b|\\b(?:${USER_LOOKUP_NOUN_SOURCE})(?:es|s)?\\b`,
-    "u",
-  ).test(text);
-  const comparaDimensaoCliente = new RegExp(
-    `\\batividade\\b|\\b${CLIENT_LOOKUP_NOUN_SOURCE}(?:s)?\\b`,
-    "u",
-  ).test(text);
-  const comparaDimensaoArea = new RegExp(`\\b${AREA_SYNONYM_SOURCE}(?:s)?\\b`, "u").test(text);
-  // "Compare a área de TI com o departamento de RH." (achado testando o
-  // lote de perguntas ao vivo): "departamento" nunca entrava nesta conta —
-  // sem ele, essa frase não batia em NENHUM extrator específico (cada um
-  // exige a MESMA palavra de dimensão nos 2 lados) nem neste guard
-  // genérico (só 1 dimensão "contada" — área —, abaixo do limiar de 2), e
-  // caía no fallback de listagem com os 2 filtros juntos (área E
-  // departamento, como se fossem um AND), perdendo a comparação por
-  // completo.
-  const comparaDimensaoDepartamento = /\bdepartamentos?\b/u.test(text);
-  const quantasDimensoesComparadas = [
-    comparaDimensaoOperador,
-    comparaDimensaoCliente,
-    comparaDimensaoArea,
-    comparaDimensaoDepartamento,
-  ].filter(Boolean).length;
-
-  const mencionaComparacaoDimensoesMisturadas =
-    /\bcompar[ae]\b/.test(text) && quantasDimensoesComparadas >= 2;
-
-  if (mencionaComparacaoDimensoesMisturadas) {
-    return createClarificationDecision(
-      "esclarecimento_comparacao_dimensoes_diferentes",
-      "Só consigo comparar dentro da mesma dimensão — dois operadores, dois clientes ou duas áreas — não dá pra comparar a carga de um operador com a atividade de um cliente (ou outra dimensão) diretamente."
-        + "\n\nExemplos:\n"
-        + "- Compare a carga do operador Fulano com a do operador Beltrano.\n"
-        + "- Compare a atividade do cliente X com a do cliente Y.",
-    );
   }
 
   // "Compare a carga de tickets entre dois operadores à sua escolha." (achado
@@ -3007,6 +3097,30 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Quantos tickets estão com prioridade Alta?\n"
         + "- Tickets abertos na área Suporte.",
+    );
+  }
+
+  // "Qual departamento tem o DOBRO de tickets do outro?" (achado testando o
+  // lote de perguntas ao vivo): pergunta por uma PROPORÇÃO entre 2 valores
+  // (dobro/metade/triplo), não por uma contagem absoluta — nenhuma tool
+  // calcula proporção entre 2 entidades (cada uma só devolve sua própria
+  // contagem, isolada). Sem este guard, a frase inteira virava um
+  // nome-lixo capturado (ex.: departamento: "tem o dobro de tickets do
+  // outro"), que nunca resolve no catálogo real — mesma lógica honesta de
+  // isUnsupportedMetricQuestion acima, só que pra uma OPERAÇÃO entre 2
+  // valores em vez de um atributo que não existe.
+  const isRatioComparisonQuestion =
+    /\bo\s+dobro\s+de\b/.test(text)
+    || /\ba\s+metade\s+de\b/.test(text)
+    || /\bo\s+triplo\s+de\b/.test(text);
+
+  if (isRatioComparisonQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_proporcao_nao_suportada",
+      "Não calculo proporção entre dois valores (dobro/metade/triplo) — só consigo dar a contagem absoluta de cada um, separadamente. Pode perguntar o total de cada um, ou pedir uma comparação lado a lado?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets o departamento Suporte tem?\n"
+        + "- Compare o departamento Suporte com o departamento Financeiro.",
     );
   }
 

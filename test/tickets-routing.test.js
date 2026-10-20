@@ -19,6 +19,7 @@ import {
   extractRelativeDateRange,
   extractSearchText,
   extractTicketComparisonNumbers,
+  extractMultipleTicketNumbers,
   extractTicketNumber,
   extractTicketStatusName,
   extractUserName,
@@ -4080,4 +4081,67 @@ test("2 perguntas concatenadas ('abertos? E quantos fechados?') caem no resumo o
   const route = routeTicketQuestion("Quantos tickets estão abertos? E quantos fechados?");
   assert.equal(route.intent, "resumo_operacional");
   assert.deepEqual(route.toolNames, ["resumo_operacional_tickets"]);
+});
+
+test("'e no/na departamento/área X' (conector 'e' + contração 'no'/'na') não vaza pro nome capturado da dimensão anterior", () => {
+  const route = routeTicketQuestion("Tickets abertos na área de TI e no departamento de Suporte.");
+  assert.equal(route.entities.area, "TI");
+  assert.equal(route.entities.departamento, "Suporte");
+});
+
+test("comparação com 3 itens de dimensões diferentes (2 áreas + 1 departamento) pede esclarecimento, mesmo quando um extrator de 2 itens conseguiria capturar (erradamente) só 2 dos 3", () => {
+  const route = routeTicketQuestion("Compare a área de TI com o departamento Financeiro e com a área WEB.");
+  assert.equal(route.intent, "esclarecimento_comparacao_dimensoes_diferentes");
+
+  // Controles: comparação de verdade (mesma dimensão nos 2 lados) continua
+  // funcionando normalmente.
+  assert.equal(routeTicketQuestion("Compare a área de Suporte com a área WEB.").intent, "comparar_tickets_area");
+  assert.equal(
+    routeTicketQuestion("Compare o departamento de Governança com o departamento Coids.").intent,
+    "comparar_tickets_departamento",
+  );
+});
+
+test("'cada operador/cliente tem' (conector de dimensão antes da palavra excluída) não vaza como nome-lixo, e um verbo sozinho sem nada antes dele nunca é um nome válido", () => {
+  const route = routeTicketQuestion("Quantos tickets cada operador tem?");
+  assert.equal(route.intent, "resumo_por_operador");
+  assert.equal(route.entities.operador, undefined);
+});
+
+test("'arquivo excel'/'em excel' é reconhecido como pedido de formato tabela, igual 'tabela'/'planilha'", () => {
+  assert.equal(routeTicketQuestion("Me manda um arquivo excel com os tickets abertos.").formato, "tabela");
+  assert.equal(routeTicketQuestion("Mostre os tickets abertos em excel.").formato, "tabela");
+});
+
+test("'o dobro/a metade/o triplo de tickets do outro' (proporção entre 2 valores) pede esclarecimento em vez de virar nome-lixo capturado", () => {
+  const dobro = routeTicketQuestion("Qual departamento tem o dobro de tickets do outro?");
+  assert.equal(dobro.intent, "esclarecimento_proporcao_nao_suportada");
+  assert.deepEqual(dobro.toolNames, []);
+
+  const metade = routeTicketQuestion("Qual área tem a metade de tickets da outra?");
+  assert.equal(metade.intent, "esclarecimento_proporcao_nao_suportada");
+});
+
+test("extractMultipleTicketNumbers detalha 2+ tickets específicos sem a palavra 'compare', reusando o mesmo mecanismo de comparação (genérico pra N itens)", () => {
+  assert.deepEqual(extractMultipleTicketNumbers("Detalhe os tickets 100, 200 e 300."), [100, 200, 300]);
+  assert.deepEqual(extractMultipleTicketNumbers("Detalhe os tickets 100 e 200."), [100, 200]);
+
+  // Controles: 1 número só (não é "múltiplos"), e os 2 números de uma
+  // listagem paginada comum (limite + página, não uma enumeração direta
+  // depois do substantivo) continuam fora deste extrator.
+  assert.equal(extractMultipleTicketNumbers("Detalhe o ticket 100."), undefined);
+  assert.equal(extractMultipleTicketNumbers("Liste os 5 tickets mais antigos, página 2."), undefined);
+
+  const route = routeTicketQuestion("Detalhe os tickets 100, 200 e 300.");
+  assert.equal(route.intent, "detalhar_varios_tickets");
+  assert.deepEqual(route.compare, [
+    { toolName: "buscar_ticket_por_numero", args: { numero: 100 } },
+    { toolName: "buscar_ticket_por_numero", args: { numero: 200 } },
+    { toolName: "buscar_ticket_por_numero", args: { numero: 300 } },
+  ]);
+
+  // Controle: "compare o ticket X com o Y" continua na rota de comparação
+  // de verdade (intent diferente), não nesta nova rota de detalhe.
+  const comparacao = routeTicketQuestion("Compare o ticket 100 com o ticket 200.");
+  assert.equal(comparacao.intent, "comparar_tickets");
 });
