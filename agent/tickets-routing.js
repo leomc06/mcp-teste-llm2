@@ -35,8 +35,14 @@ const TRAILING_PAGE_CLAUSE_PATTERN =
 // capturado (ex.: "resumo do departamento Suporte e depois exporte em
 // PDF" virava departamento: "Suporte e depois exporte em PDF", que nunca
 // resolve no catálogo real). Só poda a cláusula, não implementa exportação.
+// "(?:^|\s+)" no início, não só "\s+" (achado testando o lote de perguntas
+// ao vivo, com dados reais): "Resumo de tickets POR ÁREA e exporte em
+// CSV." não tem nome NENHUM antes da cláusula (conector "por área" bare,
+// sem nome específico) — o grupo capturado começa DIRETO em "e exporte em
+// CSV", sem espaço nenhum antes pra "\s+" casar, então a cláusula inteira
+// sobrava sem ser podada (virava area: "e exporte em CSV" por engano).
 const TRAILING_EXPORT_CLAUSE_PATTERN =
-  /\s+e\s+(?:depois\s+)?export(?:e|a|ar)\s+(?:isso\s+|o\s+resultado\s+)?em\s+(?:pdf|csv)\b.*$/iu;
+  /(?:^|\s+)e\s+(?:depois\s+)?export(?:e|a|ar)\s+(?:isso\s+|o\s+resultado\s+)?em\s+(?:pdf|csv)\b.*$/iu;
 
 // "em volume/quantidade/número de tickets fechados" (achado testando o
 // lote de perguntas ao vivo): cauda comum de "compare X com Y EM <métrica>"
@@ -54,8 +60,21 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // em um gráfico"), que nunca bate por substring com nenhum contact_name
 // real. Só poda a cláusula — decision.formato já é resolvido à parte, no
 // texto original, por detectFormatoPreferido.
+// "(?:...)?" no meio, não obrigatório (achado testando o lote de perguntas
+// ao vivo, com dados reais): "quantos tickets tem POR DEPARTAMENTO EM
+// TABELAS" (bare, sem "uma"/"forma de"/"formato de" no meio) não batia —
+// só a forma COM artigo/preposição era podada, deixando "em tabelas"
+// inteiro grudado no nome capturado (departamento: "em tabelas"). Mesma
+// tolerância que FORMATO_TABELA_SOURCE/FORMATO_GRAFICO_SOURCE já aceitam
+// pra DETECTAR o formato ("em tabela" bare também conta lá) — só faltava
+// aqui, na limpeza do nome.
+// "(?:^|\s+)" no início, não só "\s+" (achado testando o lote de perguntas
+// ao vivo, com dados reais): "quantos tickets tem POR DEPARTAMENTO em
+// tabelas" não tem nome nenhum antes da cláusula (conector bare, sem nome
+// específico) — mesmo motivo do fix irmão em TRAILING_EXPORT_CLAUSE_PATTERN
+// acima.
 const TRAILING_FORMAT_CLAUSE_PATTERN =
-  /\s+em\s+(?:uma?|forma\s+de|formato\s+de)\s+(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
+  /(?:^|\s+)em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
 
 // "mas atendidos/tratados por outro operador" (achado testando o lote de
 // perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
@@ -1145,6 +1164,19 @@ function cleanFreeText(value) {
     // palavra.
     .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
     .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
+    // Espaço artificial no início (achado testando o lote de perguntas ao
+    // vivo, com dados reais — 3º caso da mesma classe, depois de "em
+    // tabelas"/"e exporte em CSV"): quase toda TRAILING_*_CLAUSE_PATTERN
+    // abaixo exige um "\s+" ANTES da cláusula pra podar — isso funciona bem
+    // quando sobra um nome de verdade antes dela, mas quando o valor
+    // capturado é a cláusula de lixo INTEIRA (ex.: "por departamento ENTRE
+    // 2026-01-01 e 2026-02-01?", conector bare sem nome nenhum, onde a
+    // captura começa DIRETO em "entre..."), não existe espaço nenhum pra
+    // esse "\s+" casar, e a cláusula sobrava inteira sem ser removida. Um
+    // espaço postiço aqui garante que todo pattern "\s+<cláusula>" também
+    // bate quando a cláusula é tudo que sobrou — removido de novo pelo
+    // ".trim()" no fim da cadeia, então é inofensivo pro resultado final.
+    .replace(/^/, " ")
     .replace(TRAILING_CONTINUATION_CLAUSE_PATTERN, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
@@ -2268,8 +2300,19 @@ export function extractPriorityName(value) {
     // testando o lote de perguntas ao vivo): "Resumo por prioridade E POR
     // ÁREA." usa "prioridade" só como conector, não valor — sem essa
     // exclusão, "e por área" inteiro virava prioridade: "e por área".
+    // "(?!(?:n[ao]\\s+)?(?:AREA_SYNONYM|departamento)\\b)" (achado testando
+    // o lote de perguntas ao vivo, com dados reais): "Resumo dos tickets
+    // POR PRIORIDADE na área Suporte..." usa "prioridade" como conector
+    // BARE (sem nenhum nível dito), seguido do filtro de OUTRA dimensão
+    // ("na área Suporte") — sem essa exclusão, "na área Suporte" inteiro
+    // virava prioridade: "na área Suporte" (nome-lixo, nunca bate com
+    // nenhuma prioridade real), e esse valor não-undefined escapava
+    // silencioso porque o branch de resumo_por_prioridade descartava a
+    // própria prioridade capturada de qualquer forma — só virou visível
+    // depois que esse descarte ganhou uma exceção pra filtro nomeado.
     new RegExp(
-      `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+      `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
+        + `(?!(?:n[ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
       "iu",
     ),
     // Ordem substantivo-nível invertida ("alta prioridade", tão natural
@@ -4326,10 +4369,28 @@ function routeTicketQuestionCore(pergunta) {
   // os números. Lista de gatilhos deliberadamente conservadora: perder um
   // caso só mantém o comportamento de hoje (números puros, seguro); um
   // falso positivo só gasta 1 chamada extra ao Ollama.
+  // "Resumo por Gestão." (achado testando o lote de perguntas ao vivo, com
+  // dados reais): "Gestão" é o nome real de uma ÁREA e de um DEPARTAMENTO no
+  // catálogo — a palavra "gestao" (normalizada) também era um dos gatilhos
+  // de AUDIÊNCIA abaixo, aceita em QUALQUER lugar depois de "resumo"/
+  // "parágrafo"/"texto"/"mensagem", sem exigir nenhuma preposição de
+  // destinatário no meio — então "Resumo POR Gestão" (pedido de agrupar
+  // por essa área/departamento, não uma audiência) disparava o resumo
+  // EXECUTIVO do sistema inteiro por engano, sequestrando a intenção certa
+  // (group-by) pra uma completamente diferente — não só um "falso positivo
+  // barato" como o comentário original previa (aqui troca a TOOL inteira,
+  // não só o formato da resposta). Corrigido exigindo a preposição de
+  // DESTINATÁRIO de verdade (para/pra/pro/a/à/ao) logo antes da palavra de
+  // audiência — "por Gestão" não tem essa preposição, só "pra gestão"/
+  // "pro chefe"/"para a diretoria" (frases reais já aceitas, ver teste) têm.
+  const AUDIENCIA_PREPOSICAO_SOURCE = "(?:para|pra|pro|a|[àá]|ao)";
+  const AUDIENCIA_DESTINATARIO_SOURCE =
+    `${AUDIENCIA_PREPOSICAO_SOURCE}\\s+(?:o\\s+|a\\s+)?(?:chefe|diretoria|gestor(?:es)?|gestao|lideranca)\\b`;
+
   const isResumoExecutivoIntent =
     /\bresumo\s+executivo\b/.test(text)
-    || /\b(?:paragrafo|texto|mensagem)\b.*\b(?:chefe|diretoria|gestor|gestao|lideranca)\b/.test(text)
-    || /\bresumo\b.*\b(?:chefe|diretoria|gestor|gestao|lideranca)\b/.test(text);
+    || new RegExp(`\\b(?:paragrafo|texto|mensagem)\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text)
+    || new RegExp(`\\bresumo\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text);
 
   if (isDashboardIntent || isResumoExecutivoIntent) {
     const decision = createTicketDecision(
@@ -4355,7 +4416,17 @@ function routeTicketQuestionCore(pergunta) {
   // o guard, a pergunta cai no branch de isSlaVencidoIntent mais abaixo —
   // honesto mesmo sem conseguir agrupar (lista os vencidos de verdade, só
   // não agrupados por prioridade).
-  if (hasResumoIntent && mentionsStatusDimension && !isSlaVencidoIntent && permiteDimensaoResumo("status")) {
+  // "status === undefined" (achado testando o lote de perguntas ao vivo):
+  // resumo_tickets_por_status não tem parâmetro "status" no próprio schema
+  // (agrupar POR status e também filtrar por UM status só seria degenerado
+  // — 1 linha só). Sem este guard, "Resumo por status Cancelado." disparava
+  // esse branch do mesmo jeito (mentionsStatusDimension só olha o conector
+  // "por status", não se um valor específico foi dito), e "Cancelado" era
+  // descartado em silêncio — o usuário recebia a distribuição de TODOS os
+  // status, achando que era a resposta certa pro que pediu. Com o guard,
+  // cai no fallback mais abaixo (hasExplicitResumoWord), que já trata esse
+  // caso certo (resumo por OUTRA dimensão, filtrado pelo status pedido).
+  if (hasResumoIntent && mentionsStatusDimension && status === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("status")) {
     const decision = createTicketDecision(
       "resumo_por_status",
       "resumo_tickets_por_status",
@@ -4375,7 +4446,10 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsPriorityDimension && !isSlaVencidoIntent && permiteDimensaoResumo("prioridade")) {
+  // "prioridade === undefined" — mesma correção irmã da de status acima,
+  // pro mesmo bug ("Resumo por prioridade Alta." descartava "Alta" em
+  // silêncio).
+  if (hasResumoIntent && mentionsPriorityDimension && prioridade === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("prioridade")) {
     const decision = createTicketDecision(
       "resumo_por_prioridade",
       "resumo_tickets_por_prioridade",
@@ -4395,7 +4469,11 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsAreaDimension && !isSlaVencidoIntent && permiteDimensaoResumo("area")) {
+  // "area === undefined" — mesma correção irmã de status/prioridade acima
+  // (achado testando o lote de perguntas ao vivo: "Resumo por área Suporte."
+  // descartava "Suporte" em silêncio, devolvendo a distribuição de TODAS as
+  // áreas).
+  if (hasResumoIntent && mentionsAreaDimension && area === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("area")) {
     const decision = createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
@@ -4436,7 +4514,13 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsDepartmentDimension && !isSlaVencidoIntent && permiteDimensaoResumo("departamento")) {
+  // "departamento === undefined" — mesma correção irmã de status/prioridade/
+  // área acima (achado testando o lote de perguntas ao vivo: "Resumo por
+  // departamento Marketing." descartava "Marketing" em silêncio — pior
+  // ainda aqui, já que "Marketing" nem existe no catálogo real, e o usuário
+  // recebia a distribuição por TODOS os departamentos como se fosse a
+  // resposta certa, sem nenhum aviso de "departamento não encontrado").
+  if (hasResumoIntent && mentionsDepartmentDimension && departamento === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("departamento")) {
     const decision = createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
@@ -4451,7 +4535,15 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
-  if (hasResumoIntent && mentionsClienteDimension && !isSlaVencidoIntent && permiteDimensaoResumo("cliente")) {
+  // "cliente === undefined" — mesma correção irmã de status/prioridade/
+  // área/departamento acima (achado testando o lote de perguntas ao vivo).
+  // Diferente dos outros 4, não existe um fallback de "resumo por OUTRA
+  // dimensão filtrado por cliente" mais abaixo (hasExplicitResumoWord não
+  // olha cliente) — aqui o guard simplesmente deixa a pergunta continuar
+  // até o fallback final de listagem comum, filtrada pelo cliente, que já é
+  // uma resposta honesta e útil (cliente não tem um catálogo pequeno fixo
+  // como os outros, então "agrupar por outra dimensão" não seria natural).
+  if (hasResumoIntent && mentionsClienteDimension && cliente === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("cliente")) {
     const decision = createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",

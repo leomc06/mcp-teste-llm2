@@ -3385,14 +3385,21 @@ test("'tickets de alta/baixa/media prioridade' (nível antes do substantivo) res
   const contradicao = routeTicketQuestion("Tickets urgentes de baixa prioridade.");
   assert.equal(contradicao.intent, "esclarecimento_contradicao");
 
-  // Controle: "prioridade" como conector de dimensão solto (sem nível
-  // nenhum) continua resolvendo normalmente, sem disparar esse novo check
-  // por engano só porque "urgente" aparece em outro lugar da frase (ex.:
-  // um marcador de continuação "só os Urgente" no fim).
-  const semNivel = routeTicketQuestion(
+  // Atualizado (achado testando outro lote de perguntas ao vivo, com dados
+  // reais): "resumo por prioridade" junto de um nível específico já
+  // resolvido ("Urgente", vindo do marcador de continuação "só os Urgente"
+  // no fim) agora é tratado como FILTRO nomeado, não como agrupamento
+  // degenerado por prioridade (que só mostraria 100% Urgente/0% o resto) —
+  // mesma correção irmã aplicada a status/área/departamento (ver guard
+  // "prioridade === undefined" na própria rota). Resultado: resumo por
+  // STATUS, filtrado pela área E pela prioridade já resolvidas — mais útil
+  // que a quebra degenerada de antes.
+  const comNivelDaContinuacao = routeTicketQuestion(
     "Resumo dos tickets por prioridade na área Suporte e desses só os Urgente",
   );
-  assert.equal(semNivel.intent, "resumo_por_prioridade");
+  assert.equal(comNivelDaContinuacao.intent, "resumo_por_status");
+  assert.equal(comNivelDaContinuacao.entities.area, "Suporte");
+  assert.equal(comNivelDaContinuacao.entities.prioridade, "Urgente");
 });
 
 test("comparação de clientes aceita 'abre' (presente), não só 'abriu' (passado)", () => {
@@ -4402,4 +4409,42 @@ test("contração 'num'/'numa' (= 'em um'/'em uma') é reconhecida nos pedidos d
 
   const tabela = routeTicketQuestion("Resumo por área numa tabela.");
   assert.equal(tabela.formato, "tabela");
+});
+
+test("'resumo por <dimensão> <valor nomeado>' (achado testando com dados reais) não descarta mais o valor — vira filtro, em vez de uma distribuição cheia ignorando o que foi pedido", () => {
+  const status = routeTicketQuestion("Resumo por status Cancelado.");
+  assert.notEqual(status.intent, "resumo_por_status");
+  assert.equal(status.entities.status, "Cancelado");
+
+  const area = routeTicketQuestion("Resumo por área Suporte.");
+  assert.notEqual(area.intent, "resumo_por_area");
+  assert.equal(area.entities.area, "Suporte");
+
+  const departamento = routeTicketQuestion("Resumo por departamento Marketing.");
+  assert.notEqual(departamento.intent, "resumo_por_departamento");
+  assert.equal(departamento.entities.departamento, "Marketing");
+
+  // Controles: SEM nome nenhum (conector bare), o agrupamento de verdade
+  // continua funcionando normalmente nos 3.
+  assert.equal(routeTicketQuestion("Resumo por status.").intent, "resumo_por_status");
+  assert.equal(routeTicketQuestion("Resumo por área.").intent, "resumo_por_area");
+  assert.equal(routeTicketQuestion("Resumo por departamento.").intent, "resumo_por_departamento");
+});
+
+test("'resumo por <área/departamento real que também é gatilho de audiência>' (ex.: 'Gestão', achado testando com dados reais) não sequestra a intenção pro resumo executivo do sistema inteiro", () => {
+  const route = routeTicketQuestion("Resumo por Gestão.");
+  assert.notEqual(route.intent, "resumo_operacional");
+  assert.equal(route.synthesize, undefined);
+
+  // Controles: as frases reais de audiência (com preposição de
+  // destinatário de verdade) continuam disparando o resumo executivo.
+  assert.equal(routeTicketQuestion("Resumo executivo da operação.").synthesize, "resumo_executivo");
+  assert.equal(
+    routeTicketQuestion("Escreve um parágrafo pra mandar pro chefe.").synthesize,
+    "resumo_executivo",
+  );
+  assert.equal(
+    routeTicketQuestion("Manda uma mensagem pra diretoria sobre os tickets.").synthesize,
+    "resumo_executivo",
+  );
 });
