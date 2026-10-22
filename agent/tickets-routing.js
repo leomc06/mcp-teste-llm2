@@ -1945,6 +1945,21 @@ export function extractOperatorName(value) {
 const EMAIL_CLIENTE_PATTERN =
   /\be-?mails?\s+(?:d[oe]\s+)?(?:cliente\s+)?([\w.+-]+@[\w.-]+\.[a-z]{2,})\b/iu;
 
+// "Tickets do cliente fabio.gali." (achado testando o lote de perguntas ao
+// vivo, com dados reais): variante do mesmo problema do e-mail acima, mas
+// sem "@" — vários clientes reais existem só como "nome.sobrenome" (sem
+// domínio, ver resumo_tickets_por_cliente), e cleanFreeText cortava no
+// primeiro "." do mesmo jeito, virando cliente: "fabio" — pior que só
+// perder o ".gali": "fabio" sozinho é bem mais ambíguo (bate em muito mais
+// gente) do que "fabio.gali" bateria. Só dispara logo depois da palavra
+// "cliente"/"solicitante" — um token com ponto solto em qualquer outro
+// lugar da frase não é necessariamente um nome, então não arrisca nesse
+// caso mais genérico.
+const DOTTED_CLIENTE_PATTERN = new RegExp(
+  `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(\\w+(?:\\.\\w+)+)\\b`,
+  "iu",
+);
+
 export function extractClientName(value) {
   const text = String(value ?? "");
 
@@ -1959,6 +1974,12 @@ export function extractClientName(value) {
 
   if (emailMatch) {
     return emailMatch[1];
+  }
+
+  const dottedMatch = text.match(DOTTED_CLIENTE_PATTERN);
+
+  if (dottedMatch) {
+    return dottedMatch[1];
   }
 
   return extractByPatterns(text, [
@@ -4730,9 +4751,31 @@ function routeTicketQuestionCore(pergunta) {
     return decision;
   }
 
+  // "Quantos tickets o X tratou no departamento Y?"/"atividade do cliente X
+  // na área Y" (achado testando o lote de perguntas ao vivo, com dados
+  // reais): analisar_carga_operador/analisar_atividade_cliente dão um
+  // retrato da PESSOA inteira (todos os departamentos/áreas juntos), por
+  // desenho — nenhuma das 2 tools aceita filtro de área/departamento (só
+  // operador/cliente + período), diferente de toda tool de listagem/resumo.
+  // Sem este guard, "no departamento SYSADMIN"/"na área Y" era descartado
+  // em silêncio, e a resposta vinha com a atividade da pessoa em TODA a
+  // operação, não só no recorte pedido — parecendo completa quando não é.
+  const mencionaDimensaoNaoSuportadaNaAnalise =
+    departamento !== undefined || area !== undefined;
+
   const operadorCarga = extractOperatorWorkloadName(pergunta);
 
   if (operadorCarga !== undefined) {
+    if (mencionaDimensaoNaoSuportadaNaAnalise) {
+      return createClarificationDecision(
+        "esclarecimento_analise_sem_filtro_de_dimensao",
+        "A carga de um operador que eu consigo mostrar é sempre da pessoa inteira (todos os departamentos e áreas juntos) — não dá pra restringir a um departamento ou área específico. Pode perguntar pela carga geral dele, ou filtrar por departamento/área numa listagem comum?"
+          + "\n\nExemplos:\n"
+          + `- Qual a carga do operador ${operadorCarga}?\n`
+          + `- Tickets do operador ${operadorCarga} no departamento ${departamento ?? area}.`,
+      );
+    }
+
     return createTicketDecision(
       "analisar_carga_operador",
       "analisar_carga_operador",
@@ -4745,6 +4788,16 @@ function routeTicketQuestionCore(pergunta) {
   const clienteAtividade = extractClientActivityName(pergunta);
 
   if (clienteAtividade !== undefined) {
+    if (mencionaDimensaoNaoSuportadaNaAnalise) {
+      return createClarificationDecision(
+        "esclarecimento_analise_sem_filtro_de_dimensao",
+        "A atividade de um cliente que eu consigo mostrar é sempre da pessoa inteira (todos os departamentos e áreas juntos) — não dá pra restringir a um departamento ou área específico. Pode perguntar pela atividade geral dele, ou filtrar por departamento/área numa listagem comum?"
+          + "\n\nExemplos:\n"
+          + `- Qual a atividade do cliente ${clienteAtividade}?\n`
+          + `- Tickets do cliente ${clienteAtividade} no departamento ${departamento ?? area}.`,
+      );
+    }
+
     return createTicketDecision(
       "analisar_atividade_cliente",
       "analisar_atividade_cliente",

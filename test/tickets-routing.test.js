@@ -4448,3 +4448,28 @@ test("'resumo por <área/departamento real que também é gatilho de audiência>
     "resumo_executivo",
   );
 });
+
+test("'carga do operador X'/'atividade do cliente X' junto de um departamento/área pede esclarecimento, em vez de descartar o filtro em silêncio (a tool só analisa a pessoa inteira, sem suporte a esse recorte)", () => {
+  const carga = routeTicketQuestion("Qual a carga do operador Fabio Gali no departamento Suporte?");
+  assert.equal(carga.intent, "esclarecimento_analise_sem_filtro_de_dimensao");
+
+  const atividade = routeTicketQuestion("Resumo da atividade do cliente Diego Mota no departamento SYSADMIN.");
+  assert.equal(atividade.intent, "esclarecimento_analise_sem_filtro_de_dimensao");
+
+  // Controles: sem departamento/área nenhum mencionado, as 2 tools
+  // continuam funcionando normalmente.
+  const cargaSemFiltro = routeTicketQuestion("Qual a carga do operador Fabio Gali?");
+  assert.equal(cargaSemFiltro.intent, "analisar_carga_operador");
+
+  const atividadeSemFiltro = routeTicketQuestion("Qual a atividade do cliente Acme?");
+  assert.equal(atividadeSemFiltro.intent, "analisar_atividade_cliente");
+});
+
+test("'cliente <nome.sobrenome>' (sem @, achado testando com dados reais) preserva o ponto no meio, em vez de truncar e piorar a ambiguidade", () => {
+  const route = routeTicketQuestion("Tickets do cliente fabio.gali.");
+  assert.equal(route.entities.cliente, "fabio.gali");
+
+  // Controle: nome sem ponto nenhum continua normal.
+  const semPonto = routeTicketQuestion("Tickets do cliente Fabio Gali.");
+  assert.equal(semPonto.entities.cliente, "Fabio Gali");
+});
