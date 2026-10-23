@@ -654,6 +654,39 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: formatIsoDate(primeiroDia), dataFim: formatIsoDate(ultimoDia) };
   }
 
+  // "nesse semestre"/"este semestre" (achado testando o lote de perguntas
+  // ao vivo, com dados reais): "semestre" nunca tinha entrado no vocabulário
+  // de período — sem reconhecimento nenhum, a cláusula inteira ("tem nesse
+  // semestre") vazava pro nome capturado de qualquer dimensão (ex.:
+  // "Quantos tickets o departamento de Governança tem nesse semestre?"
+  // virava departamento: "Governança tem nesse semestre"). Semestre
+  // CALENDÁRIO (jan-jun/jul-dez), mesmo raciocínio de "esse trimestre"/
+  // "esse mês" acima (unidade de calendário completa, não uma janela
+  // corrida de 180 dias).
+  if (/\b(?:d|n)?(?:esse|este)\s+semestre\b/.test(text)) {
+    const semestreAtual = Math.floor(agora.getMonth() / 6);
+    const primeiroMes = semestreAtual * 6;
+
+    return {
+      dataInicio: formatIsoDate(new Date(agora.getFullYear(), primeiroMes, 1)),
+      dataFim: formatIsoDate(new Date(agora.getFullYear(), primeiroMes + 6, 0)),
+    };
+  }
+
+  // "semestre passado"/"último semestre" — mesmo raciocínio de "trimestre
+  // passado" (mais abaixo), só com 2 metades de ano em vez de 4 trimestres.
+  if (/\bsemestre\s+passado\b/.test(text) || /\bultimo\s+semestre\b/.test(text)) {
+    const semestreAtual = Math.floor(agora.getMonth() / 6);
+    const semestrePassado = (semestreAtual + 1) % 2;
+    const anoSemestrePassado = semestreAtual === 0 ? agora.getFullYear() - 1 : agora.getFullYear();
+    const primeiroMes = semestrePassado * 6;
+
+    return {
+      dataInicio: formatIsoDate(new Date(anoSemestrePassado, primeiroMes, 1)),
+      dataFim: formatIsoDate(new Date(anoSemestrePassado, primeiroMes + 6, 0)),
+    };
+  }
+
   // "último ano" — mesmo raciocínio de "último mês"/"última semana" acima.
   if (/\bano\s+passado\b/.test(text) || /\bultimo\s+ano\b/.test(text)) {
     const anoPassado = agora.getFullYear() - 1;
@@ -988,6 +1021,7 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
     + "|(?:d|n)?(?:ess[ae]|est[ae])\\s+semana|semana\\s+passada|[úu]ltima\\s+semana"
     + "|[úu]ltimo\\s+dia\\s+(?:d[oe]\\s+)?m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
+    + "|(?:d|n)?(?:esse|este)\\s+semestre|semestre\\s+passado|[úu]ltimo\\s+semestre"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
     + "|(?:primeiro|segundo|terceiro|quarto)\\s+trimestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?"
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
@@ -1171,7 +1205,13 @@ function cleanFreeText(value) {
     // quebraram). Limitação conhecida, não corrigida: um nome de
     // cliente/operador que comece com artigo (raro) pode perder essa
     // palavra.
-    .replace(/^(?:o|a|os|as|de|do|da)\b\s+/iu, "")
+    // "dos"/"das" (achado testando o lote de perguntas ao vivo, com dados
+    // reais): contração de "de" + "os"/"as" ("Resumo por cliente DOS
+    // últimos 6 meses.") tão comum quanto "do"/"da", mas faltava aqui — sem
+    // ela, "dos últimos 6 meses" (cláusula de data inteira, sem nome real
+    // antes pra ancorar o corte das TRAILING_*_CLAUSE_PATTERN mais abaixo)
+    // virava cliente: "dos" (lixo que nunca bate no catálogo real).
+    .replace(/^(?:o|a|os|as|de|do|da|dos|das)\b\s+/iu, "")
     .replace(/^(?:operador|respons[áa]vel|atendente)\b\s+/iu, "")
     // Espaço artificial no início (achado testando o lote de perguntas ao
     // vivo, com dados reais — 3º caso da mesma classe, depois de "em
@@ -1870,8 +1910,15 @@ export function extractOperatorName(value) {
     // nenhum depois, só uma cláusula de data, virava operador: "nesse ano"
     // (cleanFreeText não tem como podar, não sobra nada ANTES da cláusula
     // pra ancorar o corte de \s+ das TRAILING_*_CLAUSE_PATTERN).
+    // "(?:é\\s+)?" logo antes dos lookaheads (achado testando o lote de
+    // perguntas ao vivo, com dados reais — mesmo espelho do fix já aplicado
+    // em extractClientName): "Tickets CUJO OPERADOR É Vanessa Ventura..."
+    // tem o verbo "é" entre a palavra "operador" e o nome de verdade — sem
+    // pular esse verbo, ele virava parte do nome capturado (operador: "é
+    // Vanessa Ventura"). Só o "é" ACENTUADO (não "e" sem acento, que é a
+    // conjunção já tratada por DIMENSION_CONNECTOR_LEAK_SOURCE logo abaixo).
     new RegExp(
-      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+`
+      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
         + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
         + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
         + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,

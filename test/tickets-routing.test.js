@@ -4594,3 +4594,49 @@ test("'<nome> atendidos <resto da frase>' (achado testando com dados reais) não
   const semClausula = routeTicketQuestion("Tickets do operador Fabio Gali.");
   assert.equal(semClausula.entities.operador, "Fabio Gali");
 });
+
+test("'cujo operador é X' (achado testando com dados reais, mesmo espelho do fix já aplicado em cliente) não inclui o verbo 'é' dentro do nome capturado", () => {
+  const route = routeTicketQuestion("Tickets cujo operador é Vanessa Ventura.");
+  assert.equal(route.entities.operador, "Vanessa Ventura");
+
+  // Controle: a forma já coberta antes (sem "cujo"/"é") continua igual.
+  const semCujo = routeTicketQuestion("Tickets do operador Fabio Gali.");
+  assert.equal(semCujo.entities.operador, "Fabio Gali");
+});
+
+test("'dos'/'das' (contração de 'de'+'os'/'de'+'as', achado testando com dados reais) é reconhecida como artigo inicial a podar, igual 'do'/'da'", () => {
+  const dos = routeTicketQuestion("Resumo por cliente dos últimos 6 meses.");
+  assert.equal(dos.entities.cliente, undefined);
+  assert.equal(dos.intent, "resumo_por_cliente");
+
+  const das = routeTicketQuestion("Resumo por cliente das últimas 2 semanas.");
+  assert.equal(das.entities.cliente, undefined);
+  assert.equal(das.intent, "resumo_por_cliente");
+
+  // Efeito cascata do bug original (achado testando com dados reais): o
+  // "cliente: dos" não-undefined fazia o guard do ramo resumo_por_cliente
+  // falhar, caindo num listar_mais_antigos errado por causa do "5
+  // primeiros" mencionado depois na mesma frase.
+  const comLimiteEFormato = routeTicketQuestion(
+    "Resumo por cliente dos últimos 6 meses, em tabela, só os 5 primeiros.",
+  );
+  assert.equal(comLimiteEFormato.intent, "resumo_por_cliente");
+  assert.equal(comLimiteEFormato.entities.cliente, undefined);
+  assert.equal(comLimiteEFormato.entities.limite, 5);
+});
+
+test("'semestre' (achado testando com dados reais) é reconhecido como período, igual mês/trimestre/ano", () => {
+  const nesseSemestre = routeTicketQuestion("Quantos tickets o departamento de Governança tem nesse semestre?");
+  assert.equal(nesseSemestre.entities.departamento, "Governança");
+  assert.notEqual(nesseSemestre.entities.dataInicio, undefined);
+  assert.notEqual(nesseSemestre.entities.dataFim, undefined);
+
+  const semestrePassado = routeTicketQuestion("Quantos tickets o departamento de Governança tem no semestre passado?");
+  assert.equal(semestrePassado.entities.departamento, "Governança");
+  assert.notEqual(semestrePassado.entities.dataInicio, undefined);
+  assert.notEqual(semestrePassado.entities.dataFim, undefined);
+
+  // Controle: a forma já coberta antes ("mes") continua igual.
+  const semSemestre = routeTicketQuestion("Quantos tickets o departamento de Governança tem nesse mes?");
+  assert.equal(semSemestre.entities.departamento, "Governança");
+});
