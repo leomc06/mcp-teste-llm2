@@ -4333,6 +4333,28 @@ function routeTicketQuestionCore(pergunta) {
     return false;
   }
 
+  // "prioridade menor que Alta"/"prioridade maior que Media"/"prioridade
+  // acima de Alta" (achado testando o lote de perguntas ao vivo, com dados
+  // reais): comparação RELATIVA de prioridade — nenhuma tool filtra por
+  // "menor/maior que um valor", só por um valor exato — sem este guard, a
+  // cláusula de comparação inteira era capturada como se fosse o próprio
+  // valor de prioridade (prioridade: "menor que Alta"), nunca bate no
+  // catálogo real (Baixa/Media/Alta/Urgente) e devolve silenciosamente
+  // "nenhum ticket encontrado", como se o filtro tivesse sido entendido.
+  // Testado contra o valor JÁ CAPTURADO (não a frase inteira), então não
+  // depende de nenhuma forma específica de introduzir a cláusula.
+  const PRIORIDADE_COMPARACAO_RELATIVA_PATTERN = /^(?:menor|maior)\s+que\b|^(?:acima|abaixo)\s+de\b/;
+
+  if (prioridade !== undefined && PRIORIDADE_COMPARACAO_RELATIVA_PATTERN.test(normalizeText(prioridade))) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_relativa_prioridade",
+      "Não consigo filtrar por prioridade relativa (\"menor que\"/\"maior que\"/\"acima de\"/\"abaixo de\") — só filtro por um valor exato. Pode perguntar por um valor de prioridade específico?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com prioridade Alta.\n"
+        + "- Tickets com prioridade Urgente.",
+    );
+  }
+
   if (detectaUniaoDePrioridades()) {
     return createClarificationDecision(
       "esclarecimento_uniao_prioridades",

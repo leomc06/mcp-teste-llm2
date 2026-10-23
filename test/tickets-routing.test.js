@@ -4666,3 +4666,18 @@ test("'2º trimestre' (forma numérica com indicador ordinal, achado testando co
   assert.equal(primeiro.intent, "listar_abertos");
   assert.notEqual(primeiro.entities.dataInicio, undefined);
 });
+
+test("comparação relativa de prioridade ('menor que'/'maior que'/'acima de'/'abaixo de', achado testando com dados reais) pede esclarecimento, em vez de virar um valor-lixo que nunca bate no catálogo", () => {
+  const menorQue = routeTicketQuestion("Quantos tickets o Fabio Gali tem com prioridade menor que Alta?");
+  assert.equal(menorQue.intent, "esclarecimento_comparacao_relativa_prioridade");
+
+  const maiorQue = routeTicketQuestion("Tickets com prioridade maior que Media.");
+  assert.equal(maiorQue.intent, "esclarecimento_comparacao_relativa_prioridade");
+
+  const acimaDe = routeTicketQuestion("Tickets com prioridade acima de Alta.");
+  assert.equal(acimaDe.intent, "esclarecimento_comparacao_relativa_prioridade");
+
+  // Controle: valor exato de prioridade continua funcionando normalmente.
+  const valorExato = routeTicketQuestion("Tickets com prioridade Alta.");
+  assert.equal(valorExato.entities.prioridade, "Alta");
+});
