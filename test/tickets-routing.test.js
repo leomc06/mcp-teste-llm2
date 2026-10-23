@@ -4681,3 +4681,61 @@ test("comparação relativa de prioridade ('menor que'/'maior que'/'acima de'/'a
   const valorExato = routeTicketQuestion("Tickets com prioridade Alta.");
   assert.equal(valorExato.entities.prioridade, "Alta");
 });
+
+test("comparação relativa de status ('maior que'/'menor que', achado testando com dados reais) pede esclarecimento, mesmo espelho do fix já aplicado em prioridade", () => {
+  const maiorQue = routeTicketQuestion("Tickets com status maior que aberto.");
+  assert.equal(maiorQue.intent, "esclarecimento_comparacao_relativa_status");
+
+  // Controle: valor exato de status continua funcionando normalmente.
+  const valorExato = routeTicketQuestion("Tickets com status Em atendimento.");
+  assert.equal(valorExato.entities.status, "Em atendimento");
+});
+
+test("'entre <mês> e <mês> de <ano>' (achado testando com dados reais) usa o ano explícito, em vez de sempre o ano atual", () => {
+  const comAno2025 = routeTicketQuestion("Tickets abertos entre janeiro e março de 2025.");
+  assert.deepEqual([comAno2025.entities.dataInicio, comAno2025.entities.dataFim], ["2025-01-01", "2025-03-31"]);
+
+  const comAno2024 = routeTicketQuestion("Tickets abertos entre fevereiro e abril de 2024.");
+  assert.deepEqual([comAno2024.entities.dataInicio, comAno2024.entities.dataFim], ["2024-02-01", "2024-04-30"]);
+
+  // Controle: sem ano explícito, continua assumindo o ano atual.
+  const semAno = routeTicketQuestion("Tickets abertos entre janeiro e março.");
+  assert.equal(semAno.entities.dataInicio, "2026-01-01");
+});
+
+test("'faz mais de N dias' (achado testando com dados reais) é reconhecida igual 'há mais de N dias'", () => {
+  const faz = routeTicketQuestion("Tickets abertos faz mais de 30 dias no departamento de SUPERCOMPUTAÇÃO.");
+  assert.equal(faz.entities.departamento, "SUPERCOMPUTAÇÃO");
+  assert.notEqual(faz.entities.dataFim, undefined);
+
+  // Controle: a forma já coberta antes ("há") dá exatamente o mesmo resultado.
+  const ha = routeTicketQuestion("Tickets abertos há mais de 30 dias no departamento de SUPERCOMPUTAÇÃO.");
+  assert.equal(faz.entities.dataFim, ha.entities.dataFim);
+});
+
+test("'Quem tem mais tickets, X ou Y?' (vírgula, sem a palavra operador, achado testando com dados reais) é lido como comparação de operador, em vez de perder os 2 nomes", () => {
+  const route = routeTicketQuestion("Quem tem mais tickets, o Fabio Gali ou o Diego Mota?");
+  assert.equal(route.intent, "comparar_carga_operador");
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_carga_operador", args: { operador: "Fabio Gali" } },
+    { toolName: "analisar_carga_operador", args: { operador: "Diego Mota" } },
+  ]);
+
+  // Controle: a forma já coberta antes (dois-pontos + "operador" explícito) continua igual.
+  const explicito = routeTicketQuestion("Quem tem mais tickets: o operador Fabio Gali ou o operador Diego Mota?");
+  assert.equal(explicito.intent, "comparar_carga_operador");
+
+  // Controle: citar outra dimensão explicitamente continua sendo rejeitado por este padrão
+  // (cai num esclarecimento de união, não numa comparação de operador errada).
+  const area = routeTicketQuestion("Quem tem mais tickets, a área WEB ou a área Suporte?");
+  assert.notEqual(area.intent, "comparar_carga_operador");
+});
+
+test("'X e Y têm juntos' (pedido de total combinado de 2 pessoas, achado testando com dados reais) pede esclarecimento, em vez de descartar os 2 nomes e listar o banco inteiro", () => {
+  const route = routeTicketQuestion("Quantos tickets o Fabio Gali e o Diego Mota têm juntos?");
+  assert.equal(route.intent, "esclarecimento_soma_duas_pessoas");
+
+  // Controle: pedir comparação (não soma) continua funcionando normalmente.
+  const comparacao = routeTicketQuestion("Compare a carga do Fabio Gali com a do Diego Mota.");
+  assert.equal(comparacao.intent, "comparar_carga_operador");
+});

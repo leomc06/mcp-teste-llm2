@@ -788,12 +788,18 @@ export function extractRelativeDateRange(text, agora = new Date()) {
 
   // "entre agosto e setembro" — intervalo de 2 meses soltos, sem dia nem
   // ano (diferente de TRAILING_DATE_CLAUSE_PATTERN/extractDateRange, que só
-  // cobre "entre X e Y" com data completa). Assume o ano corrente pros dois
-  // meses — não cobre o caso de o intervalo atravessar a virada do ano
-  // (ex.: "entre novembro e fevereiro").
+  // cobre "entre X e Y" com data completa). Assume o ano corrente quando
+  // nenhum é dito — não cobre o caso de o intervalo atravessar a virada do
+  // ano (ex.: "entre novembro e fevereiro").
+  // "(?:\\s+d[eo]\\s+(\\d{4}))?" (achado testando o lote de perguntas ao
+  // vivo, com dados reais): "entre janeiro e março DE 2025" tem um ano
+  // explícito no final, mas era descartado por completo — a data sempre
+  // usava o ano CORRENTE, mesmo quando um ano diferente foi claramente
+  // pedido ("entre fevereiro e abril de 2024" devolvia abril/2026, não
+  // 2024).
   const intervaloMesesMatch = text.match(
     new RegExp(
-      `\\bentre\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\s+e\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`,
+      `\\bentre\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\s+e\\s+(${NORMALIZED_MONTH_NAME_SOURCE})(?:\\s+d[eo]\\s+(\\d{4}))?\\b`,
       "iu",
     ),
   );
@@ -801,7 +807,7 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   if (intervaloMesesMatch) {
     const mesInicio = Number(MONTH_NUMBERS[intervaloMesesMatch[1].toLowerCase()]);
     const mesFim = Number(MONTH_NUMBERS[intervaloMesesMatch[2].toLowerCase()]);
-    const ano = agora.getFullYear();
+    const ano = intervaloMesesMatch[3] !== undefined ? Number(intervaloMesesMatch[3]) : agora.getFullYear();
 
     return {
       dataInicio: formatIsoDate(new Date(ano, mesInicio - 1, 1)),
@@ -929,8 +935,13 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // vivo): mesmo sentido de "há mais de N dias" (teto na data de abertura),
   // só com outro verbo — "considerando só os que PASSARAM DE 90 dias" não
   // batia em nenhuma forma aceita.
+  // "faz mais de" (achado testando o lote de perguntas ao vivo, com dados
+  // reais): sinônimo tão comum quanto "há mais de" na fala cotidiana
+  // ("Tickets abertos FAZ MAIS DE 30 dias...") — sem ele, o período inteiro
+  // era ignorado em silêncio (nem data nem erro nenhum), diferente da forma
+  // já aceita "há mais de", que funciona normalmente pro mesmo sentido.
   const haMaisDeMatch = text.match(
-    /\b(?:ha\s+mais\s+de|passou\s+de|passaram\s+de)\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu,
+    /\b(?:ha\s+mais\s+de|faz\s+mais\s+de|passou\s+de|passaram\s+de)\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu,
   );
 
   if (haMaisDeMatch) {
@@ -1081,7 +1092,7 @@ const TRAILING_NAMED_MONTH_SINCE_CLAUSE_PATTERN = new RegExp(
 // período relativo em aberto que extractRelativeDateRange também passou a
 // reconhecer.
 const TRAILING_HA_MAIS_DE_CLAUSE_PATTERN =
-  /\s+(?:h[áa]\s+mais\s+de|passou\s+de|passaram\s+de)\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
+  /\s+(?:h[áa]\s+mais\s+de|faz\s+mais\s+de|passou\s+de|passaram\s+de)\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b.*$/iu;
 
 // "fechados pelo Carlos EM MENOS DE 1 DIA" (achado testando o lote de
 // perguntas ao vivo): limiar de duração de RESOLUÇÃO (não suportado —
@@ -2720,6 +2731,24 @@ export function extractOperatorComparisonNames(value) {
         + `(?:o\\s+)?operador\\s+(.+?)\\s+ou\\s+(?:o\\s+)?operador\\s+(.+)$`,
       "iu",
     ),
+    // "Quem tem mais tickets, o Fabio Gali ou o Diego Mota?" (achado
+    // testando o lote de perguntas ao vivo, com dados reais): forma BARE,
+    // com VÍRGULA (não dois-pontos) e SEM a palavra "operador" nos 2
+    // lados — mesmo raciocínio já aplicado à forma "compare os tickets do
+    // X com os do Y" acima: default pra comparação de OPERADOR, a menos
+    // que os guards de cliente/área/departamento mais abaixo rejeitem o
+    // match por citar outra dimensão explicitamente. Sem este padrão, os 2
+    // nomes eram perdidos por completo (a pergunta caía em resumo_por_
+    // operador SEM NENHUM filtro, mostrando todos os operadores em vez de
+    // comparar só os 2 citados). "[,:]?" (vírgula OU dois-pontos, ambos
+    // opcionais) — a forma com vírgula é tão comum na fala quanto a forma
+    // com dois-pontos já aceita no padrão irmão acima.
+    new RegExp(
+      `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
+        + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*[,:]?\\s*`
+        + `(?:o\\s+)?(.+?)\\s+ou\\s+(?:o\\s+)?(.+)$`,
+      "iu",
+    ),
     // "Compare os tickets do Fabio Gali com os do Diego Mota." (achado
     // testando o lote de perguntas ao vivo, com dados reais): forma BARE
     // mencionando só "tickets", sem NENHUMA palavra de dimensão (operador/
@@ -3409,6 +3438,25 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Tickets com status Em estudo.\n"
         + "- Tickets com status Em atendimento.",
+    );
+  }
+
+  // "status maior que aberto"/"status menor que encerrado" (achado testando
+  // o lote de perguntas ao vivo, com dados reais): mesma comparação RELATIVA
+  // já corrigida pra prioridade (ver PRIORIDADE_COMPARACAO_RELATIVA_PATTERN
+  // mais abaixo) — status também é um valor de catálogo exato, nenhuma tool
+  // filtra por "maior/menor que um valor". Sem este guard, a cláusula
+  // virava um valor-lixo (status: "maior que"), que nunca bate no catálogo
+  // real e devolve silenciosamente "nenhum ticket encontrado".
+  const STATUS_COMPARACAO_RELATIVA_PATTERN = /^(?:menor|maior)\s+que\b|^(?:acima|abaixo)\s+de\b/;
+
+  if (status !== undefined && STATUS_COMPARACAO_RELATIVA_PATTERN.test(normalizeText(status))) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_relativa_status",
+      "Não consigo filtrar por status relativo (\"menor que\"/\"maior que\"/\"acima de\"/\"abaixo de\") — só filtro por um valor exato de status. Pode perguntar por um status específico?"
+        + "\n\nExemplos:\n"
+        + "- Tickets com status Em atendimento.\n"
+        + "- Tickets com status Aguardando atendimento.",
     );
   }
 
@@ -4253,6 +4301,30 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Quantos tickets o cliente Fabio Gali tem?\n"
         + "- Resumo de tickets por cliente.",
+    );
+  }
+
+  // "Quantos tickets o Fabio Gali e o Diego Mota têm juntos?" (achado
+  // testando o lote de perguntas ao vivo, com dados reais): pedido de TOTAL
+  // COMBINADO de 2 pessoas — diferente de pedir uma COMPARAÇÃO (que já tem
+  // suporte via "compare"/"quem tem mais"), aqui ninguém pede pra comparar,
+  // só somar os 2 num total só. Nenhuma tool soma 2 operadores/clientes
+  // numa resposta (analisar_carga_operador/analisar_atividade_cliente
+  // trabalham 1 de cada vez) — sem este guard, os 2 nomes eram descartados
+  // em silêncio e a pergunta caía numa listagem SEM FILTRO NENHUM (banco
+  // inteiro), como se o pedido tivesse sido atendido.
+  const SOMA_DUAS_PESSOAS_PATTERN = new RegExp(
+    `\\b(?:tickets?|chamados?|atendimentos?)\\s+(?:o\\s+|a\\s+)?${NOME_PROPRIO_SOURCE}\\s+e\\s+(?:o\\s+|a\\s+)?${NOME_PROPRIO_SOURCE}\\s+t[êe]m\\b[^?!.]*\\b(?:juntos?|no\\s+total|ao\\s+todo|somados?)\\b`,
+    "u",
+  );
+
+  if (SOMA_DUAS_PESSOAS_PATTERN.test(pergunta)) {
+    return createClarificationDecision(
+      "esclarecimento_soma_duas_pessoas",
+      "Não consigo somar o total de 2 pessoas numa resposta só — só mostro a carga/atividade de cada uma separadamente, ou comparo as duas lado a lado. Pode perguntar de um dos 2 jeitos?"
+        + "\n\nExemplos:\n"
+        + "- Qual a carga do operador Fulano?\n"
+        + "- Compare a carga do operador Fulano com a do operador Beltrano.",
     );
   }
 
