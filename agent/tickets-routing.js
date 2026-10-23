@@ -475,6 +475,28 @@ function startOfWeek(date) {
   return resultado;
 }
 
+// "2º trimestre de 2025" (achado testando o lote de perguntas ao vivo):
+// forma NUMÉRICA com indicador ordinal ("º"/"ª"), tão comum em relatórios
+// quanto a forma por extenso ("segundo trimestre") — sem essa alternativa,
+// nem a data era calculada nem a cláusula era podada do nome capturado de
+// outra dimensão qualquer (ex.: "Tickets fechados pelo Telmo Claudinei
+// Machado no 2º trimestre de 2025." vazava a cláusula de data inteira pro
+// nome do operador). Compartilhada entre extractRelativeDateRange (abaixo)
+// e TRAILING_RELATIVE_DATE_CLAUSE_PATTERN (mais abaixo no arquivo), pra não
+// duplicar esse vocabulário em 2 lugares com risco de divergir.
+const TRIMESTRE_ORDINAL_SOURCE = "primeiro|segundo|terceiro|quarto|[1-4]\\s*[ºª]";
+
+function parseTrimestreOrdinal(ordinalBruto) {
+  const ORDINAL_TRIMESTRE_POR_EXTENSO = { primeiro: 0, segundo: 1, terceiro: 2, quarto: 3 };
+  const chave = ordinalBruto.toLowerCase();
+
+  if (Object.hasOwn(ORDINAL_TRIMESTRE_POR_EXTENSO, chave)) {
+    return ORDINAL_TRIMESTRE_POR_EXTENSO[chave];
+  }
+
+  return Number(chave.replace(/\s*[ºª]\s*$/u, "")) - 1;
+}
+
 // Datas relativas ("essa semana", "hoje", "mês passado" etc.) não têm um
 // token de data explícito — calculadas a partir do momento da pergunta.
 // `agora` é parametrizável só para permitir teste determinístico.
@@ -706,12 +728,11 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // ano" caía inteiro no fallback de "esse ano" (ano inteiro), perdendo o
   // recorte de trimestre por completo.
   const trimestreNumeradoMatch = text.match(
-    /\b(primeiro|segundo|terceiro|quarto)\s+trimestre(?:\s+d[eo]\s+(\d{4})|\s+(?:d|n)?(?:esse|este)\s+ano|\s+do\s+ano\s+passado)?\b/iu,
+    new RegExp(`\\b(${TRIMESTRE_ORDINAL_SOURCE})\\s*trimestre(?:\\s+d[eo]\\s+(\\d{4})|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?\\b`, "iu"),
   );
 
   if (trimestreNumeradoMatch) {
-    const ORDINAL_TRIMESTRE = { primeiro: 0, segundo: 1, terceiro: 2, quarto: 3 };
-    const trimestreNumero = ORDINAL_TRIMESTRE[trimestreNumeradoMatch[1].toLowerCase()];
+    const trimestreNumero = parseTrimestreOrdinal(trimestreNumeradoMatch[1]);
     const ano = trimestreNumeradoMatch[2] !== undefined
       ? Number(trimestreNumeradoMatch[2])
       : /\bdo\s+ano\s+passado\b/.test(trimestreNumeradoMatch[0])
@@ -1023,7 +1044,7 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+semestre|semestre\\s+passado|[úu]ltimo\\s+semestre"
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
-    + "|(?:primeiro|segundo|terceiro|quarto)\\s+trimestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?"
+    + `|(?:${TRIMESTRE_ORDINAL_SOURCE})\\s*trimestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?`
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
   "iu",
 );
@@ -4801,6 +4822,32 @@ function routeTicketQuestionCore(pergunta) {
       "Não consigo filtrar nem agrupar tickets por canal de atendimento hoje — só consigo listar os canais que existem no catálogo. Pode perguntar usando outro filtro (status, área, departamento, operador, cliente ou período)?"
         + "\n\nExemplos:\n"
         + "- Quais canais de ticket existem?\n"
+        + "- Tickets abertos na área Suporte.",
+    );
+  }
+
+  // "Tickets com mais de 2 comentários." (achado testando o lote de
+  // perguntas ao vivo): comentários/anexos são campos reais de CADA ticket
+  // (buscar_ticket_por_numero devolve comments_count/attachments_count),
+  // mas nenhuma tool filtra NEM agrupa por essa quantidade — mesmo motivo
+  // de "canal" acima (dimensão real do domínio, sem suporte de filtro).
+  // Sem este guard, a cláusula inteira era descartada em silêncio e a
+  // pergunta caía numa listagem SEM FILTRO NENHUM, como se "mais de 2
+  // comentários" tivesse sido entendido e aplicado.
+  const COMENTARIO_ANEXO_FILTRO_SOURCE = "(?:coment[áa]rios?|anexos?)";
+  const mencionaComentarioOuAnexoComoFiltro = new RegExp(
+    `\\b(?:mais|menos)\\s+de\\s+\\d+\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
+      + `|\\bcom\\s+\\d+\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
+      + `|\\bsem\\s+(?:nenhum\\s+)?${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`,
+    "u",
+  ).test(text);
+
+  if (mencionaComentarioOuAnexoComoFiltro) {
+    return createClarificationDecision(
+      "esclarecimento_comentario_anexo_nao_suportado",
+      "Não consigo filtrar nem agrupar tickets pela quantidade de comentários ou anexos hoje — isso só aparece no detalhe de um ticket específico. Pode perguntar usando outro filtro (status, área, departamento, operador, cliente ou período), ou pelo detalhe de um ticket específico?"
+        + "\n\nExemplos:\n"
+        + "- Busque o ticket 4830.\n"
         + "- Tickets abertos na área Suporte.",
     );
   }

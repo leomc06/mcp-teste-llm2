@@ -4640,3 +4640,29 @@ test("'semestre' (achado testando com dados reais) é reconhecido como período,
   const semSemestre = routeTicketQuestion("Quantos tickets o departamento de Governança tem nesse mes?");
   assert.equal(semSemestre.entities.departamento, "Governança");
 });
+
+test("filtrar/agrupar por quantidade de comentários ou anexos (achado testando com dados reais) pede esclarecimento, em vez de descartar o filtro em silêncio", () => {
+  const comentarios = routeTicketQuestion("Tickets com mais de 2 comentários.");
+  assert.equal(comentarios.intent, "esclarecimento_comentario_anexo_nao_suportado");
+
+  const anexos = routeTicketQuestion("Tickets sem anexos.");
+  assert.equal(anexos.intent, "esclarecimento_comentario_anexo_nao_suportado");
+
+  // Controle: uma busca de texto livre que mencione "comentário" incidentalmente continua normal.
+  const buscaLivre = routeTicketQuestion("Busque tickets sobre problema no comentário do usuário.");
+  assert.notEqual(buscaLivre.intent, "esclarecimento_comentario_anexo_nao_suportado");
+});
+
+test("'2º trimestre' (forma numérica com indicador ordinal, achado testando com dados reais) é reconhecida igual à forma por extenso 'segundo trimestre'", () => {
+  const numerico = routeTicketQuestion("Tickets fechados pelo Telmo Claudinei Machado no 2º trimestre de 2025.");
+  assert.equal(numerico.entities.operador, "Telmo Claudinei Machado");
+  assert.deepEqual([numerico.entities.dataInicio, numerico.entities.dataFim], ["2025-04-01", "2025-06-30"]);
+
+  // Controle: a forma por extenso já coberta antes dá exatamente a mesma data.
+  const porExtenso = routeTicketQuestion("Segundo trimestre de 2025.");
+  assert.deepEqual([porExtenso.entities.dataInicio, porExtenso.entities.dataFim], ["2025-04-01", "2025-06-30"]);
+
+  const primeiro = routeTicketQuestion("Tickets abertos no 1º trimestre.");
+  assert.equal(primeiro.intent, "listar_abertos");
+  assert.notEqual(primeiro.entities.dataInicio, undefined);
+});
