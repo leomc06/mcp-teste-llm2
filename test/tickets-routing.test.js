@@ -4550,3 +4550,47 @@ test("'prioridade X ou Y' em forma compacta, com a palavra prioridade dita só 1
   const formaRepetida = routeTicketQuestion("Tickets urgentes e de alta prioridade.");
   assert.equal(formaRepetida.intent, "esclarecimento_uniao_prioridades");
 });
+
+test("'primeiro trimestre' (ordinal de trimestre, achado testando com dados reais) não colide com o pedido de 'só o 1º ticket' (isBareOldestOverallIntent)", () => {
+  const comAno = routeTicketQuestion("Tickets abertos no primeiro trimestre de 2025.");
+  assert.equal(comAno.intent, "listar_abertos");
+  assert.equal(comAno.entities.limite, undefined);
+  assert.deepEqual([comAno.entities.dataInicio, comAno.entities.dataFim], ["2025-01-01", "2025-03-31"]);
+
+  const semAno = routeTicketQuestion("Tickets abertos no primeiro trimestre.");
+  assert.equal(semAno.intent, "listar_abertos");
+  assert.equal(semAno.entities.limite, undefined);
+
+  // Controle: a forma já coberta antes ("primeiro" sozinho, sem "trimestre") continua igual.
+  const semTrimestre = routeTicketQuestion("Primeiro ticket que a Sabrina Mariotto abriu.");
+  assert.equal(semTrimestre.intent, "listar_mais_antigos");
+  assert.equal(semTrimestre.entities.limite, 1);
+});
+
+test("'N piores/melhores clientes' (achado testando com dados reais) é lido como ranking por cliente, igual ao já suportado para operador", () => {
+  const piores = routeTicketQuestion("Quais os 2 piores clientes em volume de chamados essa semana?");
+  assert.equal(piores.intent, "resumo_por_cliente");
+  assert.equal(piores.entities.limite, 2);
+  assert.equal(piores.entities.ordem, "asc");
+
+  const melhores = routeTicketQuestion("Quais os 2 melhores clientes em volume de chamados?");
+  assert.equal(melhores.intent, "resumo_por_cliente");
+  assert.equal(melhores.entities.limite, 2);
+  assert.equal(melhores.entities.ordem, undefined);
+
+  // Controle: a forma já coberta antes (operador) continua igual.
+  const operador = routeTicketQuestion("Lista os 3 piores operadores em atendimento esse mês.");
+  assert.equal(operador.intent, "resumo_por_operador");
+});
+
+test("'<nome> atendidos <resto da frase>' (achado testando com dados reais) não inclui o verbo 'atendidos' dentro do nome capturado", () => {
+  const route = routeTicketQuestion(
+    "Tickets do operador Darío Gerardo Fantini atendidos na área Infraestrutura Científica.",
+  );
+  assert.equal(route.entities.operador, "Darío Gerardo Fantini");
+  assert.equal(route.entities.area, "Infraestrutura Científica");
+
+  // Controle: nome sem a cláusula "atendidos" continua igual.
+  const semClausula = routeTicketQuestion("Tickets do operador Fabio Gali.");
+  assert.equal(semClausula.entities.operador, "Fabio Gali");
+});

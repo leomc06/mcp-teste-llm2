@@ -216,6 +216,15 @@ const CLOSURE_VERB_SOURCE =
 // concluiu quantos chamados" → só "WEB").
 const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(`\\s+${CLOSURE_VERB_SOURCE}\\b.*$`, "iu");
 
+// "atendido(s)/atendida(s)" no meio da captura (achado testando o lote de
+// perguntas ao vivo, com dados reais): "Tickets do operador X ATENDIDOS na
+// área Y." usa "atendidos" em concordância com o substantivo implícito
+// "tickets" (não faz parte do nome do operador) — sem podar essa cláusula,
+// "atendidos na área Y" inteiro vazava pro nome capturado (operador: "X
+// atendidos"). Mesmo formato de TRAILING_RESOLVED_CLAUSE_PATTERN acima
+// (poda da palavra até o fim da frase, não só até o próximo espaço).
+const TRAILING_HANDLED_CLAUSE_PATTERN = /\s+atendid[oa]s?\b.*$/iu;
+
 // Mesma ideia do padrão acima, mas pro verbo de CRIAÇÃO (voz passiva "foi/
 // foram aberto(s)"), não de fechamento — reaproveitado também por
 // isCreationPassive mais abaixo, pra não duplicar o vocabulário em 2
@@ -1213,6 +1222,11 @@ function cleanFreeText(value) {
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
     .replace(TRAILING_FORMAT_CLAUSE_PATTERN, "")
     .replace(TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN, "")
+    // Depois de TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN de propósito: "mas
+    // atendidos por outro operador" precisa ser podado inteiro primeiro
+    // (cláusula mais específica), senão esse pattern genérico ("atendidos"
+    // solto) comeria só o "atendidos" e deixaria o "mas" órfão pra trás.
+    .replace(TRAILING_HANDLED_CLAUSE_PATTERN, "")
     .replace(TRAILING_TELL_ME_WHO_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
@@ -4436,6 +4450,18 @@ function routeTicketQuestionCore(pergunta) {
     "u",
   ).test(text);
 
+  // Mesma ideia de isWorstBestOperatorRankingIntent acima, mas pra CLIENTE
+  // (achado testando o lote de perguntas ao vivo, com dados reais): "Quais
+  // os 2 piores clientes em volume de chamados essa semana?" não batia em
+  // nenhum gatilho de resumo (mentionsClienteDimension só reconhece a forma
+  // "cliente com mais/menos tickets", substantivo ANTES do cue de ranking —
+  // não "piores clientes", adjetivo ANTES) — a pergunta inteira caía num
+  // listar_tickets genérico, sem ranking nem filtro de cliente nenhum.
+  const isWorstBestClienteRankingIntent = new RegExp(
+    `\\b(?:pior(?:es)?|melhor(?:es)?)\\s+(?:${CLIENT_LOOKUP_NOUN_SOURCE})(?:es|s)?\\b`,
+    "u",
+  ).test(text);
+
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -4447,7 +4473,8 @@ function routeTicketQuestionCore(pergunta) {
     || formatoPreferido !== undefined
     || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text)
     || mentionsAnyDimensionConnector
-    || isWorstBestOperatorRankingIntent;
+    || isWorstBestOperatorRankingIntent
+    || isWorstBestClienteRankingIntent;
 
   // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
   // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
@@ -4680,7 +4707,7 @@ function routeTicketQuestionCore(pergunta) {
   // até o fallback final de listagem comum, filtrada pelo cliente, que já é
   // uma resposta honesta e útil (cliente não tem um catálogo pequeno fixo
   // como os outros, então "agrupar por outra dimensão" não seria natural).
-  if (hasResumoIntent && mentionsClienteDimension && cliente === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("cliente")) {
+  if (hasResumoIntent && (mentionsClienteDimension || isWorstBestClienteRankingIntent) && cliente === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("cliente")) {
     const decision = createTicketDecision(
       "resumo_por_cliente",
       "resumo_tickets_por_cliente",
@@ -4944,8 +4971,15 @@ function routeTicketQuestionCore(pergunta) {
   // abriu" não batia no padrão acima (não tem dígito nenhum) e caía inteiro
   // no fallback de listagem sem filtro nenhum. Mesmo sentido (mais antigo,
   // não mais recente) do caso com número, só que pedindo exatamente 1.
+  // "(?!\\s+trimestres?\\b)" (achado testando o lote de perguntas ao vivo,
+  // com dados reais): "Tickets abertos no PRIMEIRO TRIMESTRE de 2025." usa
+  // "primeiro" como ORDINAL DE TRIMESTRE (ver trimestreNumeradoMatch em
+  // extractDateRange), não como pedido de "só o 1º ticket" — sem essa
+  // exclusão, a pergunta inteira era sequestrada pra isOldestOverallIntent
+  // (limite:1, TODOS os status, ignorando o filtro "abertos"), perdendo o
+  // recorte de trimestre e o filtro de situação por completo.
   const isBareOldestOverallIntent =
-    !isOldestOverallWithCountIntent && /\bprimeir[oa]\b/.test(text);
+    !isOldestOverallWithCountIntent && /\bprimeir[oa]\b(?!\s+trimestres?\b)/.test(text);
 
   // "mais antigo" SEM "aberto" (ver mentionsMaisAntigo/isOldestOpenIntent
   // acima) também entra aqui — é o mesmo pedido de "TODOS os status" que o
