@@ -4473,3 +4473,80 @@ test("'cliente <nome.sobrenome>' (sem @, achado testando com dados reais) preser
   const semPonto = routeTicketQuestion("Tickets do cliente Fabio Gali.");
   assert.equal(semPonto.entities.cliente, "Fabio Gali");
 });
+
+test("'cliente <email>' sem a palavra e-mail antes (achado testando com dados reais) preserva o endereço inteiro, não só o prefixo antes do @", () => {
+  const route = routeTicketQuestion("Tickets do cliente renato.ferreira@inpe.br.");
+  assert.equal(route.entities.cliente, "renato.ferreira@inpe.br");
+
+  const solicitante = routeTicketQuestion("Tickets do solicitante renato.ferreira@inpe.br.");
+  assert.equal(solicitante.entities.cliente, "renato.ferreira@inpe.br");
+
+  // Controle: a forma antiga ("e-mail do cliente X") continua funcionando.
+  const comPalavraEmail = routeTicketQuestion("Tickets com o e-mail renato.ferreira@inpe.br.");
+  assert.equal(comPalavraEmail.entities.cliente, "renato.ferreira@inpe.br");
+});
+
+test("'Compare os tickets do X com os do Y' (achado testando com dados reais) é lido como comparação de operador, em vez de virar um filtro-lixo que engole os 2 nomes", () => {
+  const route = routeTicketQuestion("Compare os tickets do Fabio Gali com os do Diego Mota.");
+  assert.equal(route.intent, "comparar_carga_operador");
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_carga_operador", args: { operador: "Fabio Gali" } },
+    { toolName: "analisar_carga_operador", args: { operador: "Diego Mota" } },
+  ]);
+
+  // Controle: a forma já coberta antes de operador/cliente com a palavra de
+  // dimensão explícita continua funcionando igual (o novo padrão bare só
+  // entra em jogo quando NENHUMA das 2 formas acima bate antes dele).
+  const comOperadorExplicito = routeTicketQuestion(
+    "Compare os tickets do operador Fabio Gali com os do operador Diego Mota.",
+  );
+  assert.equal(comOperadorExplicito.intent, "comparar_carga_operador");
+});
+
+test("'excluindo os operadores X, Y e Z' com nomes reais de 3+ palavras ligadas por 'de'/'da' (achado testando com dados reais) dispara o esclarecimento de negação, em vez de ser ignorado em silêncio", () => {
+  const route = routeTicketQuestion(
+    "Tickets abertos, excluindo os operadores Cesar Augusto de Mello, Bruno de Souza Castro e João Pedro Guimarães.",
+  );
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: a forma já coberta antes (nomes sem conector no meio) continua igual.
+  const semConector = routeTicketQuestion("Tickets abertos, sem contar o Fabio Gali e o Diego Mota.");
+  assert.equal(semConector.intent, "esclarecimento_negacao");
+});
+
+test("status literal de 2+ palavras ('em atendimento' etc., achado testando com dados reais) não vaza pro campo operador em pergunta de ranking", () => {
+  const route = routeTicketQuestion("Qual o pior operador em atendimento esse mês?");
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.status, "Em atendimento");
+
+  // Controles: status literal continua resolvendo normalmente fora de ranking.
+  const statusSolto = routeTicketQuestion("Tickets com status Em atendimento.");
+  assert.equal(statusSolto.entities.status, "Em atendimento");
+
+  const statusComposto = routeTicketQuestion("Tickets encaminhados para operador.");
+  assert.equal(statusComposto.entities.status, "Encaminhado para operador");
+  assert.equal(statusComposto.entities.operador, undefined);
+});
+
+test("'cujo cliente é X' (achado testando com dados reais) não inclui o verbo 'é' dentro do nome capturado", () => {
+  const route = routeTicketQuestion("Tickets cujo cliente é Vanessa Ventura, no departamento SYSADMIN.");
+  assert.equal(route.entities.cliente, "Vanessa Ventura");
+  assert.equal(route.entities.departamento, "SYSADMIN");
+
+  // Controle: a forma já coberta antes (sem "cujo"/"é") continua igual.
+  const semCujo = routeTicketQuestion("Tickets do cliente Vanessa Ventura.");
+  assert.equal(semCujo.entities.cliente, "Vanessa Ventura");
+});
+
+test("'prioridade X ou Y' em forma compacta, com a palavra prioridade dita só 1 vez (achado testando com dados reais), pede esclarecimento de união em vez de virar um valor-lixo", () => {
+  const route = routeTicketQuestion("Tickets com prioridade Urgente ou Alta.");
+  assert.equal(route.intent, "esclarecimento_uniao_prioridades");
+
+  // Controles: 1 só nível continua indo direto pro filtro, e a forma já
+  // coberta antes ("urgentes e de alta prioridade") continua funcionando.
+  const umSoNivel = routeTicketQuestion("Tickets com prioridade Alta.");
+  assert.equal(umSoNivel.entities.prioridade, "Alta");
+
+  const formaRepetida = routeTicketQuestion("Tickets urgentes e de alta prioridade.");
+  assert.equal(formaRepetida.intent, "esclarecimento_uniao_prioridades");
+});

@@ -1550,7 +1550,18 @@ export function extractMultipleTicketNumbers(value) {
 // tentar resolver quem são de verdade. Contra o texto CRU (não normalizado),
 // de propósito: capitalização é o único sinal barato de "isto é um nome
 // próprio" disponível aqui.
-const NOME_PROPRIO_SOURCE = "\\p{Lu}[\\p{L}.]*(?:\\s+\\p{Lu}[\\p{L}.]*)*";
+// "(?:(?:de|da|do|dos|das)\\s+)?" entre as palavras (achado testando o lote
+// de perguntas ao vivo, com dados reais): nomes compostos reais do sistema
+// têm conector minúsculo NO MEIO do próprio nome ("Cesar Augusto DE Mello",
+// "Bruno DE Souza Castro") — sem essa alternativa opcional, a sequência de
+// maiúsculas quebrava bem antes da vírgula/"e" que de fato separa a lista
+// ("Cesar Augusto" já fechava o nome, e o "de Mello" sobrando não batia em
+// nada), e a exclusão inteira (2+ nomes) nunca disparava. "e" (conjunção da
+// lista) não entra nessa lista de conectores de propósito — teria o efeito
+// oposto, impedindo o reconhecimento de ONDE a lista realmente termina.
+const NOME_PROPRIO_CONECTOR_SOURCE = "(?:de|da|do|dos|das)";
+const NOME_PROPRIO_SOURCE =
+  `\\p{Lu}[\\p{L}.]*(?:\\s+(?:${NOME_PROPRIO_CONECTOR_SOURCE}\\s+)?\\p{Lu}[\\p{L}.]*)*`;
 
 // "sem contar o Fabio Gali e o Diego Mota" (achado testando o lote de
 // perguntas ao vivo): negação de 2+ NOMES PRÓPRIOS específicos — diferente
@@ -1758,6 +1769,31 @@ export function extractDepartmentName(value) {
 // operador fantasma. Valores escolhidos à mão (igual "fornecedor"/
 // "sistema" acima) porque o catálogo de canais vem de uma API dinâmica
 // (/meta/channels), sem uma lista fixa no código pra reaproveitar aqui.
+// Frases literais de status com 2+ palavras (mesmo vocabulário de
+// STATUS_LITERAL_PATTERNS, acima — duplicado aqui de propósito: aquela lista
+// casa contra texto NORMALIZADO, enquanto as exclusões de operador abaixo
+// casam contra texto CRU, com acento/caixa variável) — achado testando o
+// lote de perguntas ao vivo: "Qual o PIOR OPERADOR EM ATENDIMENTO esse
+// mês?" perdia "pior" (já excluído), mas "em atendimento" (o status, já
+// capturado certo à parte por extractLiteralStatus) vazava TAMBÉM pro
+// operador ("operador: em atendimento"), nome-lixo que nunca bate no
+// catálogo e ainda briga com o filtro de status já certo. Só as frases de
+// 2+ palavras entram aqui — status de 1 palavra só (ex.: "cancelado") já
+// têm cobertura própria mais abaixo nesta mesma lista.
+const STATUS_LITERAL_PHRASE_SOURCE =
+  "aguardando\\s+atendimento\\b"
+  + "|n[ãa]o\\s+atendid[oa]s?\\b"
+  + "|em\\s+andamento\\b|em\\s+atendimento\\b|em\\s+estudo\\b"
+  + "|agendad[oa]s?\\s+com\\s+(?:o\\s+)?usu[áa]rio\\b"
+  + "|aguardando\\s+feedback\\b"
+  + "|indispon[íi]vel\\s+para\\s+atendimento\\b"
+  + "|encaminhad[oa]s?\\s+para\\s+(?:o\\s+)?operador\\b"
+  + "|interrompid[oa]s?\\s+para\\s+atender\\s+outro\\s+chamado\\b"
+  + "|aguardando\\s+retorno\\s+do\\s+fornecedor\\b"
+  + "|reservad[oa]s?\\s+para\\s+(?:o\\s+)?operador\\b"
+  + "|aguardando\\s+aprova[çc][ãa]o\\b"
+  + "|aguardando\\s+rdm\\b";
+
 const OPERATOR_BY_EXCLUSION_SOURCE =
   "status\\b|prioridade\\b|[áa]rea\\b|categoria\\b|equipe\\b|setor\\b|departamento\\b|cliente\\b|solicitante\\b|operador\\b|p[áa]gina\\b|usu[áa]rio\\b"
   + "|fornecedor\\b|prazo\\b|sla\\b|canal\\b|e-?mail\\b|telefone\\b|whatsapp\\b|chat\\b"
@@ -1770,7 +1806,8 @@ const OPERATOR_BY_EXCLUSION_SOURCE =
   + "|pior(?:es)?\\b|melhor(?:es)?\\b"
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
   + "|manh[ãa](?![\\p{L}\\p{N}])|tarde\\b|noite\\b"
-  + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b";
+  + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b"
+  + `|${STATUS_LITERAL_PHRASE_SOURCE}`;
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
 
@@ -1945,6 +1982,21 @@ export function extractOperatorName(value) {
 const EMAIL_CLIENTE_PATTERN =
   /\be-?mails?\s+(?:d[oe]\s+)?(?:cliente\s+)?([\w.+-]+@[\w.-]+\.[a-z]{2,})\b/iu;
 
+// "Tickets do cliente renato.ferreira@inpe.br." (achado testando o lote de
+// perguntas ao vivo, com dados reais): mesmo dado real do padrão acima, mas
+// sem a palavra "e-mail" antes — só "cliente"/"solicitante" direto seguido
+// do endereço. EMAIL_CLIENTE_PATTERN não dispara (exige "e-mail"/"email"
+// explícito) e DOTTED_CLIENTE_PATTERN (abaixo) não reconhece "@" (só
+// "\w+(?:\.\w+)+"), então o endereço batia só até o "@" e perdia o domínio
+// inteiro (cliente: "renato.ferreira" em vez de "renato.ferreira@inpe.br")
+// — por sorte o substring ainda batia só nesse contato nos dados reais,
+// mas o filtro ficava ambíguo/errado em geral (poderia colidir com outro
+// contato cujo prefixo batesse no mesmo substring).
+const CLIENTE_EMAIL_PATTERN = new RegExp(
+  `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+([\\w.+-]+@[\\w.-]+\\.[a-z]{2,})\\b`,
+  "iu",
+);
+
 // "Tickets do cliente fabio.gali." (achado testando o lote de perguntas ao
 // vivo, com dados reais): variante do mesmo problema do e-mail acima, mas
 // sem "@" — vários clientes reais existem só como "nome.sobrenome" (sem
@@ -1976,6 +2028,12 @@ export function extractClientName(value) {
     return emailMatch[1];
   }
 
+  const clienteEmailMatch = text.match(CLIENTE_EMAIL_PATTERN);
+
+  if (clienteEmailMatch) {
+    return clienteEmailMatch[1];
+  }
+
   const dottedMatch = text.match(DOTTED_CLIENTE_PATTERN);
 
   if (dottedMatch) {
@@ -1990,8 +2048,18 @@ export function extractClientName(value) {
     // literal) — faltavam aqui. "Tickets SEM CLIENTE DEFINIDO." virava
     // cliente: "definido"; "Resumo por cliente E POR OPERADOR." virava
     // cliente: "e por operador".
+    // "(?:é\\s+)?" logo antes da captura (achado testando o lote de
+    // perguntas ao vivo, com dados reais): "Tickets CUJO CLIENTE É Vanessa
+    // Ventura..." tem o verbo "é" entre a palavra "cliente" e o nome de
+    // verdade — sem pular esse verbo, ele virava parte do nome capturado
+    // (cliente: "é Vanessa Ventura"). Só o "é" ACENTUADO entra aqui — "e"
+    // sem acento é a CONJUNÇÃO já tratada por DIMENSION_CONNECTOR_LEAK_
+    // SOURCE logo abaixo ("cliente E POR operador"), que depende do "e"
+    // continuar colado à cláusula pra ser reconhecida; aceitar "e" aqui
+    // também destruiria essa detecção (consumiria o "e" antes do lookahead
+    // enxergar a cláusula inteira).
     new RegExp(
-      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?`
+      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?:é\\s+)?`
         + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
         + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
       "iu",
@@ -2301,6 +2369,17 @@ const PRIORITY_LEVEL_UNIAO_PATTERNS = [
   ],
 ];
 
+// "Tickets com prioridade Urgente ou Alta." (achado testando o lote de
+// perguntas ao vivo): forma COMPACTA de união, com um nível de cada lado do
+// conector "e"/"ou" e a palavra "prioridade" dita só 1 vez — testado contra
+// o VALOR JÁ CAPTURADO por extractPriorityName (normalizado), não contra a
+// frase inteira, por isso não reaproveita priorityLevelSource (que exige a
+// palavra "prioridade" adjacente a cada nível).
+const PRIORIDADE_NIVEL_PLANO_SOURCE = "(?:baixa|media|alta|urgentes?)";
+const PRIORIDADE_UNIAO_COMPACTA_PATTERN = new RegExp(
+  `^${PRIORIDADE_NIVEL_PLANO_SOURCE}\\s+(?:e|ou)\\s+(?:de\\s+)?${PRIORIDADE_NIVEL_PLANO_SOURCE}\\b`,
+);
+
 // Achado testando o lote de perguntas ao vivo — Complexas 1, pergunta 14:
 // "sem prioridade DEFINIDA" não é um nome de prioridade de verdade, é um
 // jeito de perguntar se o campo está vazio — mas a captura (.+) gananciosa
@@ -2557,6 +2636,29 @@ export function extractOperatorComparisonNames(value) {
       `\\bquem\\s+tem\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)`
         + `\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
         + `(?:o\\s+)?operador\\s+(.+?)\\s+ou\\s+(?:o\\s+)?operador\\s+(.+)$`,
+      "iu",
+    ),
+    // "Compare os tickets do Fabio Gali com os do Diego Mota." (achado
+    // testando o lote de perguntas ao vivo, com dados reais): forma BARE
+    // mencionando só "tickets", sem NENHUMA palavra de dimensão (operador/
+    // carga) nos 2 lados — mesmo raciocínio já aplicado às formas BARE
+    // acima ("X tem mais tickets que Y"): default pra comparação de
+    // OPERADOR, a menos que os guards de cliente/área/departamento mais
+    // abaixo (mencionaClienteNoMatch/mencionaAreaOuDepartamentoNoMatch)
+    // rejeitem o match por citar outra dimensão explicitamente — nesse
+    // caso cai pro extrator certo (extractClientComparisonNames etc.) mais
+    // adiante. Sem este padrão, os 2 nomes inteiros eram engolidos como um
+    // nome-lixo só pelo fallback genérico de operador ("Fabio Gali com os
+    // do Diego Mota"), que nunca resolve no catálogo e descarta a
+    // comparação pedida por completo.
+    // "(?:os\\s+|as\\s+)?" antes de "d[oa]" do lado direito (sem repetir
+    // "tickets/chamados/atendimentos"): cobre "com os DO Y" (plural restante
+    // de "tickets", sem repetir o substantivo) — sem isso "os do Diego Mota"
+    // vazava inteiro pro nome2 ("os do Diego Mota", já que nem o grupo do
+    // substantivo nem o "d[oa]" sozinho bate em "os").
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
+        + `(?:(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+)?(?:os\\s+|as\\s+)?(?:d[oa]\\s+)?(.+)$`,
       "iu",
     ),
   ];
@@ -4080,6 +4182,20 @@ function routeTicketQuestionCore(pergunta) {
   function detectaUniaoDePrioridades() {
     if (prioridade === undefined) {
       return false;
+    }
+
+    // "Tickets com prioridade Urgente ou Alta." (achado testando o lote de
+    // perguntas ao vivo): forma COMPACTA, com a palavra "prioridade" dita
+    // só 1 vez — PRIORITY_LEVEL_UNIAO_PATTERNS (abaixo) só reconhece a
+    // palavra "prioridade" REPETIDA perto de cada nível (ex.: "urgentes e
+    // de alta prioridade"), então essa forma mais curta e comum escapava
+    // por completo: extractPriorityName capturava "Urgente ou Alta"
+    // inteiro como se fosse 1 valor só (nunca bate no catálogo real,
+    // devolvendo silenciosamente "nenhum ticket encontrado"). Checado
+    // direto contra o próprio valor JÁ CAPTURADO (não a frase inteira),
+    // então não depende de "prioridade" aparecer de novo em lugar nenhum.
+    if (PRIORIDADE_UNIAO_COMPACTA_PATTERN.test(normalizeText(prioridade))) {
+      return true;
     }
 
     return PRIORITY_LEVEL_UNIAO_PATTERNS.some(
