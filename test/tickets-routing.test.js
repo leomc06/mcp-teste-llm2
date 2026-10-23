@@ -4739,3 +4739,46 @@ test("'X e Y têm juntos' (pedido de total combinado de 2 pessoas, achado testan
   const comparacao = routeTicketQuestion("Compare a carga do Fabio Gali com a do Diego Mota.");
   assert.equal(comparacao.intent, "comparar_carga_operador");
 });
+
+test("'último semestre' (achado testando com dados reais — regressão do próprio suporte a semestre) não é mais sequestrado pelo pedido de 'só o ticket mais recente'", () => {
+  const route = routeTicketQuestion("Tickets do departamento de Governança no último semestre.");
+  assert.equal(route.entities.limite, undefined);
+  assert.equal(route.entities.departamento, "Governança");
+  assert.notEqual(route.entities.dataInicio, undefined);
+
+  // Controles: as outras unidades (já protegidas antes) continuam normais.
+  const mes = routeTicketQuestion("Tickets do departamento de Governança no último mês.");
+  assert.equal(mes.entities.limite, undefined);
+  const trimestre = routeTicketQuestion("Tickets do departamento de Governança no último trimestre.");
+  assert.equal(trimestre.entities.limite, undefined);
+});
+
+test("'de <dia> de <mês> a <dia> de <mês> [de <ano>]' (intervalo por extenso cruzando 2 meses, ano dito só 1 vez, achado testando com dados reais) é reconhecido, em vez de descartado por completo", () => {
+  const comAno = routeTicketQuestion("Resumo geral de 10 de março a 20 de abril de 2025.");
+  assert.deepEqual([comAno.entities.dataInicio, comAno.entities.dataFim], ["2025-03-10", "2025-04-20"]);
+
+  const semAno = routeTicketQuestion("Resumo geral de 10 de março a 20 de abril.");
+  assert.notEqual(semAno.entities.dataInicio, undefined);
+  assert.notEqual(semAno.entities.dataFim, undefined);
+});
+
+test("limite negativo (achado testando com dados reais) pede esclarecimento, em vez de ignorar o sinal de menos em silêncio", () => {
+  const route = routeTicketQuestion("Liste os -2 tickets mais antigos.");
+  assert.equal(route.intent, "esclarecimento_limite_invalido");
+
+  // Controle: limite positivo continua funcionando normalmente.
+  const positivo = routeTicketQuestion("Liste os 2 tickets mais antigos.");
+  assert.equal(positivo.entities.limite, 2);
+});
+
+test("'N dias úteis' (achado testando com dados reais) pula sábado/domingo, em vez de contar como dias corridos", () => {
+  // Segunda-feira 26/10/2026 como referência: olhar 3 dias úteis pra trás
+  // cruza um fim de semana (sex/qui/qua = 23/22/21), diferente de 3 dias
+  // corridos (que daria 23/10).
+  const segunda = new Date(2026, 9, 26);
+  const uteis = extractRelativeDateRange("ultimos 3 dias uteis", segunda);
+  assert.equal(uteis.dataInicio, "2026-10-21");
+
+  const corridos = extractRelativeDateRange("ultimos 3 dias", segunda);
+  assert.equal(corridos.dataInicio, "2026-10-23");
+});

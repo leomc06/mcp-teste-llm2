@@ -475,6 +475,27 @@ function startOfWeek(date) {
   return resultado;
 }
 
+// "últimos N dias ÚTEIS" (achado testando o lote de perguntas ao vivo, com
+// dados reais): dia útil (sem sábado/domingo) é uma unidade diferente de
+// dia corrido — usado por extractRelativeDateRange logo abaixo, pra não
+// tratar "3 dias úteis" como se fossem 3 dias corridos (janela mais
+// estreita do que a pedida sempre que o intervalo cruza um fim de semana).
+function subtrairDiasUteis(data, quantidade) {
+  const resultado = new Date(data);
+  let restante = quantidade;
+
+  while (restante > 0) {
+    resultado.setDate(resultado.getDate() - 1);
+    const diaSemana = resultado.getDay();
+
+    if (diaSemana !== 0 && diaSemana !== 6) {
+      restante -= 1;
+    }
+  }
+
+  return resultado;
+}
+
 // "2º trimestre de 2025" (achado testando o lote de perguntas ao vivo):
 // forma NUMÉRICA com indicador ordinal ("º"/"ª"), tão comum em relatórios
 // quanto a forma por extenso ("segundo trimestre") — sem essa alternativa,
@@ -901,6 +922,22 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // período inteiro era ignorado em silêncio), nem era podada de nomes
   // capturados em outros campos (ex.: "atividade do cliente X nos últimos 30
   // dias e destaque..." vazava a cláusula inteira pro nome do cliente).
+  // "últimos N dias ÚTEIS" (achado testando o lote de perguntas ao vivo,
+  // com dados reais): checado ANTES do padrão genérico "últimos N dias"
+  // logo abaixo — sem isso, "últimos 3 dias ÚTEIS" batia nesse padrão
+  // genérico (que só olha "dias", a palavra "uteis" fica de fora do \b)
+  // e a janela calculada contava 3 dias CORRIDOS, não 3 dias úteis (mais
+  // estreita do que a pedida sempre que o intervalo cruza um fim de
+  // semana).
+  const ultimosDiasUteisMatch = text.match(/\bultim[oa]s\s+(\d+)\s+dias?\s+uteis\b/iu);
+
+  if (ultimosDiasUteisMatch) {
+    const quantidade = Number(ultimosDiasUteisMatch[1]);
+    const inicio = subtrairDiasUteis(agora, quantidade);
+
+    return { dataInicio: formatIsoDate(inicio), dataFim: formatIsoDate(agora) };
+  }
+
   const ultimosMatch = text.match(/\bultim[oa]s\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu);
 
   if (ultimosMatch) {
@@ -1509,6 +1546,19 @@ export function extractTicketNumber(value) {
 //     em si é grande demais pra ser um ticket real.
 const NEGATIVE_TICKET_NUMBER_PATTERN = new RegExp(
   `\\b(?:${TICKET_NOUN_SOURCE}|n[úu]mero|n[°º])\\.?\\s*-\\s*\\d+\\b`,
+  "iu",
+);
+
+// "Liste os -2 tickets mais antigos." (achado testando o lote de perguntas
+// ao vivo, com dados reais): mesmo problema do ticket negativo acima
+// (normalizeText remove o "-" como pontuação antes de qualquer extrator de
+// limite rodar), só que aplicado ao LIMITE de resultados, não ao número do
+// ticket — "-2" virava silenciosamente limite:2, mostrando os 2 primeiros
+// resultados como se fosse o que foi pedido, em vez de avisar que "-2
+// tickets" não faz sentido nenhum. Checado contra o texto CRU (não
+// normalizado), mesmo motivo do pattern irmão acima.
+const NEGATIVE_LIMIT_PATTERN = new RegExp(
+  `-\\s*\\d+\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
   "iu",
 );
 
@@ -3055,6 +3105,43 @@ export function extractDepartmentComparisonNames(value) {
 export function extractDateRange(value) {
   const text = String(value ?? "");
 
+  // "de 10 de março a 20 de abril de 2025" (achado testando o lote de
+  // perguntas ao vivo, com dados reais): intervalo por extenso cruzando 2
+  // MESES DIFERENTES, com o ANO dito só 1 VEZ no final (compartilhado pelos
+  // 2 lados) — jeito natural e comum de escrever, mas LONG_DATE_SOURCE (ver
+  // DATE_TOKEN_SOURCE/rangeMatch logo abaixo) exige o ano em CADA token
+  // individualmente ("10 de março DE 2025"), então nenhum dos 2 lados batia
+  // como data válida sozinho, e o intervalo inteiro (ano incluso ou não)
+  // era descartado em silêncio. Checado ANTES de rangeMatch de propósito:
+  // sem isso, essa forma mais específica nunca teria a chance de bater
+  // (rangeMatch já falha pra ela, mas por segurança/clareza o caso mais
+  // específico vem primeiro).
+  // Ano final OPCIONAL (achado testando o lote de perguntas ao vivo): "de
+  // 10 de março a 20 de abril" (sem ano nenhum) é tão comum quanto a forma
+  // com ano — mesmo raciocínio já aplicado em "entre agosto e setembro"
+  // (intervaloMesesMatch, mais abaixo em extractRelativeDateRange): assume
+  // o ano corrente quando nenhum é dito.
+  const intervaloDiaMesAnoComumMatch = text.match(
+    new RegExp(
+      `\\b(?:entre\\s+|per[íi]odo\\s+de\\s+|de\\s+)(?:dia\\s+)?(\\d{1,2})\\s+de\\s+(${MONTH_NAME_SOURCE})`
+        + `\\s+(?:e|a|at[ée])\\s+(?:dia\\s+)?(\\d{1,2})\\s+de\\s+(${MONTH_NAME_SOURCE})(?:\\s+de\\s+(\\d{4}))?\\b`,
+      "iu",
+    ),
+  );
+
+  if (intervaloDiaMesAnoComumMatch) {
+    const dia1 = intervaloDiaMesAnoComumMatch[1].padStart(2, "0");
+    const mes1 = MONTH_NUMBERS[normalizeText(intervaloDiaMesAnoComumMatch[2])];
+    const dia2 = intervaloDiaMesAnoComumMatch[3].padStart(2, "0");
+    const mes2 = MONTH_NUMBERS[normalizeText(intervaloDiaMesAnoComumMatch[4])];
+    const ano = intervaloDiaMesAnoComumMatch[5] ?? String(new Date().getFullYear());
+
+    return {
+      dataInicio: `${ano}-${mes1}-${dia1}`,
+      dataFim: `${ano}-${mes2}-${dia2}`,
+    };
+  }
+
   // "de" sozinho (sem "entre"/"período de") também abre um intervalo
   // quando é seguido, mais adiante na mesma frase, por uma data de
   // fechamento ("de X até Y") — achado testando o lote de perguntas ao
@@ -3410,6 +3497,16 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Detalhe o ticket 1050.\n"
         + "- Busque o ticket 4830.",
+    );
+  }
+
+  if (NEGATIVE_LIMIT_PATTERN.test(pergunta)) {
+    return createClarificationDecision(
+      "esclarecimento_limite_invalido",
+      "Esse limite de resultados não parece válido (negativo). Pode pedir uma quantidade positiva?"
+        + "\n\nExemplos:\n"
+        + "- Liste os 2 tickets mais antigos.\n"
+        + "- Liste os 5 primeiros tickets.",
     );
   }
 
@@ -5201,10 +5298,20 @@ function routeTicketQuestionCore(pergunta) {
   // extractRelativeDateRange já sabe calcular o período real pra essas 2
   // formas agora, então "último" aqui qualifica o PERÍODO, não pede "o
   // ticket mais recente".
+  // "semestre" (achado testando o lote de perguntas ao vivo, com dados
+  // reais — regressão do próprio suporte a semestre adicionado antes):
+  // quando "semestre" ganhou suporte em extractRelativeDateRange, essa
+  // exclusão não foi atualizada junto — "Tickets do departamento de
+  // Governança NO ÚLTIMO SEMESTRE." continuava sendo sequestrado por
+  // isBareMostRecentIntent (limite:1, "só o ticket mais recente"), mesmo
+  // "último" aqui claramente qualificando o período, não pedindo o ticket
+  // mais recente. Mesmo bug de "primeiro trimestre" já corrigido do lado
+  // oposto (isBareOldestOverallIntent) — toda unidade de período nova
+  // precisa entrar nos 2 lados dessa exclusão, não só num.
   const mentionsUltimoComoRecencia =
     /\bultimos?\b/.test(text)
     && !/\bultim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b/.test(text)
-    && !/\bultim[oa]\s+(?:semana|mes|ano|trimestre|quinzena)\b/.test(text)
+    && !/\bultim[oa]\s+(?:semana|mes|ano|trimestre|semestre|quinzena)\b/.test(text)
     // "último dia do mês" (achado testando o lote de perguntas ao vivo):
     // mesma exclusão de "último mês" acima, pro caso mais específico de dia
     // de calendário que extractRelativeDateRange passou a reconhecer.
