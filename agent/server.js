@@ -472,8 +472,29 @@ const server = http.createServer(async (request, response) => {
           ];
 
           const duracaoMs = Date.now() - startedAt;
+          // "min"/"max" do próprio erro (achado testando o lote de
+          // perguntas ao vivo): "Liste os 1000 tickets mais antigos."
+          // (limite acima do máximo da tool) virava "Revise os seguintes
+          // filtros: limite." — genérico demais, não diz qual é o limite
+          // aceito. Cada campo ganha o intervalo aceito quando o erro é
+          // exatamente de limite (min/max presentes), senão cai no texto
+          // antigo (campo sozinho, ex.: campo obrigatório ausente).
           const fieldsText = invalidFields.length > 0
-            ? invalidFields.join(", ")
+            ? invalidFields
+                .map((field) => {
+                  const erroDoCampo = buildResult.errors.find((erro) => erro.field === field);
+
+                  if (erroDoCampo?.min !== undefined || erroDoCampo?.max !== undefined) {
+                    const minTexto = erroDoCampo.min !== undefined ? `pelo menos ${erroDoCampo.min}` : null;
+                    const maxTexto = erroDoCampo.max !== undefined ? `no máximo ${erroDoCampo.max}` : null;
+                    const faixa = [minTexto, maxTexto].filter(Boolean).join(" e ");
+
+                    return `${field} (precisa ser ${faixa})`;
+                  }
+
+                  return field;
+                })
+                .join(", ")
             : "filtros";
 
           audit({

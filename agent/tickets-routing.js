@@ -46,6 +46,13 @@ const TRAILING_MESMO_QUE_CLAUSE_PATTERN = /\s+mesmo\s+que\b.*$/iu;
 // detectaContradicao(), contra o valor já limpo por este pattern.
 const TRAILING_SELF_NEGATION_CLAUSE_PATTERN = /\s+que\s+n[ãa]o\s+(?:[ée]|s[ãa]o)\b.*$/iu;
 
+// "mostra mais tickets Urgentes que o total geral de tickets" (achado
+// testando o lote de perguntas ao vivo — pergunta "meta" comparando 2
+// números agregados, não um filtro de verdade): cláusula verbal
+// comparativa no fim do valor capturado — "prioridade Urgente MOSTRA MAIS
+// tickets... que o total..." vazava a cláusula inteira pro valor.
+const TRAILING_VERBO_COMPARATIVO_CLAUSE_PATTERN = /\s+mostr[ae]m?\s+mais\b.*$/iu;
+
 // "e depois exporte em PDF/CSV" (achado testando o lote de perguntas ao
 // vivo): pedir um resumo/listagem e, na mesma frase, pedir pra exportar o
 // resultado (exportação em si é um botão só de frontend, ver web/app.js —
@@ -232,7 +239,16 @@ export const CLOSURE_VERB_SOURCE =
 // não faz parte do nome (ex.: "o pessoal da Infraestrutura Científica
 // resolveu esse mês" → a área é só "Infraestrutura Científica"; "a área WEB
 // concluiu quantos chamados" → só "WEB").
-const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(`\\s+${CLOSURE_VERB_SOURCE}\\b.*$`, "iu");
+// "(?:ainda\\s+|j[áa]\\s+)?" antes do verbo (achado testando o lote de
+// perguntas ao vivo): "Quantos tickets o Fabio Gali JÁ fechou esse ano?"
+// deixava o "já" sobrando no nome capturado (operador: "Fabio Gali já"),
+// que nunca bate no catálogo real — mesmo advérbio opcional que
+// TRAILING_OPEN_STATE_CLAUSE_PATTERN já aceita antes do adjetivo de estado
+// aberto, só faltava aqui, no lado de fechamento.
+const TRAILING_RESOLVED_CLAUSE_PATTERN = new RegExp(
+  `\\s+(?:ainda\\s+|j[áa]\\s+)?${CLOSURE_VERB_SOURCE}\\b.*$`,
+  "iu",
+);
 
 // "atendido(s)/atendida(s)" no meio da captura (achado testando o lote de
 // perguntas ao vivo, com dados reais): "Tickets do operador X ATENDIDOS na
@@ -1318,6 +1334,7 @@ function cleanFreeText(value) {
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_MESMO_QUE_CLAUSE_PATTERN, "")
     .replace(TRAILING_SELF_NEGATION_CLAUSE_PATTERN, "")
+    .replace(TRAILING_VERBO_COMPARATIVO_CLAUSE_PATTERN, "")
     // Antes de TRAILING_RESOLVED_CLAUSE_PATTERN de propósito (mesma lógica
     // do comentário sobre TRAILING_CREATION_CLAUSE_PATTERN mais abaixo):
     // "já deveriam ter sido RESOLVIDOS" precisa ser podado inteiro primeiro
@@ -1579,6 +1596,18 @@ const NEGATIVE_TICKET_NUMBER_PATTERN = new RegExp(
 // normalizado), mesmo motivo do pattern irmão acima.
 const NEGATIVE_LIMIT_PATTERN = new RegExp(
   `-\\s*\\d+\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
+  "iu",
+);
+
+// "Liste os 0 tickets mais recentes." (achado testando o lote de perguntas
+// ao vivo): mesma família do limite negativo acima, mas com ZERO — nenhuma
+// tool aceita limite < 1 (schema exige mínimo 1), e "0" não tem sinal de
+// "-" pra ancorar o pattern irmão — sem este guard, limite:0 passava
+// direto pra tool, que ou rejeita com erro cru (se o schema validar) ou
+// (pior) é tratado como "sem limite definido" em algum ponto do caminho,
+// mascarando um pedido que não faz sentido nenhum.
+const ZERO_LIMIT_PATTERN = new RegExp(
+  `\\b0\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
   "iu",
 );
 
@@ -2019,8 +2048,20 @@ export function extractOperatorName(value) {
     // pular esse verbo, ele virava parte do nome capturado (operador: "é
     // Vanessa Ventura"). Só o "é" ACENTUADO (não "e" sem acento, que é a
     // conjunção já tratada por DIMENSION_CONNECTOR_LEAK_SOURCE logo abaixo).
+    // "(?<!sem\\s)" (achado testando o lote de perguntas ao vivo): "Preciso
+    // saber quantos tickets estão SEM OPERADOR e quantos estão congelados."
+    // tem a palavra "operador" logo depois de "sem" — ali ela é o marcador
+    // de dimensão de isSemOperadorIntent (ninguém atribuído), não uma
+    // introdução de nome — mas esse 1º padrão não sabia disso e capturava
+    // tudo que vinha depois como se fosse um nome (operador: "e quantos",
+    // lixo que nunca bate no catálogo real e derruba a pergunta inteira com
+    // "operador não encontrado" em vez de responder pelo menos a parte de
+    // congelados). "sem" como prefixo de EXCLUSÃO aqui, não de captura —
+    // "sem o operador Fulano" (negação de um NOME específico) continua
+    // sendo tratado por outro mecanismo (detectaNegacaoNaoSuportada), não
+    // por este padrão.
     new RegExp(
-      `\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
+      `(?<!\\bsem\\s)\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
         + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
         + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
         + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
@@ -2082,11 +2123,20 @@ export function extractOperatorName(value) {
     // sobrando esse resto). Bloqueia a captura quando o que vem logo depois
     // é só um estado aberto/fechado (sozinho ou com "e" entre 2 estados) —
     // nenhum nome de operador real é literalmente "aberto"/"fechado".
+    // "(?:ainda\\s+|j[áa]\\s+)?" logo antes do verbo, FORA da captura
+    // (achado testando o lote de perguntas ao vivo): "Quantos tickets o
+    // Fabio Gali JÁ fechou esse ano?" — sem esse advérbio opcional ANCORADO
+    // antes do verbo (não dentro da captura "(.+?)"), o "(.+?)" não-guloso
+    // já parava ANTES do "já" (não existe nada que o obrigue a avançar mais
+    // que o necessário pra achar "fechou" logo depois) — "Fabio Gali já"
+    // inteiro virava o valor capturado, e cleanFreeText nunca via o "já"
+    // grudado num verbo de fechamento pra podar (o verbo em si fica FORA da
+    // captura por construção deste padrão).
     new RegExp(
       `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+`
         + `(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))`
         + `(?!(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE})(?:\\s+e\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b)`
-        + `(?:a\\s+|o\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
+        + `(?:a\\s+|o\\s+)?(.+?)\\s+(?:ainda\\s+|j[áa]\\s+)?${OPERATOR_WORKLOAD_VERB_SOURCE}\\b.*$`,
       "iu",
     ),
     // "Quantos tickets abertos e fechados TEM o Fabio Gali?" (achado
@@ -2109,7 +2159,31 @@ export function extractOperatorName(value) {
     // o cliente, mas quem TRATA/ATENDE/FECHA é o operador. Sem este padrão,
     // "Mostra os tickets que o Fábio Gali tratou." não capturava operador
     // nenhum, caindo no fallback genérico sem filtro algum.
-    new RegExp(`\\bque\\s+(?:o\\s+|a\\s+)?(.+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b`, "iu"),
+    // "(?:(?!\\be\\s+que\\b).)+?" em vez de "(.+?)" simples (achado testando
+    // o lote de perguntas ao vivo): "os tickets QUE o Fabio Gali abriu E QUE
+    // ele também fechou" tem 2 orações "que" sobre a MESMA pessoa — o "(.+?)"
+    // não-guloso original não enxergava a fronteira entre elas e atravessava
+    // a 1ª oração inteira até achar o verbo de fechamento só na 2ª,
+    // capturando "Fabio Gali abriu e que ele também" (lixo, mistura as 2
+    // orações). A guarda barra a captura de avançar por cima de um "e que"
+    // novo, forçando parar no verbo da 1ª oração que realmente pertence ao
+    // nome capturado (mesmo sem reconhecer "abriu" como verbo de operador —
+    // limitação conhecida, documentada à parte).
+    // "(?<!e\\s)" antes de "que" (achado rodando esta própria correção):
+    // só a guarda interna (?!\\be\\s+que\\b) não bastava — .match() sem
+    // flag global tenta TODAS as posições iniciais possíveis, então quando
+    // a 1ª ocorrência de "que" falhava (por causa da guarda), o motor
+    // simplesmente tentava de novo a partir da 2ª ocorrência ("E QUE ele
+    // também fechou"), capturando "ele também" (ainda lixo, só que da outra
+    // oração). Barrando também o PONTO DE PARTIDA (não deixa o "que" da 2ª
+    // oração nem começar a tentativa), a frase inteira passa a não bater em
+    // nenhuma posição — fica sem operador nenhum capturado aqui (correto:
+    // a pessoa já foi capturada como cliente, por "que X abriu", em outro
+    // extrator; nenhum nome de operador de verdade é perdido).
+    new RegExp(
+      `\\b(?<!e\\s)que\\s+(?:o\\s+|a\\s+)?((?:(?!\\be\\s+que\\b).)+?)\\s+${OPERATOR_WORKLOAD_VERB_SOURCE}\\b`,
+      "iu",
+    ),
     // "excluindo o Fábio"/"tirando a Ana"/"exceto o Carlos" (achado testando
     // o lote de perguntas ao vivo): "Qual operador tem a maior carga de
     // trabalho na área de TI, EXCLUINDO O FÁBIO?" não capturava operador
@@ -3539,10 +3613,10 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
-  if (NEGATIVE_LIMIT_PATTERN.test(pergunta)) {
+  if (NEGATIVE_LIMIT_PATTERN.test(pergunta) || ZERO_LIMIT_PATTERN.test(pergunta)) {
     return createClarificationDecision(
       "esclarecimento_limite_invalido",
-      "Esse limite de resultados não parece válido (negativo). Pode pedir uma quantidade positiva?"
+      "Esse limite de resultados não parece válido (precisa ser pelo menos 1). Pode pedir uma quantidade positiva?"
         + "\n\nExemplos:\n"
         + "- Liste os 2 tickets mais antigos.\n"
         + "- Liste os 5 primeiros tickets.",

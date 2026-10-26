@@ -6,6 +6,7 @@ import {
   resolveToolArguments,
   runAgent,
 } from "../agent/agent-loop.js";
+import { buildToolArguments } from "../agent/routing-utils.js";
 
 const ollamaTools = [
   {
@@ -647,4 +648,25 @@ test("sem synthesize, o modelo é chamado só 1 vez (comportamento de hoje inalt
 
   assert.equal(ollama.calls.length, 1);
   assert.equal(result.resposta, "O ticket informado não foi encontrado.");
+});
+
+test("buildToolArguments: valor acima do máximo aceito (achado testando com dados reais do Lote 2) repassa min/max do schema no erro, pra mensagem final poder ser específica em vez de genérica", () => {
+  const tool = {
+    function: {
+      name: "listar_tickets_mais_antigos",
+      parameters: {
+        type: "object",
+        properties: {
+          limite: { type: "integer", minimum: 1, maximum: 50 },
+        },
+      },
+    },
+  };
+
+  const result = buildToolArguments("listar_tickets_mais_antigos", { limite: 1000 }, [tool]);
+
+  assert.equal(result.ok, false);
+  const erroDoLimite = result.errors.find((erro) => erro.field === "limite");
+  assert.equal(erroDoLimite.min, 1);
+  assert.equal(erroDoLimite.max, 50);
 });

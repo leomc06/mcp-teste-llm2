@@ -4882,3 +4882,49 @@ test("2 limiares de prazo contraditórios na mesma unidade ('há mais de 30 dias
   const unidadesDiferentes = routeTicketQuestion("Tickets abertos há mais de 2 meses mas há menos de 10 dias.");
   assert.notEqual(unidadesDiferentes.intent, "esclarecimento_contradicao");
 });
+
+test("'sem operador' (achado testando com dados reais do Lote 2) não é mais confundido com introdução de nome de operador", () => {
+  const route = routeTicketQuestion("Preciso saber quantos tickets estão sem operador e quantos estão congelados.");
+  assert.equal(route.entities.operador, undefined);
+
+  // Controles: formas já suportadas continuam intocadas.
+  const semOperador = routeTicketQuestion("Tickets sem operador atribuído.");
+  assert.equal(semOperador.intent, "listar_sem_operador");
+  const comOperador = routeTicketQuestion("Tickets do operador Fabio Gali.");
+  assert.equal(comOperador.entities.operador, "Fabio Gali");
+});
+
+test("'já' (advérbio) antes de verbo de fechamento (achado testando com dados reais do Lote 2) é podado do nome capturado, em vez de vazar junto", () => {
+  const route = routeTicketQuestion("Quantos tickets o Fabio Gali já fechou esse ano?");
+  assert.equal(route.entities.operador, "Fabio Gali");
+  assert.notEqual(route.entities.dataInicio, undefined);
+
+  // Controle: a mesma forma, sem "já", continua funcionando.
+  const semJa = routeTicketQuestion("Quantos tickets o Fabio Gali fechou esse ano?");
+  assert.equal(semJa.entities.operador, "Fabio Gali");
+});
+
+test("limite ZERO (achado testando com dados reais do Lote 2) pede esclarecimento, igual ao limite negativo já corrigido antes", () => {
+  const route = routeTicketQuestion("Liste os 0 tickets mais recentes.");
+  assert.equal(route.intent, "esclarecimento_limite_invalido");
+
+  // Controle: limite positivo continua funcionando normalmente.
+  const positivo = routeTicketQuestion("Liste os 2 tickets mais recentes.");
+  assert.equal(positivo.entities.limite, 2);
+});
+
+test("cláusula verbal comparativa ('mostra mais X que o Y', achado testando com dados reais do Lote 2, pergunta meta comparando agregados) é podada do valor de prioridade capturado", () => {
+  const route = routeTicketQuestion("O resumo por prioridade mostra mais tickets Urgentes que o total geral de tickets?");
+  assert.equal(route.entities.prioridade, "Urgente");
+});
+
+test("'que X abriu e que ele também fechou' (achado testando com dados reais do Lote 2, mesma pessoa em 2 orações) não vaza mais a cláusula errada pro operador", () => {
+  const route = routeTicketQuestion("Mostre os tickets que o Fabio Gali abriu e que ele também fechou.");
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.cliente, "Fabio Gali");
+
+  // Controle: a forma original de 1 oração só (sem o "e que" extra)
+  // continua funcionando normalmente.
+  const umaOracaoSo = routeTicketQuestion("Mostra os tickets que o Fábio Gali tratou.");
+  assert.equal(umaOracaoSo.entities.operador, "Fábio Gali");
+});

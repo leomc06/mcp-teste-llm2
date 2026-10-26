@@ -146,6 +146,34 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 2 — gerado, aguardando execução — ângulos: K, M, N, F (3+ turnos), H (limites), G (grafia)
+
+Motivo da escolha: Lote 1 já cobriu bem L/O/I/F(2 turnos)/D/E; a cobertura
+retrospectiva já marcava A/B/C/G/H/J como bem cobertos antes do protocolo —
+os ângulos que ainda faltam ou ficaram rasos são K (seleção de tools),
+M (integridade dos dados), N (limites/casos extremos), encadeamento de 3+
+turnos em F (só 2 turnos testados até agora), parâmetros no limite em H
+(negativo/inválido já testado, faltam 0/muito grande/plausível-mas-
+inexistente), e variação de grafia (maiúsculo/minúsculo total) em G.
+
+- Perguntas: L02-T01 .. L02-T20 (ver mensagem do lote)
+- Dados reais usados: operador "Fabio Gali", operador/cliente "Cesar
+  Augusto de Mello", área "Suporte", departamento "SYSADMIN", ticket real
+  4830 (controle)
+- Resultado: **executado por mim** (routeTicketQuestion + servidor ao vivo, incluindo 2 encadeamentos de 3 turnos)
+- Bugs encontrados (6, por ordem de severidade):
+  1. L02-T04 — "sem operador e quantos estão congelados": a palavra "operador" dentro de "sem operador" (marcador de dimensão, não introdução de nome) é capturada como se fosse um nome — resultado final real: `operador "e quantos" não encontrado`, pergunta totalmente razoável falha por completo em vez de responder ao menos a parte de congelados.
+  2. L02-T01 — "já" (advérbio) não é podado antes de verbo de fechamento ("Fabio Gali JÁ fechou esse ano") — resultado final real: `operador "Fabio Gali já" não encontrado`, falha total em vez de devolver a contagem real do operador.
+  3. L02-T10 — limite explicitamente ZERO não é pego pelo esclarecimento de limite inválido (só o negativo é hoje) — aplica `limite: 0` sem avisar.
+  4. L02-T11 — limite muito acima do máximo da tool (1000 > 50): rejeitado, mas com mensagem genérica "Revise os seguintes filtros: limite." sem dizer qual é o máximo aceito.
+  5. L02-T08 — pergunta meta (comparação entre 2 números agregados) faz "prioridade" capturar a cláusula inteira ("mostra mais tickets Urgentes que o total geral..."), virando `resumo_por_status` com filtro-lixo em vez de uma resposta ou esclarecimento honesto. Fraseado raro, prioridade baixa.
+  6. L02-T02 — "que X abriu e que ele também fechou" (mesma pessoa, 2 papéis, 2 orações) vaza a cláusula inteira pro operador. Fraseado raro, prioridade baixa.
+  5 (achado menor) — L02-T05 — "sem me mostrar a lista" é ignorado, a listagem completa é mostrada mesmo assim (total correto, só verboso demais).
+- Confirmados corretos/por design: L02-T03, T06/T07 (redirect conhecido pra resumo_operacional preserva filtro), T09 (AND de 2 dimensões correto), **T14 (encadeamento de 3 turnos acumula os 3 filtros corretamente: área+prioridade+situação)**, T16, T17 (4 números reconhecidos, sem truncar), T18 (regressão ok), T19/T20 (resolução de catálogo case-insensitive confirmada nos 2 sentidos).
+- Limitação confirmada, não bug (by design): L02-T15 — fraseado elaborado "E filtrando só por Urgente?" não bate em nenhum marcador de continuação (a lista é deliberadamente restrita a poucos marcadores de alta confiança); a forma mais simples equivalente "E por Urgente?" já funciona normalmente.
+- Correções aplicadas: todos os 6 corrigidos e verificados (707 testes passando, ao vivo e smoke test) — "sem operador" ganhou lookbehind de exclusão em `extractOperatorName`; "já"/"ainda" antes de verbo de fechamento agora é ancorado FORA da captura (não só podado depois, a extração em si já não inclui o advérbio); `buildToolArguments` (`routing-utils.js`) repassa `min`/`max` do schema no erro, e `agent/server.js` usa isso pra mensagem específica ("precisa ser pelo menos 1 e no máximo 50") em vez de genérica; nova cláusula `TRAILING_VERBO_COMPARATIVO_CLAUSE_PATTERN`; padrão "que X abriu e que ele também fechou" ganhou lookbehind + lookahead pra não atravessar a 2ª oração "e que"
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-routing.test.js`, `test/agent-tool-arguments.test.js`)
+
 ### Lote 1 — gerado, aguardando execução — ângulos: L, O, I, F (profundidade), D, E (combos)
 
 Motivo da escolha: esses são os ângulos que a cobertura retrospectiva

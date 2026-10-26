@@ -270,9 +270,17 @@ export function buildToolArguments(
     if (!validateSchemaValue(value, schema)) {
       invalidFields.add(field);
 
+      // "min"/"max" (achado testando o lote de perguntas ao vivo): "Liste
+      // os 1000 tickets mais antigos." (acima do máximo de 50 da tool)
+      // virava uma mensagem genérica pro usuário ("Revise os seguintes
+      // filtros: limite."), sem dizer QUAL é o limite aceito — repassa os
+      // limites do próprio schema aqui, pra quem monta a mensagem final
+      // (agent/server.js) poder ser específico, em vez de genérico.
       errors.push({
         field,
         code: "invalid_value",
+        min: schema.minimum ?? schema.exclusiveMinimum,
+        max: schema.maximum ?? schema.exclusiveMaximum,
       });
 
       continue;
