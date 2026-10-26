@@ -4965,3 +4965,50 @@ test("'página -1' (achado testando com dados reais do Lote 3) pede esclarecimen
   const positiva = routeTicketQuestion("Tickets do operador Fabio Gali, página 2.");
   assert.equal(positiva.entities.pagina, 2);
 });
+
+test("regressão do próprio fix bare 'Tickets <Nome>' (achado rodando o Lote 4): nível de prioridade capitalizado no fim da frase não é mais confundido com nome de operador", () => {
+  const route = routeTicketQuestion("Qual o percentual de tickets Urgentes?");
+  assert.equal(route.entities.operador, undefined);
+  assert.equal(route.entities.prioridade, "Urgente");
+
+  // Controle: a forma original (nome de pessoa de verdade) continua
+  // funcionando normalmente.
+  const nomeDeVerdade = routeTicketQuestion("Tickets Fabio Gali");
+  assert.equal(nomeDeVerdade.entities.operador, "Fabio Gali");
+});
+
+test("chip de refinamento 'Só os abertos'/'Só os fechados' (achado testando com dados reais do Lote 4) consegue de fato estreitar o resumo operacional, em vez de sempre devolver a visão geral inteira", () => {
+  const abertos = routeTicketQuestion("Resumo operacional dos tickets. Só os abertos");
+  assert.equal(abertos.intent, "listar_abertos");
+
+  const fechados = routeTicketQuestion("Resumo operacional dos tickets. Só os fechados");
+  assert.equal(fechados.intent, "listar_fechados");
+
+  // Controle: sem o "só os X", o resumo operacional continua intocado.
+  const semChip = routeTicketQuestion("Resumo operacional dos tickets.");
+  assert.equal(semChip.intent, "resumo_operacional");
+});
+
+test("comparação temporal implícita ('em relação ao mesmo período do ano passado', achado testando com dados reais do Lote 4) pede esclarecimento quando não há nenhuma dimensão pra cair como resposta parcial", () => {
+  const semDimensao = routeTicketQuestion("Como estamos em relação ao mesmo período do ano passado?");
+  assert.equal(semDimensao.intent, "esclarecimento_comparacao_temporal");
+
+  // Controle: quando já existe uma dimensão capturada (teste já
+  // estabelecido antes desta correção), o filtro sobrevive normalmente,
+  // só a comparação em si é que não é calculada — comportamento
+  // intencional, não alargado por esta correção.
+  const comDimensao = routeTicketQuestion("Quantos tickets o departamento Financeiro tem comparado ao mês passado?");
+  assert.notEqual(comDimensao.intent, "esclarecimento_comparacao_temporal");
+  assert.equal(comDimensao.entities.departamento, "Financeiro");
+});
+
+test("'última segunda-feira' (dia da semana, achado testando com dados reais do Lote 4) pede esclarecimento, em vez de descartar o filtro de data em silêncio", () => {
+  const route = routeTicketQuestion("Tickets abertos na última segunda-feira.");
+  assert.equal(route.intent, "esclarecimento_periodo_nao_suportado");
+
+  // Controles: períodos já suportados continuam funcionando normalmente.
+  const mesPassado = routeTicketQuestion("Tickets abertos no mês passado.");
+  assert.notEqual(mesPassado.entities.dataInicio, undefined);
+  const essaSemana = routeTicketQuestion("Tickets abertos essa semana.");
+  assert.notEqual(essaSemana.entities.dataInicio, undefined);
+});

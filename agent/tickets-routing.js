@@ -2257,7 +2257,21 @@ export function extractOperatorName(value) {
     // inteira) — só o substantivo de ticket entra no grupo "(?i:...)", pra
     // reconhecer tanto "tickets" quanto "Tickets" (maiúscula de início de
     // frase, bem comum).
-    new RegExp(`(?i:\\b${TICKET_NOUN_SOURCE}s?)\\s+(${NOME_PROPRIO_SOURCE})\\s*[.?!]*$`, "u"),
+    // "(?!${OPERATOR_BY_EXCLUSION_SOURCE})" + exclusão de nível de
+    // prioridade (achado testando o lote de perguntas ao vivo — regressão
+    // do próprio fix acima): "Qual o percentual de tickets Urgentes?"
+    // (prioridade capitalizada no fim da frase, forma comum quando o
+    // usuário reforça o valor) batia igualzinho a um nome próprio de
+    // verdade — virava operador: "Urgentes", nome-lixo. Nível de
+    // prioridade não entra em OPERATOR_BY_EXCLUSION_SOURCE (declarado só
+    // pra palavras de domínio genéricas, não valores de catálogo) e
+    // PRIORIDADE_NIVEL_PLANO_SOURCE é declarado DEPOIS deste ponto do
+    // arquivo (não dá pra referenciar aqui) — por isso duplicado inline,
+    // mesmo motivo já documentado em STATUS_LITERAL_PHRASE_SOURCE acima.
+    new RegExp(
+      `(?i:\\b${TICKET_NOUN_SOURCE}s?)\\s+(?!(?i:baixa|media|alta|urgentes?)\\b)(?!(?i:${OPERATOR_BY_EXCLUSION_SOURCE}))(${NOME_PROPRIO_SOURCE})\\s*[.?!]*$`,
+      "u",
+    ),
   ]);
 }
 
@@ -3803,6 +3817,29 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Tickets abertos na última segunda-feira." (achado testando o lote de
+  // perguntas ao vivo): dia da semana como referência de período — forma
+  // não suportada (extractRelativeDateRange não tem noção de dia da
+  // semana), diferente de todo outro período não suportado já tratado no
+  // sistema (canal, comentários/anexos, proporção, métrica, comparação
+  // temporal), que sempre avisam honestamente — aqui a cláusula inteira era
+  // descartada em silêncio, sem dataInicio/dataFim nenhum e sem nenhum
+  // aviso, como se o filtro de dia não tivesse sido pedido. Só dispara
+  // quando NENHUMA data foi resolvida (não interfere com perguntas que já
+  // têm um período válido reconhecido por outro caminho).
+  const DIA_DA_SEMANA_SOURCE = "(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\\s+feira)?";
+  const isDiaDaSemanaQuestion = new RegExp(`\\b(?:[úu]ltim[ao]|n[oa]|ess[ae])\\s+${DIA_DA_SEMANA_SOURCE}\\b`, "u").test(text);
+
+  if (dataInicio === undefined && dataFim === undefined && isDiaDaSemanaQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_periodo_nao_suportado",
+      "Não consigo filtrar por dia da semana (ex.: \"última segunda-feira\") — só por data específica ou período relativo (hoje, essa semana, mês passado, etc.). Pode perguntar usando um desses jeitos?"
+        + "\n\nExemplos:\n"
+        + "- Tickets abertos essa semana.\n"
+        + "- Tickets abertos no dia 20/10/2026.",
+    );
+  }
+
   const entities = compactEntities({
     status,
     area,
@@ -4234,6 +4271,45 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Quantos tickets o departamento Suporte tem?\n"
         + "- Compare o departamento Suporte com o departamento Financeiro.",
+    );
+  }
+
+  // "Como estamos em relação ao mesmo período do ano passado?" (achado
+  // testando o lote de perguntas ao vivo): pergunta por uma COMPARAÇÃO
+  // TEMPORAL implícita entre 2 períodos (este vs. o equivalente anterior) —
+  // nenhuma tool compara 2 períodos entre si. Sem este guard, a pergunta
+  // virava um filtro de só 1 dos 2 períodos mencionados, devolvendo uma
+  // listagem SEM NENHUM FILTRO DE DIMENSÃO como se a comparação em si
+  // tivesse sido respondida.
+  // Guard "nenhuma dimensão capturada" (achado rodando a suíte depois desta
+  // mesma correção): "Quantos tickets o departamento Financeiro TEM
+  // comparado ao mês passado?" já tem teste próprio e ESTABELECIDO
+  // (intencional) que preserva o filtro de departamento mesmo sem dar a
+  // comparação de verdade — quando já existe uma entidade de verdade pra
+  // responder (ex.: "departamento Financeiro"), cair numa listagem
+  // filtrada por ela (ignorando só a parte da comparação) já é uma resposta
+  // honesta o bastante; o esclarecimento explícito aqui fica reservado pro
+  // caso em que NADA mais sobra pra responder (só a comparação, sem
+  // nenhuma dimensão citada).
+  const isTemporalComparisonQuestion =
+    area === undefined
+    && departamento === undefined
+    && operador === undefined
+    && cliente === undefined
+    && status === undefined
+    && prioridade === undefined
+    && new RegExp(
+      `\\b(?:em\\s+rela[çc][ãa]o\\s+a[oe]?|comparad[oa]\\s+(?:a[oe]?|com)(?:\\s+o)?)\\s+(?:mesmo\\s+)?(?:per[íi]odo|m[êe]s|ano|semana)(?:\\s+d[oe]\\s+ano)?\\s+passad[oa]\\b`,
+      "u",
+    ).test(text);
+
+  if (isTemporalComparisonQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_comparacao_temporal",
+      "Não calculo comparação automática entre 2 períodos — só consigo dar a contagem de cada período separadamente. Pode perguntar o total de cada período, um de cada vez?"
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets foram abertos esse mês?\n"
+        + "- Quantos tickets foram abertos no mês passado?",
     );
   }
 
@@ -5063,7 +5139,23 @@ function routeTicketQuestionCore(pergunta) {
     || new RegExp(`\\b(?:paragrafo|texto|mensagem)\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text)
     || new RegExp(`\\bresumo\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text);
 
-  if (isDashboardIntent || isResumoExecutivoIntent) {
+  // "Resumo operacional dos tickets." + "Só os abertos" (achado testando o
+  // lote de perguntas ao vivo — o chip de refinamento de kind:"operacional"
+  // documentado em web/shapes.js): a continuação mescla certo (detecta o
+  // marcador "só os"), mas isDashboardIntent dispara mesmo assim, só porque
+  // a frase "resumo operacional" ainda está presente no texto mesclado —
+  // resumo_operacional_tickets nem tem um parâmetro de situação pra filtrar
+  // (só area/departamento/dataInicio/dataFim), então o chip nunca conseguia
+  // estreitar nada, sempre devolvendo a visão geral inteira (abertos E
+  // fechados juntos) como se o pedido tivesse sido atendido. Quando o texto
+  // também pede explicitamente "só os abertos/fechados/encerrados", a
+  // intenção de dashboard cede lugar aos branches normais de isAbertoIntent/
+  // isFechadoIntent mais abaixo (que já reconhecem essas palavras e têm
+  // tool própria com filtro de situação de verdade).
+  const pedeSoAbertosOuFechados =
+    /\b(?:s[óo]|apenas)\s+os\s+(?:abert[oa]s?|fechad[oa]s?|encerrad[oa]s?)\b/.test(text);
+
+  if ((isDashboardIntent && !pedeSoAbertosOuFechados) || isResumoExecutivoIntent) {
     const decision = createTicketDecision(
       "resumo_operacional",
       "resumo_operacional_tickets",

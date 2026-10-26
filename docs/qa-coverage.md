@@ -146,6 +146,33 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 4 — gerado, aguardando execução — ângulos: F (chips/troca de tool), J (percentual/comparação temporal), união de valores, verbosidade (efeito real), O (write-guard adicional), C (datas raras), N (stress de filtros), A (coloquial)
+
+Motivo da escolha: ângulos nunca tocados nesta rodada do protocolo —
+verbosidade (`decision.verbosidade`) só foi checada por não colidir com
+outro intent, nunca pelo EFEITO real na resposta; união de valores
+(status/operador, "X ou Y") nunca testada desde antes do protocolo;
+comparação temporal ("em relação ao mês passado") e percentual nunca
+tocadas; chips de refinamento (`web/shapes.js`) nunca confirmados contra
+o roteador de verdade nesta rodada; write-guard só tem 2 variações
+testadas no Lote 1.
+
+- Perguntas: L04-T01 .. L04-T20 (ver mensagem do lote)
+- Dados reais usados: operador "Fabio Gali"/"Cesar Augusto de Mello",
+  área "Suporte", departamento "SYSADMIN", cliente "Cesar", status
+  "Aguardando"/"Em atendimento"/"Encerrada", prioridade "Alta"/"Urgente",
+  ticket real 4830
+- Resultado: **executado por mim** (routeTicketQuestion + servidor ao vivo, incluindo 4 encadeamentos de continuação)
+- **Regressão auto-descoberta e já corrigida durante o teste** (desvio de fluxo disclosed): "Qual o percentual de tickets Urgentes?" — o padrão bare "Tickets &lt;Nome&gt;" criado no Lote 2 (fix do "Tickets Fabio Gali") capturava QUALQUER palavra maiúscula no fim da frase como nome de operador, incluindo nível de prioridade ("Urgentes"). Corrigido com exclusão de `baixa/media/alta/urgente(s)` + `OPERATOR_BY_EXCLUSION_SOURCE`, ambas com modificador `(?i:...)` (a palavra capitalizada precisa ser reconhecida mesmo com o resto do padrão case-sensitive, pra não anular a heurística de nome próprio). Verificado seguro (712/712 antes de continuar testando o resto do lote).
+- Bugs encontrados (3, além da regressão acima):
+  1. L04-T01/T02 — os chips de refinamento documentados no próprio código (`web/shapes.js`, "Só os abertos"/"Só os fechados" pro resumo operacional) não conseguem de fato estreitar o resultado: `isDashboardIntent` trava a tool `resumo_operacional_tickets` só por "resumo operacional" aparecer em qualquer parte do texto mesclado, ignorando a continuação — confirmado ao vivo: os 2 chips devolvem a visão geral INTEIRA (abertos E fechados juntos), nunca só um lado.
+  2. L04-T06/T07 — comparação temporal implícita ("em relação ao mês passado", "pior esse mês comparado ao mês passado") não é detectada — a pergunta vira uma listagem de só 1 dos 2 períodos, sem nenhum aviso de que a comparação em si não foi feita.
+  3. L04-T16 — "última segunda-feira" (dia da semana) é silenciosamente ignorado, sem nenhum esclarecimento — inconsistente com o padrão já estabelecido pra outras limitações conhecidas (canal, comentários/anexos), que sempre avisam honestamente.
+- Confirmados corretos/por design: L04-T04 (continuação narrow certo via resumo_por_status filtrado), T05 (depois do fix da regressão), T08/T09/T10 (união de status/operador/prioridade), **T11/T12 (efeito REAL da verbosidade confirmado — "detalhado" inclui comentário de abertura, "resumido" não)**, **T13/T14/T15 (write-guard bloqueia as 3 variações, incluindo a especulativa "será que dava pra apagar")**, T18 (7 filtros simultâneos, nenhum perdido), T19, T20.
+- Limitação confirmada, não bug: L04-T03 ("Resume isso." não bate em nenhum marcador — falha com segurança, não inventa resumo); L04-T17 ("2 anos e meio" ignora o "e meio", período menor mas não errado).
+- Correções aplicadas: todos os 3 + a regressão corrigidos e verificados (716 testes passando, ao vivo e smoke test). Nota: a correção de comparação temporal precisou de escopo mais estreito do que o relatado inicialmente — um teste já estabelecido ("departamento Financeiro tem comparado ao mês passado") documenta que, quando já existe uma dimensão capturada, o comportamento intencional é aplicar o filtro e só descartar a comparação (não bloquear com esclarecimento); o novo `esclarecimento_comparacao_temporal` só dispara quando NENHUMA dimensão foi capturada (caso do T06; o T07, que tinha "área Suporte", passou a cair nesse comportamento já estabelecido em vez de esclarecer — ajuste descoberto rodando a suíte completa depois do fix)
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-routing.test.js`)
+
 ### Lote 3 — gerado, aguardando execução — ângulos: E (formato aprofundado), G (ambiguidade/termo vago), J (métrica/conceitual não suportada), B (negação combinada), N (extremos), H (parâmetro espúrio)
 
 Motivo da escolha: Lote 1 e 2 já cobriram L/O/I/F/D/K/M/N(básico)/H(básico)/G(grafia).
