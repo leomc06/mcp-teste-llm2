@@ -4782,3 +4782,31 @@ test("'N dias úteis' (achado testando com dados reais) pula sábado/domingo, em
   const corridos = extractRelativeDateRange("ultimos 3 dias", segunda);
   assert.equal(corridos.dataInicio, "2026-10-23");
 });
+
+test("'resumo' sozinho, sem 'geral/operacional/executivo' e sem nenhuma dimensão (achado testando com dados reais), vira resumo_operacional em vez de listagem crua que descarta a palavra 'resumo'", () => {
+  const route = routeTicketQuestion("Resumo do último semestre.");
+  assert.equal(route.intent, "resumo_operacional");
+  assert.equal(route.toolNames[0], "resumo_operacional_tickets");
+  assert.notEqual(route.entities.dataInicio, undefined);
+  assert.notEqual(route.entities.dataFim, undefined);
+
+  const comVerbo = routeTicketQuestion("Me dá um resumo do último semestre.");
+  assert.equal(comVerbo.intent, "resumo_operacional");
+
+  // Controles: nome de cliente/operador capturado continua caindo na
+  // listagem comum filtrada por esse nome (comportamento documentado e
+  // intencional, não alargado por essa correção).
+  const cliente = routeTicketQuestion("Resumo do cliente Cesar.");
+  assert.equal(cliente.intent, "listar");
+  assert.equal(cliente.entities.cliente, "Cesar");
+
+  const operador = routeTicketQuestion("Resumo do operador Fabio Gali.");
+  assert.equal(operador.intent, "listar");
+  assert.equal(operador.entities.operador, "Fabio Gali");
+
+  // Controle: "resumo por X"/"resumo geral" continuam intocados.
+  const porArea = routeTicketQuestion("Tickets por área.");
+  assert.equal(porArea.intent, "resumo_por_area");
+  const geral = routeTicketQuestion("Resumo geral de 10 de março a 20 de abril de 2025.");
+  assert.equal(geral.intent, "resumo_operacional");
+});

@@ -5563,6 +5563,31 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Resumo do último semestre." (achado testando o lote de perguntas ao
+  // vivo, com dados reais): "resumo" sozinho, sem "geral/operacional/
+  // executivo" (isDashboardIntent) e sem NENHUMA dimensão/valor capturado
+  // (nem conector "por X", nem filtro nomeado "da área X"/"do cliente Y"),
+  // não bate em nenhum dos branches acima — a palavra "resumo" inteira era
+  // descartada em silêncio e a pergunta virava uma listagem crua de
+  // tickets (só com o filtro de data, quando havia), escondendo a própria
+  // intenção de agregação pedida. Tratado como o mesmo sentido de "resumo
+  // geral", preservando as únicas 2 entidades que esse ponto do código
+  // ainda pode ter em mãos sem um valor nomeado (dataInicio/dataFim) — área/
+  // departamento/prioridade/status já são garantidamente undefined aqui
+  // (senão o bloco hasExplicitResumoWord logo acima já teria retornado).
+  // Guard exige cliente/operador também undefined: quando um nome FOI
+  // capturado, o comentário acima de mentionsClienteDimension já documenta
+  // que cair na listagem comum filtrada por esse nome é a resposta certa
+  // (não existe um "resumo por outra dimensão filtrado por cliente"
+  // natural) — não alargar esse caso aqui.
+  if (hasExplicitResumoWord && !cliente && !operador) {
+    return createTicketDecision(
+      "resumo_operacional",
+      "resumo_operacional_tickets",
+      compactEntities({ dataInicio, dataFim }),
+    );
+  }
+
   // Chegou até aqui sem nenhuma entidade "forte" extraída e sem nenhuma
   // palavra do vocabulário de tickets no texto — provavelmente a pergunta
   // não é sobre tickets (achado P1 da auditoria end-to-end). "operador"
