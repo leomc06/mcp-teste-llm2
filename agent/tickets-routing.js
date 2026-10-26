@@ -28,6 +28,24 @@ const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
 const TRAILING_PAGE_CLAUSE_PATTERN =
   /\s*\(?\s*p[áa]gina\s+\d+\)?\s*$/iu;
 
+// "mesmo que ele não exista"/"mesmo que não tenha" (achado testando o lote
+// de perguntas ao vivo — tentativa de induzir a IA a inventar um registro):
+// cláusula concessiva condicional no fim do valor capturado — "prioridade
+// Urgente MESMO QUE ELE NÃO EXISTA" vazava a cláusula inteira pro valor
+// (prioridade: "Urgente mesmo que ele não exista"), que nunca bate no
+// catálogo real, devolvendo a mensagem de "não encontrado" com a cláusula
+// suja em vez de só "Urgente".
+const TRAILING_MESMO_QUE_CLAUSE_PATTERN = /\s+mesmo\s+que\b.*$/iu;
+
+// "que não são do operador X" (achado testando o lote de perguntas ao
+// vivo): cláusula de negação relativa no fim do valor capturado — "do
+// operador Fabio Gali QUE NÃO SÃO DO OPERADOR Fabio Gali" vazava a
+// cláusula inteira pro nome (operador: "Fabio Gali que não são"). Só poda
+// a cláusula aqui (limpeza do nome); a detecção da CONTRADIÇÃO em si (mesmo
+// nome citado 2x, uma vez afirmando e outra negando) é feita à parte em
+// detectaContradicao(), contra o valor já limpo por este pattern.
+const TRAILING_SELF_NEGATION_CLAUSE_PATTERN = /\s+que\s+n[ãa]o\s+(?:[ée]|s[ãa]o)\b.*$/iu;
+
 // "e depois exporte em PDF/CSV" (achado testando o lote de perguntas ao
 // vivo): pedir um resumo/listagem e, na mesma frase, pedir pra exportar o
 // resultado (exportação em si é um botão só de frontend, ver web/app.js —
@@ -169,7 +187,7 @@ const TRAILING_STATE_CLAUSE_PATTERN = new RegExp(
 // equivalente pra "fechado" já funcionava (TRAILING_RESOLVED_CLAUSE_PATTERN
 // reaproveita CLOSURE_VERB_SOURCE, que já cobre a forma adjetiva "fechados"
 // etc.), mas não havia um pattern irmão pra esse vocabulário.
-const OPEN_STATE_ADJECTIVE_SOURCE =
+export const OPEN_STATE_ADJECTIVE_SOURCE =
   "(?:abert[oa]s?|pendentes?|congelad[oa]s?|travad[oa]s?|paralisad[oa]s?)";
 // "em" opcional antes do adjetivo (achado ao vivo: "a equipe de Suporte tem
 // EM aberto?" deixava "tem em" sobrando — o corte só pegava " aberto" sozinho,
@@ -202,7 +220,7 @@ const TRAILING_OPEN_STATE_CLAUSE_PATTERN = new RegExp(
 // status inteiro, virando uma listagem genérica (abertos+fechados
 // misturados). Só o radical "fech"/"fex" ganha a variante; os outros 5
 // sinônimos de fechamento não têm esse padrão de troca fonética comum.
-const CLOSURE_VERB_SOURCE =
+export const CLOSURE_VERB_SOURCE =
   "(?:fe(?:ch|x)(?:ad[oa]s?|ou|aram)"
   + "|encerr(?:ad[oa]s?|ou|aram)"
   + "|conclu(?:[íi]d[oa]s?|iu|[íi]ram)"
@@ -1298,6 +1316,8 @@ function cleanFreeText(value) {
     .replace(TRAILING_CONTINUATION_CLAUSE_PATTERN, "")
     .replace(TRAILING_FILTER_CLAUSE_PATTERN, "")
     .replace(TRAILING_STATE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_MESMO_QUE_CLAUSE_PATTERN, "")
+    .replace(TRAILING_SELF_NEGATION_CLAUSE_PATTERN, "")
     // Antes de TRAILING_RESOLVED_CLAUSE_PATTERN de propósito (mesma lógica
     // do comentário sobre TRAILING_CREATION_CLAUSE_PATTERN mais abaixo):
     // "já deveriam ter sido RESOLVIDOS" precisa ser podado inteiro primeiro
@@ -2107,6 +2127,25 @@ export function extractOperatorName(value) {
       `\\b${NEGATION_MARKER_SOURCE}\\s+(?:o\\s+|a\\s+)?(\\p{Lu}[\\p{L}'-]*(?:\\s+\\p{Lu}[\\p{L}'-]*)*)`,
       "u",
     ),
+    // "Tickets Fabio Gali." (achado testando o lote de perguntas ao vivo):
+    // justaposição pura, sem NENHUMA preposição entre o substantivo de
+    // ticket e o nome (nem "do"/"de"/"por"/"operador") — nenhum padrão
+    // acima bate, e o nome inteiro era descartado em silêncio, virando uma
+    // listagem sem filtro nenhum (a base inteira como resposta). Âncora
+    // dupla de propósito: exige NOME_PROPRIO (maiúscula) logo depois do
+    // substantivo de ticket E que não sobre mais nada depois (fim da
+    // frase, só pontuação opcional) — assim não arrisca capturar "tickets
+    // abertos hoje" (minúsculo) nem frases mais longas onde o resto depois
+    // do nome ainda precisa ser interpretado por outro padrão. Mesmo
+    // default de "forma ambígua cai em operador" já usado em outras
+    // perguntas bare (ex.: "Quantos tickets o Cesar tem?").
+    // "(?i:...)" (achado rodando esta própria correção): o resto do padrão
+    // precisa ficar FORA do modo case-insensitive (senão \p{Lu} também bate
+    // em minúscula — testado, "iu" junto anula a heurística de maiúscula
+    // inteira) — só o substantivo de ticket entra no grupo "(?i:...)", pra
+    // reconhecer tanto "tickets" quanto "Tickets" (maiúscula de início de
+    // frase, bem comum).
+    new RegExp(`(?i:\\b${TICKET_NOUN_SOURCE}s?)\\s+(${NOME_PROPRIO_SOURCE})\\s*[.?!]*$`, "u"),
   ]);
 }
 
@@ -4496,6 +4535,47 @@ function routeTicketQuestionCore(pergunta) {
     // declaração) — se a frase também pede "fechado"/"encerrado", as duas
     // coisas nunca podem ser verdade ao mesmo tempo.
     if (isFechadoIntent && status !== undefined) {
+      return true;
+    }
+
+    // "do operador X que não são do operador X" (achado testando o lote de
+    // perguntas ao vivo): a mesma pessoa é citada 2x na mesma pergunta, uma
+    // vez afirmando o filtro e outra negando — contradição direta na MESMA
+    // dimensão. Checado contra o valor JÁ limpo de `operador` (depois da
+    // poda de TRAILING_SELF_NEGATION_CLAUSE_PATTERN em cleanFreeText), não
+    // contra a cláusula suja, senão o 2º "Fabio Gali" nunca seria achado de
+    // novo no texto. Comparação em texto normalizado (sem acento/caixa) dos
+    // 2 lados, consistente com o resto desta função.
+    if (operador !== undefined) {
+      const operadorEscapado = normalizeText(operador).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+      if (
+        new RegExp(
+          `\\bque\\s+nao\\s+(?:e|sao)\\s+(?:d[oa]\\s+)?(?:operador\\s+)?${operadorEscapado}\\b`,
+          "u",
+        ).test(text)
+      ) {
+        return true;
+      }
+    }
+
+    // "há mais de 30 dias mas há menos de 10 dias" (achado testando o lote
+    // de perguntas ao vivo): 2 limiares de prazo contraditórios pra MESMA
+    // unidade na mesma pergunta — nenhum ticket pode estar aberto há mais
+    // de 30 E menos de 10 dias ao mesmo tempo. Sem este guard, só a 1ª
+    // cláusula virava filtro (extractRelativeDateRange só reconhece "há/faz
+    // mais de", não tem forma irmã "há/faz menos de" nenhuma hoje), a 2ª
+    // era descartada em silêncio, sem avisar da contradição.
+    const PRAZO_MAIS_DE_PATTERN = /\b(?:ha|faz)\s+mais\s+de\s+\d+\s+(dias?|semanas?|mes|meses|anos?)\b/u;
+    const PRAZO_MENOS_DE_PATTERN = /\b(?:ha|faz)\s+menos\s+de\s+\d+\s+(dias?|semanas?|mes|meses|anos?)\b/u;
+    const prazoMaisDeAchado = PRAZO_MAIS_DE_PATTERN.exec(text);
+    const prazoMenosDeAchado = PRAZO_MENOS_DE_PATTERN.exec(text);
+
+    if (
+      prazoMaisDeAchado
+      && prazoMenosDeAchado
+      && prazoMaisDeAchado[1].slice(0, 3) === prazoMenosDeAchado[1].slice(0, 3)
+    ) {
       return true;
     }
 

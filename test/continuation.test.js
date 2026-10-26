@@ -52,6 +52,17 @@ test("detectsContinuation: pedido de formato solto (sem palavra do domínio) con
   assert.equal(detectsContinuation("Mostre os tickets abertos em uma tabela."), false);
 });
 
+test("detectsContinuation: elipse sem artigo ('E fechados?'/'E abertos?', achado testando com dados reais) é reconhecida, em vez de virar pergunta nova fora do domínio", () => {
+  assert.equal(detectsContinuation("E fechados?"), true);
+  assert.equal(detectsContinuation("E abertos?"), true);
+  assert.equal(detectsContinuation("E congelados?"), true);
+
+  // Controle: "E <palavra qualquer>?" fora do vocabulário de situação não
+  // deve ser tratado como continuação só por começar com "E ".
+  assert.equal(detectsContinuation("E urgente?"), false);
+  assert.equal(detectsContinuation("E outra coisa totalmente diferente?"), false);
+});
+
 test("mergeContinuation: concatena com um espaço, aparando as pontas", () => {
   assert.equal(
     mergeContinuation("Resumo por status na área Suporte.  ", "  e desses só os abertos"),
