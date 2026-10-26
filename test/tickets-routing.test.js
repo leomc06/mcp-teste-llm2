@@ -4928,3 +4928,40 @@ test("'que X abriu e que ele também fechou' (achado testando com dados reais do
   const umaOracaoSo = routeTicketQuestion("Mostra os tickets que o Fábio Gali tratou.");
   assert.equal(umaOracaoSo.entities.operador, "Fábio Gali");
 });
+
+test("intervalo de data invertido (fim antes do início, achado testando com dados reais do Lote 3) pede esclarecimento, em vez de devolver 'nenhum ticket encontrado' como se fosse resposta válida", () => {
+  const route = routeTicketQuestion("Quantos tickets existem entre 2026-12-31 e 2026-01-01?");
+  assert.equal(route.intent, "esclarecimento_periodo_invertido");
+
+  // Controle: a mesma forma, com as datas na ordem certa, continua normal.
+  const ordemCerta = routeTicketQuestion("Quantos tickets existem entre 2026-01-01 e 2026-12-31?");
+  assert.notEqual(ordemCerta.intent, "esclarecimento_periodo_invertido");
+  assert.deepEqual([ordemCerta.entities.dataInicio, ordemCerta.entities.dataFim], ["2026-01-01", "2026-12-31"]);
+});
+
+test("'de forma visual'/'graficamente' (achado testando com dados reais do Lote 3) não vaza mais pro valor de prioridade capturado", () => {
+  const route = routeTicketQuestion("Quero visualizar a distribuição de tickets por prioridade de forma visual.");
+  assert.equal(route.intent, "resumo_por_prioridade");
+  assert.equal(route.entities.prioridade, undefined);
+  assert.equal(route.formato, "grafico");
+});
+
+test("'quanto custou' (achado testando com dados reais do Lote 3) aciona o mesmo esclarecimento de métrica não suportada já usado pra 'tempo médio'", () => {
+  const route = routeTicketQuestion("Quanto custou consertar os tickets urgentes esse mês?");
+  assert.equal(route.intent, "esclarecimento_metrica_nao_suportada");
+});
+
+test("'sem imagem nenhuma' (achado testando com dados reais do Lote 3) não dispara mais esclarecimento de negação por engano", () => {
+  const route = routeTicketQuestion("Resumo por área sem imagem nenhuma, só números.");
+  assert.equal(route.intent, "resumo_por_area");
+  assert.notEqual(route.intent, "esclarecimento_negacao");
+});
+
+test("'página -1' (achado testando com dados reais do Lote 3) pede esclarecimento, em vez de virar silenciosamente página 1", () => {
+  const route = routeTicketQuestion("Tickets do operador Fabio Gali, página -1.");
+  assert.equal(route.intent, "esclarecimento_pagina_invalida");
+
+  // Controle: página positiva continua funcionando normalmente.
+  const positiva = routeTicketQuestion("Tickets do operador Fabio Gali, página 2.");
+  assert.equal(positiva.entities.pagina, 2);
+});

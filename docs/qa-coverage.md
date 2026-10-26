@@ -146,6 +146,32 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 3 — gerado, aguardando execução — ângulos: E (formato aprofundado), G (ambiguidade/termo vago), J (métrica/conceitual não suportada), B (negação combinada), N (extremos), H (parâmetro espúrio)
+
+Motivo da escolha: Lote 1 e 2 já cobriram L/O/I/F/D/K/M/N(básico)/H(básico)/G(grafia).
+Faltava aprofundar: E (só testado com verbos/combos simples, não catálogo
+nem negação de formato), G (só grafia/case — faltava termo vago e nome com
+erro de digitação/ambiguidade real de departamento), J (ranking/resumo bem
+cobertos, mas as 3 clarificações de métrica/proporção/conceitual nunca
+foram tocadas nesta rodada), B (filtro positivo + negativo combinados,
+nunca testado), N (intervalo de data invertido, número -0).
+
+- Perguntas: L03-T01 .. L03-T20 (ver mensagem do lote)
+- Dados reais usados: área "Suporte" (com typo proposital), departamento
+  "Redes e Segurança"/"REDES COIDS" (ambiguidade real via substring
+  "REDES"), operador "Fabio Gali", departamento "SYSADMIN"/"Chefia",
+  áreas "Gestão"/"WEB", ticket real 4830
+- Resultado: **executado por mim** (routeTicketQuestion + servidor ao vivo)
+- Bugs encontrados (5, por ordem de severidade):
+  1. L03-T16 — intervalo de data INVERTIDO (dataInicio depois de dataFim) é aplicado sem aviso — confirmado ao vivo: devolve "Nenhum ticket foi encontrado" como se fosse uma resposta válida, escondendo que o período pedido não faz sentido.
+  2. L03-T03 — "de forma visual" (gatilho de gráfico já documentado) não tem o pattern irmão de LIMPEZA em `cleanFreeText` — vaza pra dentro do valor de prioridade capturado (`prioridade: "forma visual"`), derrubando pro tool errado (resumo_por_status em vez de resumo_por_prioridade).
+  3. L03-T10 — "quanto custou consertar..." (métrica de custo) não aciona `esclarecimento_metrica_nao_suportada` (que já existe e funciona pra "tempo médio", confirmado no T09) — cai silenciosamente numa listagem comum, como se a pergunta de custo tivesse sido respondida.
+  4. L03-T04 — "sem imagem nenhuma, só números" (negação de formato, não de filtro) dispara `esclarecimento_negacao` por engano — a detecção de negação não verifica se há um valor de dimensão de verdade por perto.
+  5. L03-T20 — "página -1" não é pego por nenhum guard (ao contrário de limite/número de ticket negativos, que já têm esclarecimento dedicado) — vira silenciosamente página 1, sem avisar que o pedido original não fazia sentido.
+- Confirmados corretos/por design: L03-T01, T02 (formato gráfico/tabela em catálogo e tool com gráfico, ambos ok), T05 (typo "Suport." resolve certo via substring/sufixo), T06 (ambiguidade real de departamento "REDES" detectada), T07, T08 (termo vago e referência vaga, ambos esclarecem certo), T09, T11, T12 (as 3 clarificações de métrica/conceitual/proporção existentes continuam funcionando), T13/T14/T15 (negação com filtro extra no meio continua detectada, sem aplicar filtro parcial por engano), T17 ("-0" tratado como inválido), T18 ("Tickets." sozinho não cai fora do domínio), T19 (paginação irrelevante ignorada graciosamente no detalhe de 1 ticket).
+- Correções aplicadas: todos os 5 corrigidos e verificados (712 testes passando, ao vivo e smoke test) — novo guard `esclarecimento_periodo_invertido` (dataInicio > dataFim); novo `TRAILING_FORMATO_VISUAL_CLAUSE_PATTERN` ("de forma visual/gráfica"/"graficamente"); vocabulário "quanto custa/custou" somado a `isUnsupportedMetricQuestion`; novo `TRAILING_SEM_VISUAL_CLAUSE_PATTERN` ("sem imagem/gráfico [nenhum(a)]"); novo guard `esclarecimento_pagina_invalida` (mesma família do limite negativo/zero, checado contra o texto cru)
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-routing.test.js`)
+
 ### Lote 2 — gerado, aguardando execução — ângulos: K, M, N, F (3+ turnos), H (limites), G (grafia)
 
 Motivo da escolha: Lote 1 já cobriu bem L/O/I/F(2 turnos)/D/E; a cobertura

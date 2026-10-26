@@ -98,8 +98,37 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // tabelas" não tem nome nenhum antes da cláusula (conector bare, sem nome
 // específico) — mesmo motivo do fix irmão em TRAILING_EXPORT_CLAUSE_PATTERN
 // acima.
+// "de forma visual"/"de forma gráfica"/"graficamente" (achado testando o
+// lote de perguntas ao vivo): FORMATO_GRAFICO_SOURCE já aceita essas 3
+// formas como gatilho de gráfico (ver detectFormatoPreferido), mas a
+// limpeza do nome capturado nunca ganhou o pattern irmão — "prioridade
+// ... DE FORMA VISUAL" vazava a cláusula inteira pro valor capturado
+// (prioridade: "forma visual"), que não bate em nenhum valor real do
+// catálogo e ainda derruba o roteamento pra um branch errado (o valor
+// "definido" bloqueia o branch certo de resumo_por_prioridade).
 const TRAILING_FORMAT_CLAUSE_PATTERN =
   /(?:^|\s+)em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
+// "(?:de\\s+)?" opcional, não obrigatório (achado rodando esta própria
+// correção): o próprio "de" inicial já é podado ANTES, pelo removedor de
+// artigo/preposição líder do começo de cleanFreeText (ex.: "de forma
+// visual" vira "forma visual" assim que é o 1º token da captura) — exigir
+// "de" obrigatório aqui nunca bateria nesse caso, bem comum (o valor
+// capturado costuma ser só a cláusula de formato inteira, sem nome real
+// antes pra sobrar o "de").
+const TRAILING_FORMATO_VISUAL_CLAUSE_PATTERN =
+  /(?:^|\s+)(?:graficamente|(?:de\s+)?forma\s+(?:gr[áa]fica|visual))\b.*$/iu;
+
+// "sem imagem nenhuma, só números" (achado testando o lote de perguntas ao
+// vivo): pedido de NÃO visual, fora do vocabulário de formato padrão ("sem
+// gráfico"/"sem tabela") — "Resumo por área SEM IMAGEM NENHUMA..." vazava
+// a cláusula inteira pro valor de área capturado (area: "sem imagem
+// nenhuma"), que começa com "sem" e por isso disparava
+// esclarecimento_negacao por engano (detectaNegacaoNaoSuportada vê
+// qualquer valor capturado começando com "sem" como exclusão de dimensão)
+// — a pergunta não tem NENHUMA exclusão de valor de verdade, só pede pra
+// não mostrar imagem.
+const TRAILING_SEM_VISUAL_CLAUSE_PATTERN =
+  /\s+sem\s+(?:imagem|gr[áa]fico)s?\s*(?:nenhum[ao])?\b.*$/iu;
 
 // "mas atendidos/tratados por outro operador" (achado testando o lote de
 // perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
@@ -1367,6 +1396,8 @@ function cleanFreeText(value) {
     .replace(TRAILING_EXPORT_CLAUSE_PATTERN, "")
     .replace(TRAILING_METRIC_CLAUSE_PATTERN, "")
     .replace(TRAILING_FORMAT_CLAUSE_PATTERN, "")
+    .replace(TRAILING_FORMATO_VISUAL_CLAUSE_PATTERN, "")
+    .replace(TRAILING_SEM_VISUAL_CLAUSE_PATTERN, "")
     .replace(TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN, "")
     // Depois de TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN de propósito: "mas
     // atendidos por outro operador" precisa ser podado inteiro primeiro
@@ -1610,6 +1641,13 @@ const ZERO_LIMIT_PATTERN = new RegExp(
   `\\b0\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
   "iu",
 );
+
+// "página -1" (achado testando o lote de perguntas ao vivo): mesma família
+// do limite negativo — normalizeText remove o "-" como pontuação antes de
+// extractPage rodar, então "página -1" virava silenciosamente "pagina 1"
+// (página válida), sem avisar que o pedido original não fazia sentido.
+// Checado contra o texto CRU, mesmo motivo dos patterns irmãos acima.
+const NEGATIVE_PAGE_PATTERN = /\bp[áa]gina\s+-\s*\d+\b/iu;
 
 function detectaReferenciaDeTicketInvalida(pergunta) {
   if (NEGATIVE_TICKET_NUMBER_PATTERN.test(pergunta)) {
@@ -3623,6 +3661,16 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  if (NEGATIVE_PAGE_PATTERN.test(pergunta)) {
+    return createClarificationDecision(
+      "esclarecimento_pagina_invalida",
+      "Esse número de página não parece válido (precisa ser pelo menos 1). Pode pedir uma página positiva?"
+        + "\n\nExemplos:\n"
+        + "- Tickets abertos na área Suporte, página 1.\n"
+        + "- Tickets abertos na área Suporte, página 2.",
+    );
+  }
+
   const numero = extractTicketNumber(pergunta);
   const formatoPreferido = detectFormatoPreferido(text);
   const verbosidadePreferida = detectVerbosidade(text);
@@ -3732,6 +3780,26 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Tickets abertos no dia 30 de abril.\n"
         + "- Tickets abertos entre 01/04/2026 e 30/04/2026.",
+    );
+  }
+
+  // "entre 2026-12-31 e 2026-01-01" (achado testando o lote de perguntas ao
+  // vivo): intervalo com o FIM antes do INÍCIO — checado logo aqui, mesmo
+  // espírito do guard de data de calendário impossível acima (antes de
+  // qualquer branch usar dataInicio/dataFim). Comparação de string funciona
+  // direto porque as 2 datas já vêm no formato ISO (AAAA-MM-DD), que ordena
+  // lexicograficamente igual a ordenar por data de verdade. Sem este guard,
+  // o intervalo invertido virava um filtro válido que nunca bate com nada,
+  // devolvendo "nenhum ticket encontrado" como se fosse uma resposta
+  // honesta pro período pedido, escondendo que o período em si não faz
+  // sentido.
+  if (dataInicio !== undefined && dataFim !== undefined && dataInicio > dataFim) {
+    return createClarificationDecision(
+      "esclarecimento_periodo_invertido",
+      "Esse período não faz sentido — o fim vem antes do início. Pode conferir a ordem das datas e perguntar de novo?"
+        + "\n\nExemplos:\n"
+        + "- Tickets abertos entre 01/04/2026 e 30/04/2026.\n"
+        + "- Tickets abertos no último mês.",
     );
   }
 
@@ -4119,6 +4187,12 @@ function routeTicketQuestionCore(pergunta) {
   const isUnsupportedMetricQuestion =
     /\b(?:mais|menos)\s+car[oa]s?\b/.test(text)
     || /\bqual\s+(?:o\s+|a\s+)?(?:pre[çc]o|custo)\b/.test(text)
+    // "Quanto custou consertar os tickets...?" (achado testando o lote de
+    // perguntas ao vivo): mesma pergunta de custo, mas com "quanto custou"
+    // em vez de "qual o custo" — forma tão comum quanto a já aceita, mas
+    // não reconhecida, caindo silenciosamente numa listagem comum (como se
+    // a pergunta de custo tivesse sido respondida de algum jeito).
+    || /\bquanto\s+(?:custa|custou)\b/.test(text)
     || /\bpre[çc]o\s+(?:m[ée]dio|total)\b/.test(text)
     || /\btempo\s+m[ée]dio\b/.test(text)
     || /\bm[ée]dia\s+de\s+tempo\b/.test(text)
