@@ -755,11 +755,17 @@ function formatClientActivity(data) {
   return linhas.join("\n");
 }
 
-// Não existe uma tool de "carga da área" equivalente a analisar_carga_
-// operador/analisar_atividade_cliente (ver comentário em
-// routeTicketQuestionCore) — listar_tickets com só o filtro de área é
-// reaproveitada pra comparação, e só o total importa aqui (não a lista de
-// tickets em si, que o "compare" nem exibe).
+// Não existe uma tool de "carga da área/departamento" equivalente a
+// analisar_carga_operador/analisar_atividade_cliente (ver comentário em
+// routeTicketQuestionCore) — listar_tickets com só o filtro de área OU de
+// departamento é reaproveitada pra comparação (extractAreaComparisonNames e
+// extractDepartmentComparisonNames, ambas em tickets-routing.js), e só o
+// total importa aqui (não a lista de tickets em si, que o "compare" nem
+// exibe). Rótulo precisa refletir QUAL dos 2 filtros foi de fato usado —
+// achado testando com dados reais ("Compare o departamento COIDS com o
+// departamento REDES COIDS."): o rótulo vinha sempre fixo em "Área", com o
+// valor aparecendo como "?" pra comparação de departamento (a função só
+// lia data.filtros?.area, nunca data.filtros?.departamento).
 function formatAreaTicketCount(data) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
@@ -769,7 +775,11 @@ function formatAreaTicketCount(data) {
     ? " (resultado parcial: consulta truncada por volume de tickets)"
     : "";
 
-  return `Área ${decodeHtmlEntities(data.filtros?.area ?? "?")}: ${data.total} ticket(s) no total${truncadoAviso}.`;
+  const [rotulo, valor] = data.filtros?.area !== undefined
+    ? ["Área", data.filtros.area]
+    : ["Departamento", data.filtros?.departamento ?? "?"];
+
+  return `${rotulo} ${decodeHtmlEntities(valor)}: ${data.total} ticket(s) no total${truncadoAviso}.`;
 }
 
 // "Compare X e Y" chama a MESMA tool duas vezes (uma por lado) — só faz

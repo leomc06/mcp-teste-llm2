@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatToolResults, hasSummarizableTicketContent } from "../agent/response-formatter.js";
+import { formatToolResults, hasSummarizableTicketContent, formatComparison } from "../agent/response-formatter.js";
 import { AgentError } from "../agent/agent-error.js";
 
 function format(tool, dados) {
@@ -625,4 +625,25 @@ test("o trecho do comentário de abertura fica CENTRADO no termo pesquisado, nã
   });
 
   assert.match(resposta, /IMPRESSORAS/);
+});
+
+test("comparação de 2 departamentos (achado testando com dados reais) rotula com 'Departamento', não 'Área ?', já que o filtro usado foi departamento", () => {
+  const resposta = formatComparison("listar_tickets", [
+    { filtros: { departamento: "COIDS" }, total: 18 },
+    { filtros: { departamento: "REDES COIDS" }, total: 25 },
+  ]);
+
+  assert.match(resposta, /Departamento COIDS: 18 ticket\(s\) no total\./);
+  assert.match(resposta, /Departamento REDES COIDS: 25 ticket\(s\) no total\./);
+  assert.doesNotMatch(resposta, /\?/);
+
+  // Controle: comparação de 2 áreas continua rotulando como "Área" (caso já
+  // suportado antes dessa correção, não pode regredir).
+  const respostaArea = formatComparison("listar_tickets", [
+    { filtros: { area: "Suporte" }, total: 10 },
+    { filtros: { area: "WEB" }, total: 5 },
+  ]);
+
+  assert.match(respostaArea, /Área Suporte: 10 ticket\(s\) no total\./);
+  assert.match(respostaArea, /Área WEB: 5 ticket\(s\) no total\./);
 });

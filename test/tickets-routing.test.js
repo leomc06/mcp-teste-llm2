@@ -4810,3 +4810,32 @@ test("'resumo' sozinho, sem 'geral/operacional/executivo' e sem nenhuma dimensã
   const geral = routeTicketQuestion("Resumo geral de 10 de março a 20 de abril de 2025.");
   assert.equal(geral.intent, "resumo_operacional");
 });
+
+test("ranking 'melhor(es)/pior(es) departamentos/áreas' (achado testando com dados reais), mesmo espelho já aplicado antes pra operador/cliente, não cai mais num listar_tickets genérico sem ranking nenhum", () => {
+  const melhoresDepartamentos = routeTicketQuestion("Quais os 3 melhores departamentos em volume de chamados?");
+  assert.equal(melhoresDepartamentos.intent, "resumo_por_departamento");
+  assert.equal(melhoresDepartamentos.entities.limite, 3);
+  assert.equal(melhoresDepartamentos.entities.ordem, undefined);
+
+  const pioresDepartamentos = routeTicketQuestion("Quais os 3 piores departamentos em volume de chamados?");
+  assert.equal(pioresDepartamentos.intent, "resumo_por_departamento");
+  assert.equal(pioresDepartamentos.entities.ordem, "asc");
+
+  const melhoresAreas = routeTicketQuestion("Quais as 3 melhores áreas em volume de chamados?");
+  assert.equal(melhoresAreas.intent, "resumo_por_area");
+  assert.equal(melhoresAreas.entities.limite, 3);
+
+  const pioresAreas = routeTicketQuestion("Quais as 3 piores áreas em volume de chamados?");
+  assert.equal(pioresAreas.intent, "resumo_por_area");
+  assert.equal(pioresAreas.entities.ordem, "asc");
+
+  // Controles: filtro nomeado (não ranking) continua caindo em listagem
+  // comum, sem ser sequestrado pelo novo gatilho.
+  const areaNomeada = routeTicketQuestion("Tickets da área Suporte.");
+  assert.equal(areaNomeada.intent, "listar");
+  assert.equal(areaNomeada.entities.area, "Suporte");
+
+  const departamentoNomeado = routeTicketQuestion("Tickets do departamento SYSADMIN.");
+  assert.equal(departamentoNomeado.intent, "listar");
+  assert.equal(departamentoNomeado.entities.departamento, "SYSADMIN");
+});

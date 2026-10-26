@@ -4721,6 +4721,24 @@ function routeTicketQuestionCore(pergunta) {
     "u",
   ).test(text);
 
+  // Mesma ideia de isWorstBestOperatorRankingIntent/isWorstBestClienteRankingIntent
+  // acima, mas pra ÁREA e DEPARTAMENTO (achado testando o lote de perguntas
+  // ao vivo, com dados reais): "Quais os 3 melhores departamentos em volume
+  // de chamados?" e a mesma forma com "áreas" não batiam em nenhum gatilho
+  // de resumo (mentionsAreaDimension/mentionsDepartmentDimension só
+  // reconhecem a forma conectora "área/departamento com mais tickets",
+  // substantivo ANTES do cue — não "melhores departamentos", adjetivo
+  // ANTES) — a pergunta inteira caía num listar_tickets genérico, sem
+  // ranking nem filtro de área/departamento nenhum (só o limite sobrava).
+  const isWorstBestAreaRankingIntent = new RegExp(
+    `\\b(?:pior(?:es)?|melhor(?:es)?)\\s+(?:${AREA_SYNONYM_SOURCE})s?\\b`,
+    "u",
+  ).test(text);
+  const isWorstBestDepartamentoRankingIntent = new RegExp(
+    `\\b(?:pior(?:es)?|melhor(?:es)?)\\s+departamentos?\\b`,
+    "u",
+  ).test(text);
+
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -4733,7 +4751,9 @@ function routeTicketQuestionCore(pergunta) {
     || new RegExp(`\\b${RANKING_CUE_SOURCE}\\b`).test(text)
     || mentionsAnyDimensionConnector
     || isWorstBestOperatorRankingIntent
-    || isWorstBestClienteRankingIntent;
+    || isWorstBestClienteRankingIntent
+    || isWorstBestAreaRankingIntent
+    || isWorstBestDepartamentoRankingIntent;
 
   // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
   // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
@@ -4896,7 +4916,7 @@ function routeTicketQuestionCore(pergunta) {
   // (achado testando o lote de perguntas ao vivo: "Resumo por área Suporte."
   // descartava "Suporte" em silêncio, devolvendo a distribuição de TODAS as
   // áreas).
-  if (hasResumoIntent && mentionsAreaDimension && area === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("area")) {
+  if (hasResumoIntent && (mentionsAreaDimension || isWorstBestAreaRankingIntent) && area === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("area")) {
     const decision = createTicketDecision(
       "resumo_por_area",
       "resumo_tickets_por_area",
@@ -4943,7 +4963,7 @@ function routeTicketQuestionCore(pergunta) {
   // ainda aqui, já que "Marketing" nem existe no catálogo real, e o usuário
   // recebia a distribuição por TODOS os departamentos como se fosse a
   // resposta certa, sem nenhum aviso de "departamento não encontrado").
-  if (hasResumoIntent && mentionsDepartmentDimension && departamento === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("departamento")) {
+  if (hasResumoIntent && (mentionsDepartmentDimension || isWorstBestDepartamentoRankingIntent) && departamento === undefined && !isSlaVencidoIntent && permiteDimensaoResumo("departamento")) {
     const decision = createTicketDecision(
       "resumo_por_departamento",
       "resumo_tickets_por_departamento",
