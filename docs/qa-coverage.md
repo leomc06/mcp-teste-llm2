@@ -146,6 +146,38 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 6 — gerado, aguardando execução — ângulos: K (sinônimos de tool ambíguos), J (comparação 3+/sem nome/dimensões diferentes — 3 esclarecimentos nunca exercitados), C (datas futuras relativas), N (paginação além do total), B (negação explícita de prioridade/status), E (negação de tabela, duplo formato), M (integridade de dados reais — contagens cruzadas), H (limite padrão de resumo_por_cliente)
+
+Motivo da escolha: `esclarecimento_comparacao_3_ou_mais`,
+`esclarecimento_comparacao_sem_nome` e
+`esclarecimento_comparacao_dimensoes_diferentes` existem no código (ver
+inventário) mas nunca foram exercitados em nenhum lote desta rodada do
+protocolo. Datas FUTURAS relativas ("mês que vem", "daqui a 2 semanas")
+nunca foram tocadas — todo o suporte de data confirmado até aqui é
+passado/presente. Paginação além do total de páginas existentes nunca foi
+testada (só página inválida -1/0). Negação explícita de prioridade/status
+("que não sejam Urgente") nunca foi isolada da negação de nome já coberta.
+Integridade de dados (M) só foi testada no nível de "a extração não
+quebra" (Lote 5) — nunca no nível de "os números batem entre 2 consultas
+diferentes sobre o mesmo filtro", que é o sentido real do item M do
+prompt.
+
+- Perguntas: L06-T01 .. L06-T20 (ver mensagem do lote)
+- Dados reais usados: operadores "Fabio Gali"/"Diego Mota"/"Cesar Augusto
+  de Mello", área "Suporte", departamento "SYSADMIN"
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pros casos sem API + 1 chamada por vez na API do OcoMon pros casos que dependem dela, conforme novo protocolo de execução sequencial)
+- Bugs encontrados (6, por ordem de severidade):
+  1. **T12 — mais grave: inversão de lógica.** "Tickets que não estejam com status Encerrada." caía em `listar_tickets_fechados` (oposto exato do pedido) — o prefixo de negação não reconhecia o subjuntivo "estejam"/"esteja" (só "esta"/"estao"/"foi"/"foram") nem "status" intercalado entre a negação e o valor.
+  2. T05 — "Compare os operadores." (sem nenhum nome) caía em `listar_tickets` sem filtro, em vez de `esclarecimento_comparacao_sem_nome` (existia no código, mas exigia "carga"/"atividade" antes do nome da dimensão — a forma direta e mais comum escapava).
+  3. T07 — "mês que vem" (período futuro) era ignorado em silêncio, sem filtro de data nenhum.
+  4. T08 — "daqui a N dias/semanas/..." (período futuro) mesmo problema do T07.
+  5. T09 — "depois de amanhã" era confundido com "amanhã" (+1 dia em vez de +2) — "amanha" é substring de "depois de amanha", o guard bare vencia primeiro.
+  6. T13 — "sem tabela nenhuma" disparava `esclarecimento_negacao` por engano (mesma classe de bug já corrigida pra "sem gráfico"/"sem imagem", nunca estendida pra tabela).
+- Confirmados corretos/por design: T01/T02 (seleção de tool certa entre sinônimos "mais antigos"/"abertos mais antigos"), T03 (carga sem nome vira ranking por operador, ok), T04 (`esclarecimento_comparacao_3_ou_mais` funciona), T06 (`esclarecimento_comparacao_dimensoes_diferentes` funciona), T10 (página 500 devolve vazio com segurança, sem travar nem inventar dado), T11 (`esclarecimento_negacao` pra prioridade funciona), T14 (pedido duplo de formato resolve consistente, pega o que vem por último no texto).
+- Integridade de dados (M) — tudo bateu: T15/T16 ("Total abertos" do resumo = total de `Tickets abertos na área Suporte`, 30=30), T17 (soma das prioridades = total geral, percentuais somam 100%), T18/T19 (total do departamento SYSADMIN ≥ fechados, 2541≥2540, consistente), T20 (`resumo_tickets_por_cliente` confirmado com limite padrão 20, não 50).
+- Correções aplicadas: todos os 6 corrigidos e verificados (732 testes passando, ao vivo na API do OcoMon e smoke test) — `NEGATED_CLOSED_SOURCE` ganhou subjuntivo + "status" intercalado; `mencionaComparacaoSemNome` não exige mais "carga"/"atividade" antes do nome da dimensão (+ "departamentos?" no vocabulário); novos blocos "mês que vem"/"próximo mês" e "daqui a N `<unidade>`" em `extractRelativeDateRange` (o 1º teve que ser reordenado pra não sequestrar o padrão mais específico "entre o dia X deste mês e o dia Y do mês que vem" — achado rodando a suíte depois do fix); novo guard "depois de amanhã" checado ANTES do "amanhã" bare; `TRAILING_SEM_VISUAL_CLAUSE_PATTERN` ganhou "tabela"/"planilha" no vocabulário.
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-routing.test.js`)
+
 ### Lote 5 — gerado, aguardando execução — ângulos: K (colisão de nome entre catálogos área/departamento), E/F (matriz de formato via continuação), B/J (canal e anexo não suportados combinados com filtro real), J (comparação relativa status/prioridade), M (duplicidade de filtro), N (data futura), A (coloquial extremo), O (ação externa embutida)
 
 Motivo da escolha: dados reais puxados ao vivo do catálogo revelaram que

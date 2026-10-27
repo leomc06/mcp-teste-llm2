@@ -127,8 +127,15 @@ const TRAILING_FORMATO_VISUAL_CLAUSE_PATTERN =
 // qualquer valor capturado começando com "sem" como exclusão de dimensão)
 // — a pergunta não tem NENHUMA exclusão de valor de verdade, só pede pra
 // não mostrar imagem.
+// "tabelas?|planilhas?" (achado testando com dados reais do Lote 6): mesmo
+// bug, só que pro lado oposto — "Resumo por prioridade SEM TABELA NENHUMA,
+// só em texto." (prioridade bare, sem nível nenhum dito) vazava a cláusula
+// inteira pro valor de prioridade capturado (ver 1º padrão de
+// extractPriorityName), e "sem tabela nenhuma" começando a cláusula
+// disparava esclarecimento_negacao do mesmo jeito. "gráfico"/"imagem" já
+// cobriam a negação de formato VISUAL; faltava o espelho pra tabela.
 const TRAILING_SEM_VISUAL_CLAUSE_PATTERN =
-  /\s+sem\s+(?:imagem|gr[áa]fico)s?\s*(?:nenhum[ao])?\b.*$/iu;
+  /\s+sem\s+(?:imagem|gr[áa]fico|tabela|planilha)s?\s*(?:nenhum[ao])?\b.*$/iu;
 
 // "mas atendidos/tratados por outro operador" (achado testando o lote de
 // perguntas ao vivo): "Tickets abertos PELO Rodrigo MAS ATENDIDOS POR OUTRO
@@ -599,6 +606,20 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: isoOntem, dataFim: isoOntem };
   }
 
+  // "depois de amanhã" (achado testando com dados reais do Lote 6): checado
+  // ANTES do "amanhã" bare logo abaixo, de propósito — "depois de amanhã"
+  // CONTÉM a palavra "amanha" como substring, então o guard bare sozinho
+  // sempre vencia primeiro e calculava +1 dia (hoje era literalmente
+  // ignorado), devolvendo a data de AMANHÃ pra uma pergunta sobre DEPOIS de
+  // amanhã — 1 dia errado, sem nenhum aviso.
+  if (/\bdepois\s+de\s+amanha\b/.test(text)) {
+    const depoisDeAmanha = new Date(agora);
+    depoisDeAmanha.setDate(depoisDeAmanha.getDate() + 2);
+    const isoDepoisDeAmanha = formatIsoDate(depoisDeAmanha);
+
+    return { dataInicio: isoDepoisDeAmanha, dataFim: isoDepoisDeAmanha };
+  }
+
   // "amanhã" (achado P4 da auditoria end-to-end): antes não tinha nenhum
   // padrão pra essa data relativa, então o filtro simplesmente desaparecia
   // em silêncio ("tickets abertos amanhã" virava "tickets abertos", sem
@@ -758,6 +779,26 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     const ultimoDia = new Date(agora.getFullYear(), agora.getMonth() + 1, 0);
 
     return { dataInicio: formatIsoDate(primeiroDia), dataFim: formatIsoDate(ultimoDia) };
+  }
+
+  // "mês que vem"/"próximo mês" (achado testando com dados reais do Lote 6):
+  // mesma ideia de "mês passado"/"último mês" acima, só olhando pra FRENTE
+  // — sem este bloco, "Quantos tickets vão abrir mês que vem?" não batia em
+  // nenhum período, o filtro inteiro desaparecia em silêncio e a pergunta
+  // caía numa listagem da base INTEIRA, como se tivesse sido respondida.
+  // Checado DEPOIS de entreDiasVirandoMesMatch (achado rodando esta própria
+  // correção, quebrou o teste de "entre o dia 25 deste mês e o dia 5 do mês
+  // que vem" — esse padrão específico de intervalo precisa ganhar da forma
+  // bare, senão "mês que vem" sozinho sequestra a frase inteira e vira só
+  // o mês seguinte, perdendo o recorte de dias).
+  if (/\bmes\s+que\s+vem\b/.test(text) || /\bpr[óo]ximo\s+mes\b/.test(text)) {
+    const primeiroDiaProximoMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 1);
+    const ultimoDiaProximoMes = new Date(agora.getFullYear(), agora.getMonth() + 2, 0);
+
+    return {
+      dataInicio: formatIsoDate(primeiroDiaProximoMes),
+      dataFim: formatIsoDate(ultimoDiaProximoMes),
+    };
   }
 
   // "nesse semestre"/"este semestre" (achado testando o lote de perguntas
@@ -1019,6 +1060,33 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     }
 
     return { dataInicio: formatIsoDate(inicio), dataFim: formatIsoDate(agora) };
+  }
+
+  // "daqui a N dias/semanas/meses/anos" (achado testando com dados reais do
+  // Lote 6) — mesma ideia de "últimos N <unidade>" logo acima, só pra
+  // FRENTE (1 data futura pontual, mesmo raciocínio de "amanhã"/"depois de
+  // amanhã"). Sem este bloco, "Tickets previstos para daqui a 2 semanas."
+  // não batia em nenhum período, o filtro inteiro desaparecia em silêncio.
+  const daquiAMatch = text.match(/\bdaqui\s+a\s+(\d+)\s+(dias?|semanas?|mes|meses|anos?)\b/iu);
+
+  if (daquiAMatch) {
+    const quantidade = Number(daquiAMatch[1]);
+    const unidade = daquiAMatch[2].toLowerCase();
+    const data = new Date(agora);
+
+    if (unidade.startsWith("dia")) {
+      data.setDate(data.getDate() + quantidade);
+    } else if (unidade.startsWith("semana")) {
+      data.setDate(data.getDate() + quantidade * 7);
+    } else if (unidade.startsWith("mes")) {
+      data.setMonth(data.getMonth() + quantidade);
+    } else {
+      data.setFullYear(data.getFullYear() + quantidade);
+    }
+
+    const isoData = formatIsoDate(data);
+
+    return { dataInicio: isoData, dataFim: isoData };
   }
 
   // "há mais de N dias/semanas/meses/anos" — período relativo EM ABERTO
@@ -4103,6 +4171,13 @@ function routeTicketQuestionCore(pergunta) {
   // fallback genérico de listagem sem filtro nenhum (despejando o banco
   // inteiro), em vez de pedir honestamente pra nomear quem comparar — o
   // sistema é 100% determinístico, não "escolhe" ninguém sozinho.
+  // "Compare os operadores." (achado testando com dados reais do Lote 6):
+  // a versão original exigia "carga"/"atividade" ANTES do nome da
+  // dimensão — a forma mais direta e comum, sem "carga"/"atividade"
+  // nenhuma, escapava por completo e caía no fallback de listagem sem
+  // filtro nenhum. "(?:(?:carga|atividade)\\b.*)?" agora é OPCIONAL (ponte
+  // antiga, continua valendo quando presente), não mais obrigatória —
+  // "departamentos?" também entrou no vocabulário de dimensão (faltava).
   const mencionaComparacaoSemNome =
     /\bcompar[ae]\b/.test(text)
     && new RegExp(
@@ -4110,7 +4185,7 @@ function routeTicketQuestionCore(pergunta) {
       // (plural "operadorES", não "operadors") misturado com palavras que já
       // terminam em vogal ("usuário"/"técnico", plural com só "s") — "es?"
       // cobre as duas famílias ao mesmo tempo sem precisar separar.
-      `\\b(?:carga|atividade)\\b.*\\b(?:${USER_LOOKUP_NOUN_SOURCE}|${CLIENT_LOOKUP_NOUN_SOURCE}|${AREA_SYNONYM_SOURCE})(?:es|s)?\\b`,
+      `\\b(?:(?:carga|atividade)\\b.*)?\\b(?:${USER_LOOKUP_NOUN_SOURCE}|${CLIENT_LOOKUP_NOUN_SOURCE}|${AREA_SYNONYM_SOURCE}|departamentos?)(?:es|s)?\\b`,
       "u",
     ).test(text);
 
@@ -4391,8 +4466,14 @@ function routeTicketQuestionCore(pergunta) {
   // lista: exige um artigo logo depois, pra não colidir com ranking
   // ascendente ("operador com MENOS tickets") nem limiar numérico ("MENOS
   // de 30 dias").
+  // "estejam"/"esteja" (subjuntivo, achado testando com dados reais do Lote
+  // 6) faltava ao lado das formas indicativas "esta"/"estao"/"foi"/"foram" —
+  // "Tickets que NÃO ESTEJAM com status Encerrada." não batia em
+  // NEGATED_CLOSED_SOURCE (isNegatedClosed ficava false), então
+  // isFechadoIntent via só a palavra "encerrada" solta e roteava pro OPOSTO
+  // exato do pedido (listar_tickets_fechados em vez de excluir os fechados).
   const NEGATION_PREFIX_SOURCE =
-    "(?:nao\\s+(?:esta\\s+|estao\\s+|foi\\s+|foram\\s+)?"
+    "(?:nao\\s+(?:esta\\s+|estao\\s+|esteja\\s+|estejam\\s+|foi\\s+|foram\\s+)?"
     + "|diferentes?\\s+de\\s+"
     + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|sem\\s+(?:contar\\s+)?(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
@@ -4403,7 +4484,11 @@ function routeTicketQuestionCore(pergunta) {
     + "|ignorando\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|ignor[ae]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|menos\\s+(?:o\\s+|a\\s+|os\\s+|as\\s+)?)";
-  const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}${CLOSURE_VERB_SOURCE}`;
+  // "(?:com\\s+)?status\\s+" opcional entre a negação e o verbo (mesmo
+  // achado): "não estejam COM STATUS Encerrada" tem "status" intercalado
+  // entre o prefixo de negação e o valor — sem essa ponte, o "\\s+" simples
+  // do prefixo nunca alcançava CLOSURE_VERB_SOURCE logo em seguida.
+  const NEGATED_CLOSED_SOURCE = `${NEGATION_PREFIX_SOURCE}(?:com\\s+)?(?:status\\s+)?${CLOSURE_VERB_SOURCE}`;
   const isNegatedClosed = new RegExp(`\\b${NEGATED_CLOSED_SOURCE}\\b`).test(text);
 
   // "foi aberto"/"foram abertos" é voz passiva pra dizer que o ticket foi

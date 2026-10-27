@@ -5083,3 +5083,77 @@ test("'em <ano>' sozinho (4 dígitos, sem dia/mês, achado testando com dados re
   assert.equal(dataCompleta.entities.dataInicio, "2026-05-10");
   assert.equal(dataCompleta.entities.dataFim, "2026-05-10");
 });
+
+test("'não estejam com status Encerrada' (subjuntivo + 'status' intercalado, achado testando com dados reais do Lote 6) resolve pros ABERTOS, em vez de inverter a lógica e listar só os FECHADOS", () => {
+  const route = routeTicketQuestion("Tickets que não estejam com status Encerrada.");
+  assert.equal(route.intent, "listar_abertos");
+
+  // Controles: outras formas de negação de fechado já suportadas antes
+  // continuam funcionando.
+  const indicativo = routeTicketQuestion("Tickets que não estão fechados.");
+  assert.equal(indicativo.intent, "listar_abertos");
+  const diferenteDe = routeTicketQuestion("Tickets diferentes de encerrado.");
+  assert.equal(diferenteDe.intent, "listar_abertos");
+
+  // Controle: pedido positivo de fechados continua funcionando.
+  const fechados = routeTicketQuestion("Tickets fechados.");
+  assert.equal(fechados.intent, "listar_fechados");
+});
+
+test("'Compare os operadores.' (sem nenhum nome, achado testando com dados reais do Lote 6) pede esclarecimento honesto, em vez de cair numa listagem sem filtro nenhum", () => {
+  const route = routeTicketQuestion("Compare os operadores.");
+  assert.equal(route.intent, "esclarecimento_comparacao_sem_nome");
+
+  const departamentos = routeTicketQuestion("Compare os departamentos.");
+  assert.equal(departamentos.intent, "esclarecimento_comparacao_sem_nome");
+
+  // Controles: comparação com 2 nomes de verdade continua funcionando.
+  const comNomes = routeTicketQuestion("Compare o operador Fabio Gali com o operador Diego Mota.");
+  assert.equal(comNomes.intent, "comparar_carga_operador");
+  const dimensoesDiferentes = routeTicketQuestion("Compare a área Suporte com o operador Fabio Gali.");
+  assert.equal(dimensoesDiferentes.intent, "esclarecimento_comparacao_dimensoes_diferentes");
+});
+
+test("período FUTURO relativo ('mês que vem'/'daqui a N dias', achado testando com dados reais do Lote 6) vira filtro de data, em vez de ser descartado em silêncio", () => {
+  const mesQueVem = routeTicketQuestion("Quantos tickets vão abrir mês que vem?");
+  assert.notEqual(mesQueVem.entities.dataInicio, undefined);
+  assert.notEqual(mesQueVem.entities.dataFim, undefined);
+
+  const daquiA = routeTicketQuestion("Tickets previstos para daqui a 2 semanas.");
+  assert.notEqual(daquiA.entities.dataInicio, undefined);
+  assert.equal(daquiA.entities.dataInicio, daquiA.entities.dataFim);
+
+  // Controle: o intervalo específico "entre o dia X deste mês e o dia Y do
+  // mês que vem" (já suportado antes) continua ganhando da forma bare nova.
+  const intervaloEspecifico = routeTicketQuestion("Tickets abertos entre o dia 25 deste mês e o dia 5 do mês que vem.");
+  const agora = new Date();
+  const inicio = new Date(agora.getFullYear(), agora.getMonth(), 25);
+  const fim = new Date(agora.getFullYear(), agora.getMonth() + 1, 5);
+  assert.equal(intervaloEspecifico.entities.dataInicio, inicio.toISOString().slice(0, 10));
+  assert.equal(intervaloEspecifico.entities.dataFim, fim.toISOString().slice(0, 10));
+});
+
+test("'depois de amanhã' (achado testando com dados reais do Lote 6) calcula +2 dias, em vez de ser confundido com 'amanhã' (+1 dia)", () => {
+  const agora = new Date();
+  const amanha = new Date(agora);
+  amanha.setDate(amanha.getDate() + 1);
+  const depoisDeAmanha = new Date(agora);
+  depoisDeAmanha.setDate(depoisDeAmanha.getDate() + 2);
+
+  const route = routeTicketQuestion("O que vai vencer depois de amanhã?");
+  assert.equal(route.entities.dataInicio, depoisDeAmanha.toISOString().slice(0, 10));
+
+  // Controle: "amanhã" sozinho continua calculando +1 dia normalmente.
+  const controle = routeTicketQuestion("Tickets abertos amanhã.");
+  assert.equal(controle.entities.dataInicio, amanha.toISOString().slice(0, 10));
+});
+
+test("negação de 'tabela' ('sem tabela nenhuma', achado testando com dados reais do Lote 6) não dispara mais esclarecimento de negação por engano", () => {
+  const route = routeTicketQuestion("Mostra o resumo por prioridade sem tabela nenhuma, só em texto.");
+  assert.equal(route.intent, "resumo_por_prioridade");
+  assert.equal(route.entities.prioridade, undefined);
+
+  // Controle: negação de imagem/gráfico (já corrigida antes) continua ok.
+  const semImagem = routeTicketQuestion("Mostra o resumo por área sem imagem nenhuma.");
+  assert.equal(semImagem.intent, "resumo_por_area");
+});
