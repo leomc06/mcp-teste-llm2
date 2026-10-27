@@ -11,6 +11,7 @@ import {
   findCancelledStatus,
   isTicketAberto,
   resolveMetaId,
+  resolveOperadorOuDimensaoCatalogo,
   describeNaoEncontrado,
   formatNaoEncontrados,
   filtrarPorPeriodo,
@@ -281,11 +282,41 @@ server.registerTool(
           resolveMetaId(() => ticketsApi.listPriorities(), prioridade),
         ]);
 
+      // "Tickets de Governança."/"Tickets de SYSADMIN." (achado testando o
+      // Lote 5 de QA, com dados reais): o roteador extrai bare "tickets de
+      // <valor>" sempre como operador, mesmo quando o valor é na verdade
+      // área/departamento — sem este fallback, falhava com "operador 'X'
+      // não encontrado" mesmo pra valores reais do catálogo. Só tenta
+      // quando operador é a ÚNICA dimensão capturada (ver
+      // resolveOperadorOuDimensaoCatalogo em ticket-helpers.js).
+      const recuperado = await resolveOperadorOuDimensaoCatalogo({
+        operador,
+        operadorResolvido,
+        outrasDimensoesDefinidas: status !== undefined || area !== undefined || departamento !== undefined || prioridade !== undefined,
+        listAreas: () => ticketsApi.listAreas(),
+        listDepartments: () => ticketsApi.listDepartments(),
+      });
+
+      if (recuperado.ambiguoEntreDimensoes) {
+        return success({
+          encontrado: false,
+          motivo: `"${operador}" é o nome de uma área e de um departamento ao mesmo tempo — pode perguntar "área ${operador}" ou "departamento ${operador}" pra eu saber qual você quis dizer?`,
+        });
+      }
+
+      const areaFinal = recuperado.area ?? area;
+      const areaResolvidaFinal = recuperado.area !== undefined ? recuperado.areaResolvida : areaResolvida;
+      const departamentoFinal = recuperado.departamento ?? departamento;
+      const departamentoResolvidoFinal =
+        recuperado.departamento !== undefined ? recuperado.departamentoResolvido : departamentoResolvido;
+      const operadorFinal = recuperado.operador;
+      const operadorResolvidoFinal = recuperado.operadorResolvido;
+
       const naoEncontrados = [
         describeNaoEncontrado("status", status, statusResolvido),
-        describeNaoEncontrado("área", area, areaResolvida),
-        describeNaoEncontrado("departamento", departamento, departamentoResolvido),
-        describeNaoEncontrado("operador", operador, operadorResolvido),
+        describeNaoEncontrado("área", areaFinal, areaResolvidaFinal),
+        describeNaoEncontrado("departamento", departamentoFinal, departamentoResolvidoFinal),
+        describeNaoEncontrado("operador", operadorFinal, operadorResolvidoFinal),
         describeNaoEncontrado("prioridade", prioridade, prioridadeResolvida),
       ].filter(Boolean);
 
@@ -298,12 +329,24 @@ server.registerTool(
 
       const filtrosBase = {
         status: statusResolvido.id,
-        area: areaResolvida.id,
-        department: departamentoResolvido.id,
-        operator: operadorResolvido.id,
+        area: areaResolvidaFinal.id,
+        department: departamentoResolvidoFinal.id,
+        operator: operadorResolvidoFinal.id,
       };
 
-      const filtros = { status, area, departamento, operador, cliente, prioridade, numero, dataInicio, dataFim, limite, pagina };
+      const filtros = {
+        status,
+        area: areaFinal,
+        departamento: departamentoFinal,
+        operador: operadorFinal,
+        cliente,
+        prioridade,
+        numero,
+        dataInicio,
+        dataFim,
+        limite,
+        pagina,
+      };
       const precisaFiltroLocal =
         cliente !== undefined || prioridade !== undefined || dataInicio !== undefined || dataFim !== undefined;
 

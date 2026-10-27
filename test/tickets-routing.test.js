@@ -5012,3 +5012,74 @@ test("'última segunda-feira' (dia da semana, achado testando com dados reais do
   const essaSemana = routeTicketQuestion("Tickets abertos essa semana.");
   assert.notEqual(essaSemana.entities.dataInicio, undefined);
 });
+
+test("'por prioridade DA área X' (contração 'da', achado testando com dados reais do Lote 5) resolve resumo_por_prioridade, em vez de vazar 'área X' inteiro pro valor de prioridade e derrubar pra resumo_por_status", () => {
+  const comDa = routeTicketQuestion("Qual o resumo de tickets por prioridade da área Suporte?");
+  assert.equal(comDa.intent, "resumo_por_prioridade");
+  assert.equal(comDa.entities.area, "Suporte");
+  assert.equal(comDa.entities.prioridade, undefined);
+
+  // Controle: a forma com "na" (já corrigida antes) continua funcionando.
+  const comNa = routeTicketQuestion("Qual o resumo de tickets por prioridade na área Suporte?");
+  assert.equal(comNa.intent, "resumo_por_prioridade");
+  assert.equal(comNa.entities.area, "Suporte");
+
+  // Mesma contração também vale pra departamento.
+  const departamento = routeTicketQuestion("Qual o resumo de tickets por prioridade do departamento SYSADMIN?");
+  assert.equal(departamento.intent, "resumo_por_prioridade");
+  assert.equal(departamento.entities.departamento, "SYSADMIN");
+});
+
+test("união de prioridades sem a palavra 'prioridade' ('Tickets Urgente ou Alta.', achado testando com dados reais do Lote 5) pede esclarecimento, em vez de aplicar só o 1º valor e descartar o 2º em silêncio", () => {
+  const bare = routeTicketQuestion("Tickets Urgente ou Alta.");
+  assert.equal(bare.intent, "esclarecimento_uniao_prioridades");
+
+  const comChamado = routeTicketQuestion("Tem mais chamado Urgente ou Alta hoje?");
+  assert.equal(comChamado.intent, "esclarecimento_uniao_prioridades");
+
+  // Controles: forma já suportada (com "prioridade") e prioridade única
+  // continuam funcionando normalmente.
+  const comPalavra = routeTicketQuestion("Tickets de prioridade Urgente ou Alta.");
+  assert.equal(comPalavra.intent, "esclarecimento_uniao_prioridades");
+  const unica = routeTicketQuestion("Tickets Urgentes.");
+  assert.equal(unica.entities.prioridade, "Urgente");
+});
+
+test("canal como valor literal do catálogo ('por telefone', achado testando com dados reais do Lote 5) pede esclarecimento, em vez de ignorar o filtro em silêncio", () => {
+  const comFiltro = routeTicketQuestion("Quantos tickets abertos por telefone na área Suporte?");
+  assert.equal(comFiltro.intent, "esclarecimento_canal_nao_suportado");
+
+  const bare = routeTicketQuestion("Quantos tickets vieram por telefone?");
+  assert.equal(bare.intent, "esclarecimento_canal_nao_suportado");
+
+  // Controle: a palavra "canal" já era reconhecida antes, continua ok.
+  const comPalavraCanal = routeTicketQuestion("Mostra os tickets por canal de atendimento.");
+  assert.equal(comPalavraCanal.intent, "esclarecimento_canal_nao_suportado");
+});
+
+test("'que têm anexo' (existência, sem quantidade, achado testando com dados reais do Lote 5) pede esclarecimento, em vez de vazar a cláusula pro valor de departamento capturado", () => {
+  const route = routeTicketQuestion("Mostra os tickets do departamento SYSADMIN que têm anexo.");
+  assert.equal(route.intent, "esclarecimento_comentario_anexo_nao_suportado");
+
+  // Controles: as formas com quantidade, já suportadas antes, continuam ok.
+  const comQuantidade = routeTicketQuestion("Tickets com mais de 2 comentários.");
+  assert.equal(comQuantidade.intent, "esclarecimento_comentario_anexo_nao_suportado");
+  const semNenhum = routeTicketQuestion("Tickets sem anexo nenhum.");
+  assert.equal(semNenhum.intent, "esclarecimento_comentario_anexo_nao_suportado");
+});
+
+test("'em <ano>' sozinho (4 dígitos, sem dia/mês, achado testando com dados reais do Lote 5) vira filtro de período (ano inteiro), em vez de ser descartado em silêncio", () => {
+  const futuro = routeTicketQuestion("Quantos tickets foram abertos em 2030?");
+  assert.equal(futuro.entities.dataInicio, "2030-01-01");
+  assert.equal(futuro.entities.dataFim, "2030-12-31");
+
+  const outroAno = routeTicketQuestion("Quantos tickets foram abertos em 2026?");
+  assert.equal(outroAno.entities.dataInicio, "2026-01-01");
+  assert.equal(outroAno.entities.dataFim, "2026-12-31");
+
+  // Controle: data completa (dia/mês/ano) continua funcionando normalmente,
+  // não é sequestrada pelo novo padrão de ano sozinho.
+  const dataCompleta = routeTicketQuestion("Quantos tickets foram abertos em 10/05/2026?");
+  assert.equal(dataCompleta.entities.dataInicio, "2026-05-10");
+  assert.equal(dataCompleta.entities.dataFim, "2026-05-10");
+});

@@ -9,6 +9,7 @@ import {
   findCancelledStatus,
   isTicketAberto,
   resolveMetaId,
+  resolveOperadorOuDimensaoCatalogo,
   describeNaoEncontrado,
   formatNaoEncontrados,
   filtrarPorPeriodo,
@@ -813,4 +814,94 @@ test("createCachedTicketsApi refaz a chamada real depois que o TTL expira", asyn
   await cached.listAreas();
 
   assert.equal(fake.chamadas.listAreas, 2);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: 'Governança' (achado testando o Lote 5, com dados reais) resolve pra área quando operador não bate em nenhum catálogo e nenhuma outra dimensão foi informada", async () => {
+  const operadorResolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "Governança",
+    operadorResolvido,
+    outrasDimensoesDefinidas: false,
+    listAreas: async () => [{ id: 15, name: "Governança" }],
+    listDepartments: async () => [{ id: 2, name: "SYSADMIN" }],
+  });
+
+  assert.equal(resultado.ambiguoEntreDimensoes, false);
+  assert.equal(resultado.area, "Governança");
+  assert.equal(resultado.areaResolvida.id, 15);
+  assert.equal(resultado.operador, undefined);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: 'SYSADMIN' resolve pra departamento quando só bate no catálogo de departamentos", async () => {
+  const operadorResolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "SYSADMIN",
+    operadorResolvido,
+    outrasDimensoesDefinidas: false,
+    listAreas: async () => [{ id: 10, name: "Suporte" }],
+    listDepartments: async () => [{ id: 2, name: "SYSADMIN" }],
+  });
+
+  assert.equal(resultado.ambiguoEntreDimensoes, false);
+  assert.equal(resultado.departamento, "SYSADMIN");
+  assert.equal(resultado.departamentoResolvido.id, 2);
+  assert.equal(resultado.operador, undefined);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: 'Governança' existindo com o MESMO nome em área E departamento (achado real) recusa honesto em vez de escolher 1 dos 2 lados", async () => {
+  const operadorResolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "Governança",
+    operadorResolvido,
+    outrasDimensoesDefinidas: false,
+    listAreas: async () => [{ id: 15, name: "Governança" }],
+    listDepartments: async () => [{ id: 9, name: "Governança" }],
+  });
+
+  assert.equal(resultado.ambiguoEntreDimensoes, true);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: não tenta a recuperação quando outra dimensão já foi informada explicitamente", async () => {
+  const operadorResolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "Governança",
+    operadorResolvido,
+    outrasDimensoesDefinidas: true,
+    listAreas: async () => [{ id: 15, name: "Governança" }],
+    listDepartments: async () => [{ id: 9, name: "Governança" }],
+  });
+
+  assert.equal(resultado.ambiguoEntreDimensoes, false);
+  assert.equal(resultado.area, undefined);
+  assert.equal(resultado.departamento, undefined);
+  assert.equal(resultado.operadorResolvido, operadorResolvido);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: operador resolvido com sucesso (nome real) não é alterado, mesmo que também bata em área/departamento", async () => {
+  const operadorResolvido = { id: 7, nomeCanonico: "Fabio Gali", naoEncontrado: false };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "Fabio Gali",
+    operadorResolvido,
+    outrasDimensoesDefinidas: false,
+    listAreas: async () => [],
+    listDepartments: async () => [],
+  });
+
+  assert.equal(resultado.operadorResolvido, operadorResolvido);
+  assert.equal(resultado.area, undefined);
+  assert.equal(resultado.departamento, undefined);
+});
+
+test("resolveOperadorOuDimensaoCatalogo: valor que não bate em nenhum catálogo mantém o erro original de operador", async () => {
+  const operadorResolvido = { id: undefined, nomeCanonico: undefined, naoEncontrado: true };
+  const resultado = await resolveOperadorOuDimensaoCatalogo({
+    operador: "Zzzzz",
+    operadorResolvido,
+    outrasDimensoesDefinidas: false,
+    listAreas: async () => [{ id: 10, name: "Suporte" }],
+    listDepartments: async () => [{ id: 2, name: "SYSADMIN" }],
+  });
+
+  assert.equal(resultado.ambiguoEntreDimensoes, false);
+  assert.equal(resultado.operadorResolvido, operadorResolvido);
 });

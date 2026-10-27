@@ -146,7 +146,42 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
-### Lote 4 — gerado, aguardando execução — ângulos: F (chips/troca de tool), J (percentual/comparação temporal), união de valores, verbosidade (efeito real), O (write-guard adicional), C (datas raras), N (stress de filtros), A (coloquial)
+### Lote 5 — gerado, aguardando execução — ângulos: K (colisão de nome entre catálogos área/departamento), E/F (matriz de formato via continuação), B/J (canal e anexo não suportados combinados com filtro real), J (comparação relativa status/prioridade), M (duplicidade de filtro), N (data futura), A (coloquial extremo), O (ação externa embutida)
+
+Motivo da escolha: dados reais puxados ao vivo do catálogo revelaram que
+"Governança", "Infraestrutura Científica" e "Redes e Segurança" existem
+com o MESMO NOME em área e em departamento — colisão nunca testada em
+nenhum lote anterior (todas as ambiguidades testadas até agora eram
+dentro de 1 só catálogo, nunca entre 2 catálogos diferentes). Também
+nunca tocados: `esclarecimento_canal_nao_suportado` e
+`esclarecimento_comentario_anexo_nao_suportado` combinados com um filtro
+real já reconhecido (só existência da clarificação foi confirmada antes,
+não o comportamento combinado); `esclarecimento_comparacao_relativa_status`/
+`_prioridade` (nunca exercitados nesta rodada do protocolo); duplicidade
+de filtro na mesma frase (M, nunca testado); data fora do range plausível
+(ano futuro, variação de N ainda não coberta — só período invertido foi
+testado no Lote 3).
+
+- Perguntas: L05-T01 .. L05-T20 (ver mensagem do lote)
+- Dados reais usados: áreas "Governança"/"Infraestrutura Científica"/
+  "Redes e Segurança"/"Gestão", departamentos "Governança"/
+  "Infraestrutura Científica"/"Redes e Segurança"/"GESTÃO"/"SYSADMIN",
+  operadores "Fabio Gali"/"Fábio Moreira" (colisão por acento),
+  "Diego Mota"/"Diego Ventura" (ambiguidade real já confirmada ao vivo),
+  canal real "Telefone", área "Suporte"
+- Resultado: **executado por mim** (routeTicketQuestion + servidor ao vivo)
+- Bugs encontrados (6, por ordem de severidade):
+  1. L05-T03/T04/T05 + controles — bare "Tickets de/da/do `<valor>`" (sem palavra-chave de dimensão) sempre assumia OPERADOR, mesmo pra valores reais de área/departamento — confirmado com "Tickets de Suporte."/"Tickets de SYSADMIN." (sem colisão nenhuma) e com os 3 pares colidentes reais (Governança/Infraestrutura Científica/Redes e Segurança existem com o MESMO nome em área E departamento) — mensagem enganosa "operador 'X' não encontrado".
+  2. Achado investigando T09 (continuação) — "por prioridade DA área X" (contração "da") vazava "área X" inteiro pro valor de prioridade, derrubando pra resumo_por_status; só a forma com "na" funcionava.
+  3. L05-T12 + controle — canal como valor literal do catálogo ("por telefone") nunca era reconhecido (só a PALAVRA "canal" disparava o esclarecimento já existente), ignorado em silêncio.
+  4. L05-T13 — "que têm anexo" (existência, sem quantidade) vazava pro valor de departamento capturado; o guard existente só cobria formas com número.
+  5. L05-T15 + controles — união de prioridades sem a palavra "prioridade" ("Tickets Urgente ou Alta.") aplicava só o 1º valor, descartando o 2º em silêncio.
+  6. L05-T18 — "em `<ano>`" sozinho (4 dígitos, sem dia/mês) nunca virava filtro de período, nem passado nem futuro — listagem totalmente sem filtro de data, como se a pergunta tivesse sido respondida.
+- Confirmados corretos/por design: T01, T02 (colisão área/departamento com palavra-chave explícita), T06 (departamento "gestão" minúsculo), T07 (ambiguidade real "Fabio Gali"/"Fábio Moreira"), T08 (cláusula de desambiguação podada), T09/T10/T11 (matriz de formato via continuação), T14 (resumo_operacional responde bem a "mais abertos ou fechados"), T16/T17 (duplicidade de filtro não quebra extração).
+- Correções aplicadas: todos os 6 corrigidos e verificados (727 testes passando, ao vivo e smoke test). Bug 1 exigiu mudança de arquitetura maior que os outros: novo helper `resolveOperadorOuDimensaoCatalogo` (`src/ticket-helpers.js`), usado só em `listar_tickets` (o tool que recebe a extração bare) — quando operador é a ÚNICA dimensão capturada e não resolve, tenta o MESMO valor contra área/departamento; se EXATAMENTE 1 bater, usa essa dimensão; se os 2 baterem (caso dos 3 pares colidentes reais), recusa honesto em vez de escolher um lado. Bugs 2/3/5/6 corrigidos em `agent/tickets-routing.js` (regex); bug 4 idem.
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-routing.test.js`, `test/ticket-helpers.test.js`)
+
+ — gerado, aguardando execução — ângulos: F (chips/troca de tool), J (percentual/comparação temporal), união de valores, verbosidade (efeito real), O (write-guard adicional), C (datas raras), N (stress de filtros), A (coloquial)
 
 Motivo da escolha: ângulos nunca tocados nesta rodada do protocolo —
 verbosidade (`decision.verbosidade`) só foi checada por não colidir com

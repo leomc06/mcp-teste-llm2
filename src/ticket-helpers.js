@@ -303,6 +303,104 @@ export function formatNaoEncontrados(naoEncontrados) {
   return `${naoEncontrados.join("; ")}.`;
 }
 
+// "Tickets de Governança."/"Tickets de SYSADMIN." (achado testando o Lote 5
+// de QA, com dados reais): o roteador (agent/tickets-routing.js) extrai
+// bare "ticket(s) de <valor>" (sem a palavra "área"/"departamento") sempre
+// como OPERADOR — ele não tem acesso ao catálogo real pra saber que
+// "Governança" é, na verdade, uma área. Sem este fallback, a resposta final
+// virava "operador 'Governança' não encontrado", escondendo que o sistema
+// reconhece esse valor perfeitamente bem, só que na dimensão errada — achado
+// confirmado tanto pra área quanto pra departamento, inclusive sem nenhuma
+// colisão de nome entre os 2 catálogos (ex.: "Tickets de Suporte." dava o
+// mesmo erro).
+//
+// Só tenta a recuperação quando operador é a ÚNICA dimensão capturada
+// (nenhum status/área/departamento/prioridade explícito concorrendo) —
+// nunca reatribui um valor que já tinha outro filtro ao lado, pra não
+// arriscar inventar uma 2ª dimensão que ninguém pediu. Quando o MESMO nome
+// bate em área E departamento ao mesmo tempo (achado com dados reais:
+// "Governança"/"Infraestrutura Científica"/"Redes e Segurança" existem com
+// o nome idêntico nos 2 catálogos), nenhuma suposição seria segura — recusa
+// honesto em vez de escolher 1 dos 2 lados sem motivo.
+export async function resolveOperadorOuDimensaoCatalogo({
+  operador,
+  operadorResolvido,
+  outrasDimensoesDefinidas,
+  listAreas,
+  listDepartments,
+}) {
+  if (
+    operador === undefined
+    || outrasDimensoesDefinidas
+    || !operadorResolvido.naoEncontrado
+    || operadorResolvido.ambiguo
+  ) {
+    return {
+      area: undefined,
+      areaResolvida: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      departamento: undefined,
+      departamentoResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      operador,
+      operadorResolvido,
+      ambiguoEntreDimensoes: false,
+    };
+  }
+
+  const [areaTentativa, departamentoTentativa] = await Promise.all([
+    resolveMetaId(listAreas, operador),
+    resolveMetaId(listDepartments, operador),
+  ]);
+
+  const bateArea = !areaTentativa.naoEncontrado;
+  const bateDepartamento = !departamentoTentativa.naoEncontrado;
+
+  if (bateArea && bateDepartamento) {
+    return {
+      area: undefined,
+      areaResolvida: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      departamento: undefined,
+      departamentoResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      operador,
+      operadorResolvido,
+      ambiguoEntreDimensoes: true,
+    };
+  }
+
+  if (bateArea) {
+    return {
+      area: operador,
+      areaResolvida: areaTentativa,
+      departamento: undefined,
+      departamentoResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      operador: undefined,
+      operadorResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      ambiguoEntreDimensoes: false,
+    };
+  }
+
+  if (bateDepartamento) {
+    return {
+      area: undefined,
+      areaResolvida: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      departamento: operador,
+      departamentoResolvido: departamentoTentativa,
+      operador: undefined,
+      operadorResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+      ambiguoEntreDimensoes: false,
+    };
+  }
+
+  return {
+    area: undefined,
+    areaResolvida: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+    departamento: undefined,
+    departamentoResolvido: { id: undefined, nomeCanonico: undefined, naoEncontrado: false },
+    operador,
+    operadorResolvido,
+    ambiguoEntreDimensoes: false,
+  };
+}
+
 // Corte antecipado seguro pra fetchAllTickets (ver comentário lá): só faz
 // sentido continuar paginando enquanto a página ainda tiver ticket dentro
 // do período pedido — como a API devolve em ordem decrescente de abertura,

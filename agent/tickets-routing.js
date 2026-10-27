@@ -2708,19 +2708,25 @@ export function extractPriorityName(value) {
     // testando o lote de perguntas ao vivo): "Resumo por prioridade E POR
     // ÁREA." usa "prioridade" só como conector, não valor — sem essa
     // exclusão, "e por área" inteiro virava prioridade: "e por área".
-    // "(?!(?:n[ao]\\s+)?(?:AREA_SYNONYM|departamento)\\b)" (achado testando
-    // o lote de perguntas ao vivo, com dados reais): "Resumo dos tickets
-    // POR PRIORIDADE na área Suporte..." usa "prioridade" como conector
-    // BARE (sem nenhum nível dito), seguido do filtro de OUTRA dimensão
-    // ("na área Suporte") — sem essa exclusão, "na área Suporte" inteiro
-    // virava prioridade: "na área Suporte" (nome-lixo, nunca bate com
-    // nenhuma prioridade real), e esse valor não-undefined escapava
+    // "(?!(?:[dn][ao]\\s+)?(?:AREA_SYNONYM|departamento)\\b)" (achado
+    // testando o lote de perguntas ao vivo, com dados reais): "Resumo dos
+    // tickets POR PRIORIDADE na área Suporte..." usa "prioridade" como
+    // conector BARE (sem nenhum nível dito), seguido do filtro de OUTRA
+    // dimensão ("na área Suporte") — sem essa exclusão, "na área Suporte"
+    // inteiro virava prioridade: "na área Suporte" (nome-lixo, nunca bate
+    // com nenhuma prioridade real), e esse valor não-undefined escapava
     // silencioso porque o branch de resumo_por_prioridade descartava a
     // própria prioridade capturada de qualquer forma — só virou visível
     // depois que esse descarte ganhou uma exceção pra filtro nomeado.
+    // "[dn][ao]" em vez de só "n[ao]" (achado testando o Lote 5, com dados
+    // reais): a 1ª versão só previa "na"/"no" — "Qual o resumo de tickets
+    // por prioridade DA área Suporte?" (contração de "de", tão comum quanto
+    // "na") não batia na exclusão, "da área Suporte" inteiro virava
+    // prioridade: "da área Suporte" (nome-lixo), derrubando pra
+    // resumo_por_status em vez de resumo_por_prioridade.
     new RegExp(
       `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
-        + `(?!(?:n[ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
+        + `(?!(?:[dn][ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
       "iu",
     ),
     // Ordem substantivo-nível invertida ("alta prioridade", tão natural
@@ -2736,6 +2742,25 @@ export function extractPriorityName(value) {
   ]);
 }
 
+// "Tickets Urgente ou Alta."/"Tem mais chamado Urgente ou Alta hoje?"
+// (achado testando o Lote 5, com dados reais): PRIORITY_LEVEL_UNIAO_PATTERNS
+// e PRIORIDADE_UNIAO_COMPACTA_PATTERN (em detectaUniaoDePrioridades) cobrem
+// união de prioridades quando a palavra "prioridade" aparece pelo menos 1
+// vez — mas "Urgente" bare já é reconhecido sozinho como prioridade (ver 2º
+// termo do ?? logo abaixo), então "Urgente ou Alta" SEM nenhum "prioridade"
+// na frase não batia em nada disso: o fallback bare capturava só "Urgente",
+// "ou Alta" era descartado em silêncio (prioridade: "Urgente", 2º valor
+// perdido). Pareia só com "urgente" bare de um dos lados (não generaliza
+// pra "alta ou baixa" sozinho — mesmo risco de falso positivo já citado
+// abaixo pra um nível bare isolado) — suficiente pra devolver o texto da
+// UNIÃO inteira em vez de só "Urgente", que PRIORIDADE_UNIAO_COMPACTA_PATTERN
+// já sabe reconhecer e recusar direito a partir daqui.
+const PRIORIDADE_UNIAO_BARE_URGENTE_PATTERN = new RegExp(
+  "\\burgentes?\\s+(?:e|ou)\\s+(?:de\\s+)?(?:baixa|media|alta)\\b"
+    + "|\\b(?:baixa|media|alta)\\s+(?:e|ou)\\s+urgentes?\\b",
+  "iu",
+);
+
 // "Urgente" é uma prioridade real do sistema (distinta de "Alta"), então a
 // palavra solta já é um sinal inequívoco, mesmo sem a palavra "prioridade"
 // do lado. "Crítico"/"críticos" é tratado como sinônimo de urgente pelo
@@ -2748,6 +2773,7 @@ export function extractPriorityIntent(value) {
 
   return (
     extractPriorityName(value)
+    ?? PRIORIDADE_UNIAO_BARE_URGENTE_PATTERN.exec(text)?.[0]
     ?? (/\burgente/.test(text) ? "Urgente" : undefined)
     ?? (/\bcritic[oa]s?\b/.test(text) ? "Urgente" : undefined)
   );
@@ -3353,6 +3379,26 @@ export function extractDateRange(value) {
   if (diaMatch) {
     const data = parseDateToken(diaMatch[1]);
     return { dataInicio: data, dataFim: data };
+  }
+
+  // "Quantos tickets foram abertos em 2030?"/"...em 2026?" (achado testando
+  // o Lote 5, com dados reais): ANO sozinho (4 dígitos, sem dia/mês) é tão
+  // comum quanto "esse ano"/"ano passado" (já suportados por
+  // extractRelativeDateRange, mas só pro ano ATUAL/ANTERIOR, nunca um ano
+  // específico) — sem este guard, "em 2030" não batia em nada (DATE_TOKEN_
+  // SOURCE exige dia+mês junto do ano), a cláusula inteira era descartada em
+  // silêncio e a pergunta caía numa listagem SEM FILTRO DE DATA NENHUM (base
+  // inteira), como se o ano pedido tivesse sido aplicado. Vale pra qualquer
+  // ano, não só futuro — nenhum ticket bater no período é uma resposta
+  // honesta (0 encontrados), diferente de ignorar o período por completo.
+  const anoMatch = text.match(/\bem\s+(\d{4})\b/iu);
+
+  if (anoMatch) {
+    const ano = Number(anoMatch[1]);
+    return {
+      dataInicio: formatIsoDate(new Date(ano, 0, 1)),
+      dataFim: formatIsoDate(new Date(ano, 11, 31)),
+    };
   }
 
   return extractRelativeDateRange(normalizeText(value)) ?? {};
@@ -5342,10 +5388,27 @@ function routeTicketQuestionCore(pergunta) {
   // texto livre que mencione "canal" incidentalmente (ex.: "busque tickets
   // sobre problema no canal de pagamentos") ainda deve seguir pra
   // extractSearchText, mais abaixo, sem ser hijackada por este guard.
+  // "Quantos tickets abertos por telefone na área Suporte?" (achado
+  // testando o Lote 5, com dados reais): o guard acima só reconhecia a
+  // PALAVRA "canal" — um valor real do catálogo de canais (telefone, email,
+  // whatsapp, sistema web) mencionado como filtro, sem a palavra "canal" do
+  // lado, passava batido e a cláusula era descartada em silêncio (mesmo
+  // problema que "canal" sozinho já resolvia, só que pra um vocabulário
+  // diferente). Só reconhece quando introduzido por uma preposição típica
+  // de canal ("por"/"via"/"pelo") — "telefone"/"email" soltos em outro
+  // contexto (ex.: busca de texto livre citando um telefone de contato)
+  // não devem ser hijackados por este guard.
+  const CANAL_VALOR_CATALOGO_SOURCE = "telefone|e-?mail|whatsapp|sistema\\s+web";
+  const mencionaValorDeCanalComoFiltro = new RegExp(
+    `\\b(?:por|via|pelo)\\s+(?:${CANAL_VALOR_CATALOGO_SOURCE})\\b`,
+    "iu",
+  ).test(text);
+
   const mencionaCanalComoFiltroOuDimensao =
     /\bpor\s+canal\b|\bcada\s+canal\b|\bpelo\s+canal\b|\bdo\s+canal\b|\bno\s+canal\b|\bcanal\s+de\s+atendimento\b/.test(
       text,
-    );
+    )
+    || mencionaValorDeCanalComoFiltro;
 
   if (mencionaCanalComoFiltroOuDimensao) {
     return createClarificationDecision(
@@ -5365,11 +5428,21 @@ function routeTicketQuestionCore(pergunta) {
   // Sem este guard, a cláusula inteira era descartada em silêncio e a
   // pergunta caía numa listagem SEM FILTRO NENHUM, como se "mais de 2
   // comentários" tivesse sido entendido e aplicado.
+  // "Mostra os tickets do departamento SYSADMIN QUE TÊM ANEXO." (achado
+  // testando o Lote 5, com dados reais): as 3 formas abaixo (mais/menos de
+  // N, com N, sem nenhum) exigem uma QUANTIDADE — a forma mais comum na
+  // prática, de EXISTÊNCIA sem número nenhum ("que tem/têm anexo", "com
+  // anexo" bare), não batia em nenhuma — a cláusula inteira vazava pro
+  // extrator de departamento, que não tem como saber podar "que têm anexo"
+  // (nunca viu essa forma), virando departamento: "SYSADMIN que têm anexo"
+  // (nome-lixo, nunca bate no catálogo real).
   const COMENTARIO_ANEXO_FILTRO_SOURCE = "(?:coment[áa]rios?|anexos?)";
   const mencionaComentarioOuAnexoComoFiltro = new RegExp(
     `\\b(?:mais|menos)\\s+de\\s+\\d+\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
       + `|\\bcom\\s+\\d+\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
-      + `|\\bsem\\s+(?:nenhum\\s+)?${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`,
+      + `|\\bsem\\s+(?:nenhum\\s+)?${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
+      + `|\\b(?:tem|t[êe]m|possui|possuem)\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`
+      + `|\\bcom\\s+${COMENTARIO_ANEXO_FILTRO_SOURCE}\\b`,
     "u",
   ).test(text);
 
