@@ -38,6 +38,17 @@ test("detectsContinuation: novos marcadores (forma feminina, 'agora', 'quantas s
   assert.equal(detectsContinuation("Quantos é?"), true);
 });
 
+// "E como cliente?" (achado testando o lote de perguntas ao vivo — Lote
+// 9, pergunta 17): troca de dimensão SEM repetir o nome, depois de
+// perguntar sobre carga/atividade de alguém que é cliente E operador ao
+// mesmo tempo (achado real do Lote 8) — sem este marcador, a frase
+// isolada caía direto no fallback final de listar_tickets SEM FILTRO
+// NENHUM, despejando o sistema inteiro (confirmado ao vivo).
+test("detectsContinuation: 'e como X?' (troca de dimensão da mesma pessoa, achado testando com dados reais do Lote 9)", () => {
+  assert.equal(detectsContinuation("E como cliente?"), true);
+  assert.equal(detectsContinuation("E como operador?"), true);
+});
+
 // Achado na auditoria: um pedido de formato "solto" (sem nenhuma palavra do
 // domínio de tickets) não tinha como ser roteado standalone — falhava o
 // portão de domínio e devolvia "não entendi", mesmo havendo uma pergunta

@@ -42,6 +42,16 @@ const CONTINUATION_LEADING_MARKERS = [
   new RegExp(`^apenas\\s+${PLURAL_ARTICLE_SOURCE}\\b`),
   /^e\s+quanto\s+a(?:os?)?\b/,
   /^e\s+por\b/,
+  // "E como cliente?" (achado testando o lote de perguntas ao vivo — Lote
+  // 9, pergunta 17): troca de dimensão SEM repetir o nome, depois de
+  // perguntar sobre carga/atividade de alguém que é cliente E operador ao
+  // mesmo tempo (achado real do Lote 8) — "e por" já cobre troca de
+  // dimensão de AGRUPAMENTO ("por área" → "por prioridade"), mas não essa
+  // forma com "como" (qualificador de papel/dimensão da PESSOA, não de
+  // agrupamento). Sem este marcador, a frase isolada ("E como cliente?",
+  // sem nenhum nome) caía direto no fallback final de listar_tickets SEM
+  // FILTRO NENHUM, despejando o sistema inteiro.
+  /^e\s+como\b/,
   /^agora\b/,
   /^quant[ao]s?\s+(?:sao|e)\b/,
   new RegExp(`^e\\s+${BARE_SITUACAO_SOURCE}\\b`),

@@ -146,6 +146,116 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 9 — gerado, aguardando execução — ângulos: K (valor de STATUS real que contém a palavra "operador"/"usuário" dentro do próprio nome — nunca testada), O+F (write-guard/ação externa disparando numa CONTINUAÇÃO de 2 turnos, não só na pergunta isolada), I (contradição afirmativa+negativa no mesmo valor colidente área/departamento), G (typo duplo em nomes novos do Lote 8), A (coloquial extremo revisitado), C (feriado, fim de semana passado), M (integridade Cancelado vs fechados), F (3 turnos explorando o fix de colisão operador/cliente do Lote 8, com qualificador "como operador(a)"/"como cliente" nunca testado), J (comparação entre 2 valores de STATUS — dimensão nunca testada em comparação)
+
+Motivo da escolha: o catálogo real de status tem pelo menos 4 nomes que
+contêm literalmente a palavra "operador" ou "usuário" dentro do próprio
+valor ("Reservado para operador", "Encaminhado para operador", "Agendado
+com o usuário", "Aguardando feedback do usuário") — nunca testados, e um
+risco concreto de colisão porque "operador"/"usuário" são justamente as
+palavras-gatilho que o roteador usa pra capturar o FILTRO de operador em
+outro lugar do código. O write-guard e o novo guard de ação externa
+(Lote 7) só foram testados em perguntas isoladas até agora, nunca através
+de uma continuação de 2 turnos (o código já checa isso explicitamente,
+mas nunca foi exercitado ao vivo). A colisão operador/cliente da mesma
+pessoa (corrigida no Lote 8) nunca foi testada com o qualificador "como
+operador(a)"/"como cliente" nem numa cadeia de 3 turnos terminando em
+comparação. Comparação entre 2 valores de STATUS nunca foi tentada (só
+comparação entre pessoas/áreas/departamentos até agora).
+
+- Perguntas: L09-T01 .. L09-T20 (ver mensagem do lote)
+- Dados reais usados: status "Reservado para operador"/"Encaminhado para
+  operador"/"Agendado com o usuário"/"Aguardando feedback do
+  usuário"/"Com Backup"/"Cancelado", operador "Fabio Gali", pessoa
+  colidente "Wanilene Cassiano" (operador E cliente), ticket real 4830,
+  nomes com typo duplo "Darío Gerardo Fantini"/"Guilherme Bággio Martins
+  Machado" (ambos do Lote 8)
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo)
+- Bugs encontrados (5, por ordem de severidade):
+  1. T08 — "Tickets que sejam da Governança e que também não sejam do
+     departamento Governança.": a negação é completamente perdida E um
+     valor-lixo é capturado como operador (`"Governança e que também não
+     sejam"`), por uma cláusula bare "da Governança" (sem palavra-chave)
+     que não é podada por nenhum `TRAILING_*_CLAUSE_PATTERN` existente —
+     confirmado ao vivo com a mensagem enganosa `operador "Governança e
+     que também não sejam" não encontrado`, parecendo erro de nome em vez
+     de uma negação não suportada.
+  2. T12 — "Quantos tickets foram abertos no último feriado?": "feriado"
+     é ignorado por completo, e "último" sozinho é lido como pedido de
+     `listar_tickets_mais_recentes` com `limite: 1` — confirmado ao vivo
+     devolvendo o ticket mais recente do sistema como se fosse resposta
+     sobre feriado.
+  3. T13 — "Tickets abertos no fim de semana passado.": o período é
+     descartado em silêncio (nenhuma entidade de data) — confirmado ao
+     vivo devolvendo os 66 tickets abertos do sistema inteiro.
+  4. T17 — "E como cliente?" (continuação depois de "Quantos tickets a
+     Wanilene Cassiano tem como operadora?"): não bate em nenhum
+     marcador de continuação (lista atual não cobre "e como X") — a
+     frase isolada ("E como cliente?", sem o nome) é roteada por conta
+     própria e cai em `listar_tickets` SEM FILTRO NENHUM — confirmado ao
+     vivo devolvendo os 5268 tickets do sistema inteiro.
+  5. T16 — "Quantos tickets a Wanilene Cassiano tem COMO OPERADORA?": o
+     qualificador explícito "como operador(a)" depois de "tem" quebra a
+     âncora `tem\s*[?!.]*$` de `extractOperatorWorkloadName`, perdendo a
+     intenção de carga — o nome ainda é capturado por outro caminho (sem
+     perder o filtro), mas a tool vira `listar_tickets` genérico em vez
+     de `analisar_carga_operador`. Menos grave que os 4 acima (resposta
+     continua filtrada certo, só menos rica).
+- Confirmados corretos/por design: T01/T02/T03/T04 (4 status reais com
+  "operador"/"usuário" no próprio nome, todos capturados por completo,
+  sem colisão nenhuma com o filtro de operador — ao vivo com dados reais,
+  incluindo T04 com 6 tickets reais retornados), T05 (o MESMO status
+  colidente + um filtro de operador real na mesma frase, os 2 aplicados
+  corretos simultaneamente), T06/T07 (write-guard E o guard de ação
+  externa do Lote 7 disparam corretos através de continuação, confirmado
+  ao vivo), T09/T10 (typo duplo em nomes reais falha honesto com "não
+  encontrado"/fora do domínio — mesma política já estabelecida pra
+  abreviação/typo extremos, substring matching não é fuzzy matching de
+  verdade), T11 (coloquial extremo com gíria reconhece o pedido real),
+  T14/T15 (integridade: Cancelado=31 ≤ fechados=5171, consistente), T18
+  ("Compare os dois." sozinho, sem nome nenhum dito nesse turno, falha
+  com segurança em `fora_do_dominio`, não inventa comparação), T19
+  (status "Com Backup" capturado por completo, "Com" não é podado como
+  ruído), T20 (comparação entre 2 status recusa honesto, mesmo padrão já
+  aceito pra outras comparações de dimensão mista).
+- Correções aplicadas: todos os 5 corrigidos e verificados (746 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T08):
+  generalizado o check de autocontradição em `detectaContradicao` (antes
+  só operador) pra também cobrir área/departamento, com vocabulário
+  verbal ampliado ("seja"/"sejam" além de "é"/"são", "também" opcional
+  interposto) — `hasNegationBefore` foi considerado pra esse fix (fazê-lo
+  checar TODAS as ocorrências do valor, não só a 1ª) mas revertido: quebrava
+  o teste existente de autocontradição de operador (passava a disparar
+  `esclarecimento_negacao` em vez de `esclarecimento_contradicao` pro
+  mesmo caso), então a correção certa era generalizar o check de
+  contradição em si, não o de negação. Bugs 2/3 (T12/T13): novo guard
+  `isFeriadoOuFimDeSemanaQuestion` ("feriado"/"fim de semana"), no mesmo
+  lugar do guard de dia da semana — resolve os 2 de uma vez, incluindo o
+  problema raiz do T12 ("último" sequestrando a pergunta pra
+  `mais_recentes` antes mesmo de qualquer exclusão de vocabulário
+  entrar em jogo). Bug 4 (T17): novo marcador de continuação `/^e\s+como\b/`
+  em `agent/continuation.js`. Bug 5 (T16): `extractOperatorWorkloadName`
+  ganhou tolerância a "como operador(a)" opcional depois de "tem".
+- Nota incidental (achado ajustando o teste do bug 1, não corrigido —
+  fora do escopo reportado): "departamento X que não É [singular,
+  indicativo] do departamento X" ainda deixa um resíduo ("X que não é")
+  no valor de departamento capturado — só a forma plural "não SÃO"/"não
+  SEJAM" limpa certo. Não afeta o bug 1 em si (a frase real sempre usou
+  "sejam"), mas é a mesma classe de limitação de `cleanFreeText` já vista
+  antes; registrado pra um lote futuro.
+- Nota incidental (bug 4, escopo da correção): o fix garante que "E como
+  cliente?" não desperdiça o filtro (não some pro fallback sem filtro
+  nenhum) — mas ainda NÃO troca a dimensão pra cliente de verdade
+  (continua filtrando por operador, preservando o resultado do turno
+  anterior). Trocar a dimensão exigiria ensinar `extractClientActivityName`
+  a reconhecer "como cliente" como qualificador bare (sem a palavra
+  "cliente" antes do nome) — fora do escopo reportado (a severidade
+  reportada era o despejo sem filtro, já eliminado).
+- Regressão pendente: nenhuma — testes já criados
+  (`test/tickets-routing.test.js`, `test/continuation.test.js`)
+
 ### Lote 8 — gerado, aguardando execução — ângulos: K (colisão de nome entre operador E cliente — mesma pessoa nos 2 catálogos, nunca testada), G (typo em nome real novo, plural de departamento com 0 tickets), H (limite "todos"/por extenso/"sem limite"), E (gráfico pedido numa tool sem suporte — nunca confirmado ao vivo, só documentado como "by design"), N (departamento real com 0 tickets, distinto de "não encontrado"), C (recorrência semanal — "toda segunda-feira"), M (integridade cruzada com COIDS=18), J (comparar o mesmo operador/pessoa como operador E como cliente), B+K (negação combinada com valor colidente, repetida nas 2 formas), F (continuação meta — "ele é operador ou cliente?")
 
 Motivo da escolha: a colisão de nome entre ÁREA e DEPARTAMENTO já foi

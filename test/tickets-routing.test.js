@@ -1267,6 +1267,31 @@ test("routeTicketQuestion: 'Quantos tickets a Ana Costa tem?' vira analisar_carg
   assert.equal(route.entities.operador, "Ana Costa");
 });
 
+// "Quantos tickets a Wanilene Cassiano tem COMO OPERADORA?" (achado
+// testando o lote de perguntas ao vivo — Lote 9, pergunta 16): o
+// qualificador explícito "como operador(a)" (útil pra gente que é
+// cliente E operador ao mesmo tempo, achado real do Lote 8) quebrava a
+// âncora "tem\s*[?!.]*$" — o nome ainda era capturado por outro caminho
+// (sem perder o filtro), mas a tool virava listar_tickets genérico em vez
+// de analisar_carga_operador, perdendo o resumo de carga — confirmado ao
+// vivo.
+test("'quantos tickets <nome> tem como operador(a)?' continua virando analisar_carga_operador, não listar_tickets genérico", () => {
+  const route = routeTicketQuestion("Quantos tickets a Wanilene Cassiano tem como operadora?");
+  assert.deepEqual(route.toolNames, ["analisar_carga_operador"]);
+  assert.equal(route.entities.operador, "Wanilene Cassiano");
+
+  const masculino = routeTicketQuestion("Quantos chamados o Fabio Gali tem como operador?");
+  assert.deepEqual(masculino.toolNames, ["analisar_carga_operador"]);
+  assert.equal(masculino.entities.operador, "Fabio Gali");
+
+  // Controle: a forma mais complexa (com filtro extra depois de "tem")
+  // continua caindo na rota certa, não sequestrada por este qualificador.
+  const complexa = routeTicketQuestion(
+    "Quantos chamados fechados o operador cesar tem no departamento coids desde dia 1 de fevereiro de 2026?",
+  );
+  assert.deepEqual(complexa.toolNames, ["listar_tickets_fechados"]);
+});
+
 // "Quantos tickets ABERTOS a Wanilene Cassiano tem?" (achado testando o
 // lote de perguntas ao vivo — Lote 7, pergunta 18, com dados reais): o nome
 // inteiro desaparecia (nenhuma entidade capturada) quando uma palavra de
@@ -5034,6 +5059,34 @@ test("contradição auto-negada na mesma dimensão ('do operador X que não são
   assert.equal(semNegacao.entities.operador, "Fabio Gali");
 });
 
+// "Tickets que sejam da Governança e que também não sejam do departamento
+// Governança." (achado testando o lote de perguntas ao vivo — Lote 9,
+// pergunta 8): mesma classe de autocontradição do teste acima (valor
+// afirmado e negado na mesma frase), só que em ÁREA/DEPARTAMENTO em vez
+// de operador — sem a generalização, a cláusula negada vazava pro valor
+// de OPERADOR (extrator sem relação com esta checagem), virando um
+// "operador não encontrado" enganoso em vez do esclarecimento de
+// contradição honesto.
+test("contradição auto-negada generalizada pra área/departamento (achado testando com dados reais do Lote 9, valor colidente real do Lote 5) pede esclarecimento, em vez de vazar pro valor de operador", () => {
+  const route = routeTicketQuestion(
+    "Tickets que sejam da Governança e que também não sejam do departamento Governança.",
+  );
+  assert.equal(route.intent, "esclarecimento_contradicao");
+  assert.equal(route.entities.operador, undefined);
+
+  // Controle: a forma indicativa direta ("que não são", sem "também")
+  // continua funcionando, igual à forma subjuntiva com "também" testada
+  // acima.
+  const semTambem = routeTicketQuestion(
+    "Tickets do departamento SYSADMIN que não são do departamento SYSADMIN.",
+  );
+  assert.equal(semTambem.intent, "esclarecimento_contradicao");
+
+  // Controle: a mesma frase SEM a negação continua funcionando normalmente.
+  const semNegacao = routeTicketQuestion("Tickets do departamento Governança.");
+  assert.equal(semNegacao.entities.departamento, "Governança");
+});
+
 test("2 limiares de prazo contraditórios na mesma unidade ('há mais de 30 dias' + 'há menos de 10 dias', achado testando com dados reais) pedem esclarecimento, em vez de aplicar só o 1º em silêncio", () => {
   const route = routeTicketQuestion("Tickets abertos há mais de 30 dias mas abertos há menos de 10 dias.");
   assert.equal(route.intent, "esclarecimento_contradicao");
@@ -5201,6 +5254,31 @@ test("'toda segunda-feira' (recorrência, achado testando com dados reais do Lot
   // o guard por engano.
   const todoMundo = routeTicketQuestion("Todo mundo abriu ticket essa semana?");
   assert.notEqual(todoMundo.intent, "esclarecimento_periodo_nao_suportado");
+});
+
+// "Quantos tickets foram abertos no último feriado?" / "Tickets abertos no
+// fim de semana passado." (achado testando o lote de perguntas ao vivo —
+// Lote 9, perguntas 12/13): nenhum dos 2 é suportado por
+// extractRelativeDateRange. "feriado" era especialmente enganoso: "último"
+// sozinho sequestrava a pergunta inteira pra listar_tickets_mais_recentes
+// (limite 1), devolvendo o ticket mais recente do sistema como se fosse
+// resposta sobre feriado — confirmado ao vivo. "fim de semana" não batia
+// em nada, caindo numa listagem sem filtro de data (confirmado ao vivo
+// devolvendo os 66 tickets abertos do sistema inteiro).
+test("'feriado'/'fim de semana' (achado testando com dados reais do Lote 9) pedem esclarecimento, em vez de 'último' ser lido como 'mais recentes' ou o período ser descartado em silêncio", () => {
+  const feriado = routeTicketQuestion("Quantos tickets foram abertos no último feriado?");
+  assert.equal(feriado.intent, "esclarecimento_periodo_nao_suportado");
+  assert.equal(feriado.entities.limite, undefined);
+
+  const fimDeSemana = routeTicketQuestion("Tickets abertos no fim de semana passado.");
+  assert.equal(fimDeSemana.intent, "esclarecimento_periodo_nao_suportado");
+
+  // Controles: "último" continua funcionando normalmente nos sentidos já
+  // suportados (ticket mais recente / período nomeado).
+  const ultimoTicket = routeTicketQuestion("Qual foi o último ticket aberto?");
+  assert.equal(ultimoTicket.intent, "listar_mais_recentes");
+  const ultimoMes = routeTicketQuestion("Tickets abertos no último mês.");
+  assert.notEqual(ultimoMes.entities.dataInicio, undefined);
 });
 
 // "Faz um gráfico dos tickets mais antigos ainda abertos." (achado

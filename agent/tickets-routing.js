@@ -2942,8 +2942,18 @@ export function extractOperatorWorkloadName(value) {
     // departamento coids desde..." (frase mais complexa, com filtro extra
     // depois) continua caindo na rota certa de status+operador+departamento,
     // não aqui.
+    // "como operador(a)" opcional depois de "tem" (achado testando o lote
+    // de perguntas ao vivo — Lote 9, pergunta 16): "Quantos tickets a
+    // Wanilene Cassiano TEM COMO OPERADORA?" (qualificador explícito de
+    // dimensão, útil pra gente que é cliente E operador ao mesmo tempo,
+    // achado real do Lote 8) quebrava a âncora "tem\\s*[?!.]*$" — o nome
+    // ainda era capturado por outro caminho (sem perder o filtro), mas a
+    // tool virava listar_tickets genérico em vez de analisar_carga_
+    // operador, perdendo o resumo de carga. "a?" pro feminino
+    // ("operadora"), mesma ideia de USER_LOOKUP_NOUN_SOURCE em outros
+    // pontos do arquivo que não têm a forma feminina própria.
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)(?:\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)(?:\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem(?:\\s+como\\s+(?:${USER_LOOKUP_NOUN_SOURCE})a?)?\\s*[?!.]*$`,
       "iu",
     ),
     // "Me diga a carga de trabalho do operador Helpdesk." / "Qual a carga
@@ -4079,6 +4089,31 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
+  // "Quantos tickets foram abertos no último feriado?" / "Tickets abertos
+  // no fim de semana passado." (achado testando o lote de perguntas ao
+  // vivo — Lote 9, perguntas 12/13): nenhum dos 2 é suportado por
+  // extractRelativeDateRange (não existe noção de feriado nem de "só
+  // sábado+domingo" num intervalo). "feriado" era especialmente enganoso:
+  // "último" sozinho (sem "feriado" na lista de exclusão de
+  // mentionsUltimoComoRecencia mais abaixo) sequestrava a pergunta inteira
+  // pra listar_tickets_mais_recentes (limite 1), devolvendo o ticket mais
+  // recente do sistema como se fosse resposta sobre feriado. "fim de
+  // semana" simplesmente não batia em nada, e a pergunta caía numa
+  // listagem sem filtro de data nenhum. Checado ANTES (mesmo lugar do
+  // guard de dia da semana), então nem chega a disparar
+  // isMostRecentIntent — não precisa de exclusão extra lá.
+  const isFeriadoOuFimDeSemanaQuestion = /\bferiados?\b|\bfim\s+de\s+semana\b/.test(text);
+
+  if (dataInicio === undefined && dataFim === undefined && isFeriadoOuFimDeSemanaQuestion) {
+    return createClarificationDecision(
+      "esclarecimento_periodo_nao_suportado",
+      "Não consigo filtrar por feriado nem por \"fim de semana\" — só por data específica ou período relativo (hoje, essa semana, mês passado, etc.). Pode perguntar usando um desses jeitos?"
+        + "\n\nExemplos:\n"
+        + "- Tickets abertos essa semana.\n"
+        + "- Tickets abertos no dia 20/10/2026.",
+    );
+  }
+
   const entities = compactEntities({
     status,
     area,
@@ -5026,12 +5061,32 @@ function routeTicketQuestionCore(pergunta) {
     // contra a cláusula suja, senão o 2º "Fabio Gali" nunca seria achado de
     // novo no texto. Comparação em texto normalizado (sem acento/caixa) dos
     // 2 lados, consistente com o resto desta função.
-    if (operador !== undefined) {
-      const operadorEscapado = normalizeText(operador).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    // Generalizado pra área/departamento também (achado testando o lote de
+    // perguntas ao vivo — Lote 9, pergunta 8): "Tickets que sejam da
+    // Governança e que também não sejam do departamento Governança." é a
+    // MESMA contradição ("Governança" afirmado e negado na mesma frase),
+    // só que no valor de área/departamento (um dos 3 pares reais que
+    // existem com o mesmo nome nos 2 catálogos, Lote 5) em vez de operador
+    // — sem isso, a cláusula negada vazava pro valor de operador (outro
+    // extrator, sem relação com esta checagem), virando um "operador não
+    // encontrado" enganoso em vez do esclarecimento de contradição honesto.
+    // "(?:tambem\\s+)?" e "seja|sejam" (além de "e|sao") no vocabulário
+    // verbal: a forma subjuntiva com "também" interposto ("que TAMBÉM NÃO
+    // SEJAM") é tão comum quanto a indicativa direta já aceita pro operador.
+    for (const [valor, nomeDimensao] of [
+      [operador, "operador"],
+      [area, `(?:${AREA_SYNONYM_SOURCE})`],
+      [departamento, "departamento"],
+    ]) {
+      if (valor === undefined) {
+        continue;
+      }
+
+      const valorEscapado = normalizeText(valor).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
       if (
         new RegExp(
-          `\\bque\\s+nao\\s+(?:e|sao)\\s+(?:d[oa]\\s+)?(?:operador\\s+)?${operadorEscapado}\\b`,
+          `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
           "u",
         ).test(text)
       ) {
