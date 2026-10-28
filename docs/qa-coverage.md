@@ -258,12 +258,18 @@ mesmo nem um nome real junto de um inexistente na mesma comparação.
   "análise [completa/geral] dos tickets do operador X" em
   `extractOperatorWorkloadName`, mesma ideia do padrão de "carga" já
   existente.
-- Nota pra um lote futuro (achado incidental, fora do escopo deste lote):
-  "Compare os tickets da área X com os tickets da área Y" (forma BARE
-  mencionando "tickets", igual à de operador/cliente agora corrigida) ainda
-  cai na mensagem genérica "sem nome" — `extractAreaComparisonNames` nunca
-  ganhou o espelho BARE que operador/cliente já têm. Não corrigido agora
-  (não fazia parte das 20 perguntas testadas neste lote).
+- Nota incidental corrigida a pedido do usuário (fora das 20 perguntas
+  originais do lote, mas mesma classe de bug): "Compare os tickets da área
+  X com os tickets da área Y" (forma BARE mencionando "tickets", igual à
+  de operador/cliente) também caía na mensagem genérica "sem nome" —
+  `extractAreaComparisonNames` nunca tinha ganhado o espelho BARE que
+  operador/cliente já têm. Corrigido com os mesmos 2 padrões (área
+  obrigatória em só 1 dos 2 lados) + guard de departamento (mesma defesa
+  usada no espelho de cliente, pra não roubar o match de uma comparação
+  área+departamento mista) — confirmado ao vivo comparando área Suporte
+  (4472 tickets) com área Governança (40 tickets). Comparação de
+  DEPARTAMENTO com departamento (sem nenhuma área envolvida) continua com
+  o mesmo gap — não pedido, não corrigido agora.
 - Regressão pendente: nenhuma — testes já criados (`test/tickets-
   routing.test.js`, `test/write-policy.test.js`)
 

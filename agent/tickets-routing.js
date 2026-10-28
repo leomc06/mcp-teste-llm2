@@ -3360,12 +3360,47 @@ export function extractAreaComparisonNames(value) {
         + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
+    // "Compare os tickets da área X com os tickets da área Y" (achado
+    // testando o lote de perguntas ao vivo — Lote 7, nota incidental,
+    // corrigida a pedido): mesma forma BARE mencionando "tickets" já
+    // corrigida pros espelhos de operador/cliente, nunca tinha sido
+    // replicada aqui — a frase inteira caía na mensagem genérica "preciso
+    // que você diga quem comparar" mesmo com as 2 áreas claramente ditas.
+    // A palavra de área só precisa aparecer em UM dos 2 lados (mesmo
+    // raciocínio já aplicado ao cliente — "compare os tickets da área X
+    // com os tickets de Y" também é uma fala comum, sem repetir a
+    // palavra); por isso 2 variantes: área à esquerda (direita opcional) e
+    // área só à direita (esquerda bare).
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+)?(?:os\\s+|as\\s+)?(?:d[oa]\\s+)?(?:(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?)?(.+)$`,
+      "iu",
+    ),
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+)?(?:os\\s+|as\\s+)?(?:d[oa]\\s+)?(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
+      "iu",
+    ),
   ];
+
+  // Mesmo guard já usado no espelho de cliente (extractClientComparisonNames)
+  // — os 2 novos padrões BARE acima (área obrigatória em só 1 dos 2 lados)
+  // também bateriam, por engano, numa comparação de DEPARTAMENTO disfarçada
+  // de "tickets" ("compare os tickets da área X com os tickets do
+  // departamento Y" — mistura rara, mas a mesma defesa evita capturar
+  // errado em vez de deixar pro extrator certo).
+  const DEPARTAMENTO_NO_MATCH_SOURCE = "\\bdepartamentos?\\b";
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
     if (!match) {
+      continue;
+    }
+
+    const mencionaDepartamentoNoMatch =
+      new RegExp(DEPARTAMENTO_NO_MATCH_SOURCE, "u").test(normalizeText(match[1]))
+      || new RegExp(DEPARTAMENTO_NO_MATCH_SOURCE, "u").test(normalizeText(match[2]));
+
+    if (mencionaDepartamentoNoMatch) {
       continue;
     }
 

@@ -1386,6 +1386,52 @@ test("extractClientComparisonNames reconhece 'compare os tickets do/da cliente X
   assert.equal(routeOperador.intent, "comparar_carga_operador");
 });
 
+// "Compare os tickets da área X com os tickets da área Y" (achado
+// testando o lote de perguntas ao vivo — Lote 7, nota incidental,
+// corrigida a pedido do usuário depois do commit do lote): mesma forma
+// BARE já corrigida pros espelhos de operador/cliente, nunca tinha sido
+// replicada pra área — caía na mensagem genérica "preciso que você diga
+// quem comparar" mesmo com as 2 áreas claramente ditas.
+test("extractAreaComparisonNames reconhece 'compare os tickets da área X com os tickets da área Y'", () => {
+  assert.deepEqual(
+    extractAreaComparisonNames("Compare os tickets da área Suporte com os tickets da área Governança."),
+    ["Suporte", "Governança"],
+  );
+  assert.deepEqual(
+    extractAreaComparisonNames("Compare os tickets da área WEB com os tickets de Redes e Segurança."),
+    ["WEB", "Redes e Segurança"],
+  );
+
+  const route = routeTicketQuestion("Compare os tickets da área Suporte com os tickets da área Governança.");
+  assert.equal(route.intent, "comparar_tickets_area");
+  assert.deepEqual(route.compare, [
+    { toolName: "listar_tickets", args: { area: "Suporte", limite: 1 } },
+    { toolName: "listar_tickets", args: { area: "Governança", limite: 1 } },
+  ]);
+
+  // Controles: comparação de operador/cliente e a mistura área+departamento
+  // continuam na rota certa, não sequestradas pelos 2 novos padrões BARE
+  // de área acima.
+  assert.equal(
+    extractAreaComparisonNames(
+      "Compare os tickets do operador Fabio Gali com os tickets do operador Diego Mota.",
+    ),
+    undefined,
+  );
+  assert.equal(
+    extractAreaComparisonNames(
+      "Compare os tickets do cliente Luiz Henrique Coura com os tickets do cliente Zeca Pagodinho.",
+    ),
+    undefined,
+  );
+  assert.equal(
+    extractAreaComparisonNames(
+      "Compare os tickets da área Suporte com os tickets do departamento SECRETARIA.",
+    ),
+    undefined,
+  );
+});
+
 // --- Fase 2: busca textual, resumo por cliente, ranking/percentual, prioridade extra ---
 
 test("extrai texto de busca de diferentes conectores", () => {
