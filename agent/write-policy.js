@@ -261,3 +261,30 @@ const externalActionPattern = new RegExp(
 export function isExternalActionRequest(pergunta) {
   return externalActionPattern.test(normalizeText(pergunta));
 }
+
+// "Você consegue fechar tickets?" (achado testando o lote de perguntas ao
+// vivo — Lote 10, pergunta 1): pergunta sobre CAPACIDADE do sistema (sim/
+// não), não um PEDIDO de ação de verdade — não bate em isWriteRequest
+// (cujo requestPrefixPattern exige um modal de permissão/obrigação, ex.
+// "pode"/"poderia", logo antes do verbo; "consegue"/"sabe"/"é capaz de"
+// não estão nessa lista, de propósito, porque normalmente introduzem uma
+// PERGUNTA, não um pedido) nem isExternalActionRequest (que exige verbo de
+// comunicação, não de CRUD). Sem este guard, a pergunta caía inteira no
+// fallback final de listar_tickets SEM FILTRO NENHUM — confirmado ao vivo
+// devolvendo os 5268 tickets do sistema como resposta a uma pergunta de
+// sim/não. Reaproveita o mesmo vocabulário de verbo de escrita
+// (imperativeVerbs/infinitiveVerbs) e de ação externa
+// (externalActionVerbs/EXTERNAL_COMMUNICATION_CHANNEL_SOURCE) já
+// declarados acima, só trocando o modal de PEDIDO por um modal de
+// CAPACIDADE.
+const CAPABILITY_MODAL_SOURCE =
+  "(?:voce\\s+)?(?:consegue|sabe|e\\s+capaz\\s+de|tem\\s+capacidade\\s+de|tem\\s+permissao\\s+(?:de|para))";
+
+const capabilityQuestionPattern = new RegExp(
+  `\\b${CAPABILITY_MODAL_SOURCE}\\s+(?:${[...imperativeVerbs, ...infinitiveVerbs, ...externalActionVerbs].join("|")})\\b`,
+  "u",
+);
+
+export function isCapabilityQuestion(pergunta) {
+  return capabilityQuestionPattern.test(normalizeText(pergunta));
+}

@@ -116,6 +116,14 @@ export function normalizeForMatch(value) {
     .toLowerCase()
     .trim()
     .replace(/[.,]+$/u, "")
+    // Espaços internos duplicados/triplicados (achado testando o lote de
+    // perguntas ao vivo — Lote 10, pergunta 6): "Reservado   para
+    // operador" (espaçamento irregular, comum em texto colado/copiado)
+    // nunca batia contra o valor real do catálogo "Reservado para
+    // operador" (espaço simples) — nem por igualdade nem por substring,
+    // porque só os espaços das PONTAS eram normalizados (trim), não os do
+    // MEIO da string.
+    .replace(/\s+/gu, " ")
     .trim();
 }
 

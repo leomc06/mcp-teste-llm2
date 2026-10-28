@@ -11,7 +11,7 @@ import {
 import {
   buildToolArguments,
 } from "./routing-utils.js";
-import { isExternalActionRequest, isWriteRequest } from "./write-policy.js";
+import { isCapabilityQuestion, isExternalActionRequest, isWriteRequest } from "./write-policy.js";
 import { detectsContinuation, mergeContinuation } from "./continuation.js";
 import { serveStaticFile } from "./static-files.js";
 import { createRateLimiter } from "./rate-limiter.js";
@@ -354,6 +354,35 @@ const server = http.createServer(async (request, response) => {
           requestId,
           resposta:
             "Este sistema só faz consultas sobre tickets. Não envio e-mails, mensagens ou notificações, nem realizo nenhuma ação fora da consulta.",
+          fontes: [],
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          duracaoMs,
+        });
+        return;
+      }
+
+      if (
+        isCapabilityQuestion(bodyResult.data.pergunta)
+        || (continuacaoDetectada && isCapabilityQuestion(perguntaEfetiva))
+      ) {
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "recusado",
+          motivo: "pergunta_de_capacidade",
+          continuacaoDetectada,
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta:
+            "Não — este sistema permite somente consultas de tickets. Não crio, altero, excluo nem fecho tickets, e não envio e-mails, mensagens ou notificações. Posso ajudar com consultas sobre os tickets existentes (status, prioridade, área, departamento, operador, cliente ou período).",
           fontes: [],
           toolsUtilizadas: [],
           quantidadeChamadas: 0,

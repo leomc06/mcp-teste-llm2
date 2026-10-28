@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isCapabilityQuestion,
   isExternalActionRequest,
   isWriteRequest,
 } from "../agent/write-policy.js";
@@ -162,6 +163,49 @@ test("não confunde escrita de ticket nem consulta comum com ação externa de c
   for (const question of notExternalActionQuestions) {
     assert.equal(
       isExternalActionRequest(question),
+      false,
+      question,
+    );
+  }
+});
+
+// "Você consegue fechar tickets?" (achado testando o lote de perguntas ao
+// vivo — Lote 10, pergunta 1): pergunta sobre CAPACIDADE do sistema (sim/
+// não), não um pedido de ação de verdade — não batia em isWriteRequest nem
+// isExternalActionRequest, caindo no fallback final de listar_tickets SEM
+// FILTRO NENHUM.
+const capabilityQuestions = [
+  "Você consegue fechar tickets?",
+  "Você sabe criar um ticket novo?",
+  "Você tem permissão para enviar e-mail pro cliente?",
+  "O sistema é capaz de excluir um ticket?",
+  "Você tem capacidade de cancelar um chamado?",
+];
+
+const notCapabilityQuestions = [
+  // Verbo de LEITURA (não escrita/ação externa) com o mesmo modal de
+  // capacidade — não deve disparar (pergunta legítima, respondível pela
+  // consulta normal).
+  "Você consegue listar os tickets abertos?",
+  "Quantos tickets estão abertos?",
+  ...blockedQuestions,
+  ...allowedQuestions,
+];
+
+test("detecta pergunta de CAPACIDADE (não um pedido de ação de verdade)", () => {
+  for (const question of capabilityQuestions) {
+    assert.equal(
+      isCapabilityQuestion(question),
+      true,
+      question,
+    );
+  }
+});
+
+test("não confunde pergunta sobre capacidade de LEITURA nem escrita/ação externa de verdade com pergunta de capacidade de escrita", () => {
+  for (const question of notCapabilityQuestions) {
+    assert.equal(
+      isCapabilityQuestion(question),
       false,
       question,
     );

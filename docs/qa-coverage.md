@@ -146,6 +146,98 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 10 — gerado, aguardando execução — ângulos: O (pergunta META sobre CAPACIDADE, não um pedido de ação de verdade — nunca testada, risco de falso positivo do write-guard/ação externa), D (análise aplicada a área/departamento, não só pessoa), G (espaçamento/caixa irregular em status real multi-palavra), E+verbosidade (verbosidade combinada com comparação, nunca testada junto), A (coloquial extremo com abreviação/typo), M (integridade por prioridade), N (página absurdamente grande + filtro real), J (percentual revisit), F (continuação de 3 turnos: chip + novo marcador "e como"), K (sinônimo "demorando" para SLA vencido/mais antigo), B (negação de união — "nem X nem Y"), C (semestre numerado + ano explícito), E (negação explícita de formato + pedido do formato oposto na mesma frase)
+
+Motivo da escolha: O sempre testou PEDIDOS de ação (diretos ou
+especulativos) — nunca uma pergunta sobre se o sistema TEM a capacidade,
+que é semanticamente diferente (não deveria ser bloqueada, é uma pergunta
+respondível). D só testou "análise"/"carga" pra pessoa (operador/cliente)
+— nunca pra área/departamento. Espaçamento/caixa irregular em valor de
+catálogo multi-palavra nunca foi testado (só nomes simples). Verbosidade
+(Lote 4) nunca foi combinada com comparação. "Demorando" como sinônimo de
+atraso/SLA nunca foi testado. Negação com "nem X nem Y" (dois valores
+negados com conector diferente de "e") nunca foi testada. "2º semestre de
+2025" (ordinal + ano explícito, ano passado) é uma variação nunca
+exercitada da forma "semestre" já suportada.
+
+- Perguntas: L10-T01 .. L10-T20 (ver mensagem do lote)
+- Dados reais usados: status "Reservado para operador" (Lote 9), área
+  "Suporte", departamento "SYSADMIN", operadores "Fabio Gali"/"Diego
+  Mota", prioridades "Alta"/"Urgente"/"Baixa"/"Média"
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo, incluindo a cadeia de 3
+  turnos)
+- Bugs encontrados (6, por ordem de severidade):
+  1. T01 — "Você consegue fechar tickets?" (pergunta de CAPACIDADE, não um
+     pedido de ação) não bate em `isWriteRequest` nem `isExternalActionRequest`
+     (nenhum dos 2 reconhece "consegue"), e cai direto em `listar_tickets`
+     sem filtro nenhum — confirmado ao vivo devolvendo os 5268 tickets do
+     sistema inteiro como resposta a uma pergunta de sim/não.
+  2. T17 — "Quais tickets estão demorando mais pra fechar?" não bate em
+     nenhum sinônimo de SLA vencido/mais antigo — confirmado ao vivo
+     devolvendo os 5268 tickets do sistema inteiro, mesma severidade do
+     T01.
+  3. T13 — "Qual a porcentagem de tickets fechados em relação ao total?":
+     a palavra "porcentagem"/"em relação ao total" é ignorada por
+     completo, cai em `listar_tickets_fechados` cru (sem o total geral em
+     lugar nenhum pra calcular a porcentagem) — confirmado ao vivo.
+  4. T19 — "Tickets abertos no 2º semestre de 2025." (e "segundo
+     semestre", com ou sem ano): a forma NUMERADA de semestre nunca foi
+     implementada (só "esse"/"passado"/"último" funcionam) — inconsistente
+     com trimestre, que já suporta a forma numerada (1º-4º) — perde a
+     data inteira em silêncio (`entities: {}`).
+  5. T08 — "Compare DE FORMA DETALHADA a carga do operador X com a do
+     operador Y.": o qualificador de verbosidade interposto entre
+     "compare" e "a carga" quebra a extração de comparação de operador —
+     confirmado ao vivo com a mensagem genérica "preciso que você diga
+     quem comparar", mesmo com os 2 nomes claramente ditos.
+  6. T06 — espaços duplicados/triplicados dentro de um valor de status
+     real ("Reservado   para   operador") quebram a resolução de catálogo
+     — confirmado ao vivo com "status não encontrado". Caso de borda raro
+     na fala real, mas fácil de acontecer em texto colado/copiado.
+- Confirmados corretos/por design: T02 (pergunta de capacidade sobre ação
+  externa cai no guard de ação externa, resposta "não envio e-mails"
+  responde razoavelmente à pergunta de sim/não), T03 (write-guard bloqueia
+  mesmo com hedge "hipoteticamente falando", mesmo padrão já aceito desde
+  o Lote 4), T04/T05 (análise de área/departamento cai em listagem
+  filtrada — não existe tool de "carga de área/departamento" equivalente
+  à de operador/cliente, listagem filtrada é a melhor resposta disponível
+  hoje), T07 (case mista no status resolve igual à forma normal,
+  confirmado ao vivo), T09 (coloquial extremo com abreviação reconhece
+  `listar_tickets_sem_operador` corretamente), T10/T11 (integridade:
+  prioridade Alta = 64 nos 2 caminhos, consistente), T12 (página muito
+  acima do total é clampada com segurança pra última página real, sem
+  erro nem dado inventado, confirmado ao vivo), T14/T15/T16 (cadeia de 3
+  turnos: chip "só os abertos" preserva 66 tickets corretamente, e "E como
+  gráfico?" não perde esse filtro acumulado nem quebra — só não muda o
+  formato porque a tool não suporta gráfico, comportamento já estabelecido
+  como seguro), T18 (negação "nem X nem Y" já cai em `esclarecimento_negacao`), T20
+  (negação de gráfico + pedido de lista na mesma frase resolve pra tabela,
+  nunca gráfico).
+- Correções aplicadas: todos os 6 corrigidos e verificados (753 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T01): novo
+  `isCapabilityQuestion` em `write-policy.js` ("consegue"/"sabe"/"é capaz
+  de"/"tem capacidade de"/"tem permissão de/para" + verbo de escrita/ação
+  externa) + novo guard dedicado em `agent/server.js`, com mensagem
+  própria que responde à pergunta de sim/não em vez de reusar a recusa de
+  pedido. Bug 2 (T17): novo `DELAY_PROXY_VERB_SOURCE` ("demorando/demora/
+  demorou/demoraram" + "pra/para fechar/resolver/atender") somado ao
+  vocabulário de `OLDEST_PROXY_STATE_SOURCE`, mesmo lugar de "atrasado"/
+  "vencido". Bug 3 (T13): "porcentagem"/"percentual" + "total" somado como
+  gatilho de `isDashboardIntent` (resumo_operacional já devolve total/
+  abertos/fechados numa resposta só). Bug 4 (T19): novo
+  `SEMESTRE_ORDINAL_SOURCE`/`parseSemestreOrdinal`, espelho exato do
+  trimestre numerado já existente, em `extractRelativeDateRange` e em
+  `TRAILING_RELATIVE_DATE_CLAUSE_PATTERN`. Bug 5 (T08): novo
+  `VERBOSITY_QUALIFIER_SOURCE` opcional entre "compare" e "a carga" em
+  `extractOperatorComparisonNames`. Bug 6 (T06): `normalizeForMatch`
+  (`src/ticket-helpers.js`) ganhou colapso de espaços internos
+  duplicados/triplicados (só as pontas eram tratadas via trim antes).
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-
+  routing.test.js`, `test/write-policy.test.js`, `test/ticket-
+  helpers.test.js`)
+
 ### Lote 9 — gerado, aguardando execução — ângulos: K (valor de STATUS real que contém a palavra "operador"/"usuário" dentro do próprio nome — nunca testada), O+F (write-guard/ação externa disparando numa CONTINUAÇÃO de 2 turnos, não só na pergunta isolada), I (contradição afirmativa+negativa no mesmo valor colidente área/departamento), G (typo duplo em nomes novos do Lote 8), A (coloquial extremo revisitado), C (feriado, fim de semana passado), M (integridade Cancelado vs fechados), F (3 turnos explorando o fix de colisão operador/cliente do Lote 8, com qualificador "como operador(a)"/"como cliente" nunca testado), J (comparação entre 2 valores de STATUS — dimensão nunca testada em comparação)
 
 Motivo da escolha: o catálogo real de status tem pelo menos 4 nomes que

@@ -1117,6 +1117,28 @@ test("bug 3: 'atrasados'/'vencidos'/'estourados' usam o SLA real (não mais o pr
   );
 });
 
+// "demorando (mais) pra fechar" (achado testando o lote de perguntas ao
+// vivo — Lote 10, pergunta 17): sinônimo coloquial de "atrasado"/"vencido"
+// nunca reconhecido — "Quais tickets estão demorando mais pra fechar?"
+// caía em listar_tickets SEM FILTRO NENHUM, devolvendo o sistema inteiro
+// (confirmado ao vivo).
+test("'demorando (mais) pra fechar/resolver/atender' é reconhecido como sinônimo de SLA vencido, não cai em listar_tickets sem filtro", () => {
+  assert.deepEqual(
+    routeTicketQuestion("Quais tickets estão demorando mais pra fechar?").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+  assert.deepEqual(
+    routeTicketQuestion("Quais tickets estão demorando para resolver?").toolNames,
+    ["listar_tickets_vencidos"],
+  );
+
+  // Controle: "demorando" sozinho, sem o complemento "pra fechar/resolver/
+  // atender", não deve disparar (palavra comum demais fora do domínio de
+  // tickets pra servir de sinal confiável sem esse complemento).
+  const bare = routeTicketQuestion("A reunião está demorando.");
+  assert.notEqual(bare.intent, "listar_vencidos");
+});
+
 test("'mais antigo'/'mais velho'/'há mais tempo' continuam no proxy cronológico, sem checar SLA real", () => {
   assert.deepEqual(
     routeTicketQuestion("Quais os tickets mais antigos ainda abertos?").toolNames,
@@ -1642,6 +1664,30 @@ test("extractOperatorComparisonNames extrai os 2 nomes com 'carga' ou com 'está
   );
   // sem nenhum dos dois vocabulários, não extrai (evita capturar comparação de outra coisa, ex. áreas)
   assert.equal(extractOperatorComparisonNames("Compare as áreas Suporte e WEB"), undefined);
+});
+
+// "Compare DE FORMA DETALHADA a carga do operador X com a do operador Y."
+// (achado testando o lote de perguntas ao vivo — Lote 10, pergunta 8): o
+// qualificador de verbosidade interposto entre "compare" e "a carga"
+// quebrava a extração inteira (precisava dos 2 tokens adjacentes) — caía
+// na mensagem genérica "preciso que você diga quem comparar", mesmo com
+// os 2 nomes claramente ditos (confirmado ao vivo).
+test("extractOperatorComparisonNames tolera qualificador de verbosidade ('de forma detalhada'/'resumidamente') entre 'compare' e 'a carga'", () => {
+  assert.deepEqual(
+    extractOperatorComparisonNames(
+      "Compare de forma detalhada a carga do operador Fabio Gali com a do operador Diego Mota.",
+    ),
+    ["Fabio Gali", "Diego Mota"],
+  );
+
+  const route = routeTicketQuestion(
+    "Compare de forma detalhada a carga do operador Fabio Gali com a do operador Diego Mota.",
+  );
+  assert.equal(route.intent, "comparar_carga_operador");
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_carga_operador", args: { operador: "Fabio Gali" } },
+    { toolName: "analisar_carga_operador", args: { operador: "Diego Mota" } },
+  ]);
 });
 
 test("extractOperatorComparisonNames reconhece 'atende(m) mais... que' (Img 28)", () => {
@@ -4319,6 +4365,29 @@ test("'o dobro/a metade/o triplo de tickets do outro' (proporção entre 2 valor
   assert.equal(metade.intent, "esclarecimento_proporcao_nao_suportada");
 });
 
+// "Qual a porcentagem de tickets fechados em relação ao total?" (achado
+// testando o lote de perguntas ao vivo — Lote 10, pergunta 13):
+// "porcentagem"/"percentual" era ignorado por completo, caindo em
+// listar_tickets_fechados cru (sem o total geral em lugar nenhum pra
+// calcular a porcentagem) — confirmado ao vivo. resumo_operacional_tickets
+// já devolve total/abertos/fechados numa resposta só, os números que
+// faltavam pra responder a proporção pedida.
+test("'porcentagem'/'percentual' + 'total' vira resumo_operacional (dados pra calcular a proporção), não listar_tickets_fechados cru", () => {
+  const porcentagem = routeTicketQuestion("Qual a porcentagem de tickets fechados em relação ao total?");
+  assert.equal(porcentagem.intent, "resumo_operacional");
+
+  const percentual = routeTicketQuestion("Qual o percentual de tickets abertos em relação ao total?");
+  assert.equal(percentual.intent, "resumo_operacional");
+
+  // Controles: percentual de prioridade (já suportado antes, sem a
+  // palavra "total") continua na rota certa, não sequestrado por este
+  // guard.
+  const porPrioridade = routeTicketQuestion("Qual o percentual de tickets Urgentes?");
+  assert.notEqual(porPrioridade.intent, "resumo_operacional");
+  const resumoPrioridade = routeTicketQuestion("Quantos tickets por prioridade?");
+  assert.equal(resumoPrioridade.intent, "resumo_por_prioridade");
+});
+
 test("extractMultipleTicketNumbers detalha 2+ tickets específicos sem a palavra 'compare', reusando o mesmo mecanismo de comparação (genérico pra N itens)", () => {
   assert.deepEqual(extractMultipleTicketNumbers("Detalhe os tickets 100, 200 e 300."), [100, 200, 300]);
   assert.deepEqual(extractMultipleTicketNumbers("Detalhe os tickets 100 e 200."), [100, 200]);
@@ -4829,6 +4898,27 @@ test("'semestre' (achado testando com dados reais) é reconhecido como período,
   // Controle: a forma já coberta antes ("mes") continua igual.
   const semSemestre = routeTicketQuestion("Quantos tickets o departamento de Governança tem nesse mes?");
   assert.equal(semSemestre.entities.departamento, "Governança");
+});
+
+// "2º semestre de 2025"/"segundo semestre desse ano" (achado testando o
+// lote de perguntas ao vivo — Lote 10, pergunta 19): a forma NUMERADA de
+// semestre (1º/2º) nunca tinha sido implementada — ao contrário de
+// trimestre (que já suporta 1º-4º, ver teste acima) — perdia a data
+// inteira em silêncio (confirmado: `entities: {}`).
+test("'2º semestre'/'segundo semestre' (forma numerada, achado testando com dados reais do Lote 10) é reconhecida, igual ao espelho já existente de trimestre", () => {
+  const comAno = routeTicketQuestion("Tickets abertos no 2º semestre de 2025.");
+  assert.deepEqual([comAno.entities.dataInicio, comAno.entities.dataFim], ["2025-07-01", "2025-12-31"]);
+
+  const porExtenso = routeTicketQuestion("Tickets abertos no segundo semestre de 2025.");
+  assert.deepEqual([porExtenso.entities.dataInicio, porExtenso.entities.dataFim], ["2025-07-01", "2025-12-31"]);
+
+  const primeiro = routeTicketQuestion("Tickets abertos no 1º semestre de 2025.");
+  assert.deepEqual([primeiro.entities.dataInicio, primeiro.entities.dataFim], ["2025-01-01", "2025-06-30"]);
+
+  // Controle: a forma já coberta antes ("último semestre", sem número)
+  // continua igual.
+  const ultimo = routeTicketQuestion("Tickets abertos no último semestre.");
+  assert.notEqual(ultimo.entities.dataInicio, undefined);
 });
 
 test("filtrar/agrupar por quantidade de comentários ou anexos (achado testando com dados reais) pede esclarecimento, em vez de descartar o filtro em silêncio", () => {

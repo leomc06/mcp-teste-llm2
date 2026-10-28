@@ -93,6 +93,20 @@ test("normalizeForMatch remove pontuação final solta (mesma pessoa com e sem p
   assert.equal(normalizeForMatch("Fabio Gali,"), normalizeForMatch("Fabio Gali"));
 });
 
+// "Reservado   para   operador" (espaçamento irregular, comum em texto
+// colado/copiado — achado testando o lote de perguntas ao vivo, Lote 10,
+// pergunta 6): só os espaços das PONTAS eram normalizados (trim), não os
+// do MEIO da string — nunca batia contra o valor real do catálogo
+// "Reservado para operador" (espaço simples), nem por igualdade nem por
+// substring. Confirmado ao vivo com "status não encontrado".
+test("normalizeForMatch colapsa espaços duplicados/triplicados no MEIO da string (não só nas pontas)", () => {
+  assert.equal(
+    normalizeForMatch("Reservado   para   operador"),
+    normalizeForMatch("Reservado para operador"),
+  );
+  assert.equal(normalizeForMatch("Fabio    Gali"), normalizeForMatch("Fabio Gali"));
+});
+
 test("resolveMetaId: sem nome informado, não filtra (id/nomeCanonico undefined, naoEncontrado false)", async () => {
   const result = await resolveMetaId(async () => [{ id: 1, name: "Suporte" }], undefined);
   assert.deepEqual(result, { id: undefined, nomeCanonico: undefined, naoEncontrado: false });

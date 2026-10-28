@@ -327,6 +327,14 @@ const TRAILING_CREATED_BY_CLAUSE_PATTERN = /\s+criad[oa]s?\s+(?:por|pel[oa])\s+.
 // onde "já" mantém o acento — mesmo motivo da tolerância em TICKET_NOUN_
 // SOURCE/NEGATION_MARKER_SOURCE.
 const SLA_MODAL_OVERDUE_SOURCE = `deveria(?:m)?\\s+(?:j[áa]\\s+)?ter\\s+sido\\s+${CLOSURE_VERB_SOURCE}`;
+// "demorando (mais) pra fechar" (achado testando o lote de perguntas ao
+// vivo — Lote 10, pergunta 17): sinônimo coloquial de "atrasado"/
+// "vencido" nunca reconhecido — "Quais tickets estão demorando mais pra
+// fechar?" não batia em nada e caía em listar_tickets SEM FILTRO NENHUM,
+// devolvendo o sistema inteiro. Exige "pra/para fechar/resolver/atender"
+// depois (não só "demorando" sozinho, palavra comum demais fora do
+// domínio de tickets pra servir de sinal confiável sem esse complemento).
+const DELAY_PROXY_VERB_SOURCE = "demor(?:a|ando|ou|aram)";
 const OLDEST_PROXY_STATE_SOURCE =
   "(?:atrasad[oa]s?"
   + "|vencid[oa]s?"
@@ -337,6 +345,7 @@ const OLDEST_PROXY_STATE_SOURCE =
   + "|estour(?:ou|aram)\\s+o\\s+sla"
   + "|ultrapass(?:ou|aram)\\s+(?:o\\s+)?(?:prazo|sla)"
   + "|pass(?:ou|aram)\\s+do\\s+prazo"
+  + `|${DELAY_PROXY_VERB_SOURCE}\\s+(?:mais\\s+)?(?:pra|para)\\s+(?:fechar|resolver|atender)`
   + `|${SLA_MODAL_OVERDUE_SOURCE})`;
 
 // Conecta uma dimensão (status/área/operador/...) ao pedido de resumo: além
@@ -588,6 +597,26 @@ function parseTrimestreOrdinal(ordinalBruto) {
   return Number(chave.replace(/\s*[ºª]\s*$/u, "")) - 1;
 }
 
+// "2º semestre de 2025" (achado testando o lote de perguntas ao vivo —
+// Lote 10, pergunta 19): mesmo espelho de TRIMESTRE_ORDINAL_SOURCE/
+// parseTrimestreOrdinal acima, pra semestre (só 2 metades, não 4) —
+// "semestre" nunca tinha ganhado a forma NUMERADA, ao contrário de
+// trimestre. Compartilhada entre extractRelativeDateRange (abaixo) e
+// TRAILING_RELATIVE_DATE_CLAUSE_PATTERN (mais abaixo no arquivo), mesmo
+// motivo do trimestre (não duplicar o vocabulário em 2 lugares).
+const SEMESTRE_ORDINAL_SOURCE = "primeiro|segundo|[1-2]\\s*[ºª]";
+
+function parseSemestreOrdinal(ordinalBruto) {
+  const ORDINAL_SEMESTRE_POR_EXTENSO = { primeiro: 0, segundo: 1 };
+  const chave = ordinalBruto.toLowerCase();
+
+  if (Object.hasOwn(ORDINAL_SEMESTRE_POR_EXTENSO, chave)) {
+    return ORDINAL_SEMESTRE_POR_EXTENSO[chave];
+  }
+
+  return Number(chave.replace(/\s*[ºª]\s*$/u, "")) - 1;
+}
+
 // Datas relativas ("essa semana", "hoje", "mês passado" etc.) não têm um
 // token de data explícito — calculadas a partir do momento da pergunta.
 // `agora` é parametrizável só para permitir teste determinístico.
@@ -817,6 +846,34 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return {
       dataInicio: formatIsoDate(new Date(agora.getFullYear(), primeiroMes, 1)),
       dataFim: formatIsoDate(new Date(agora.getFullYear(), primeiroMes + 6, 0)),
+    };
+  }
+
+  // "2º semestre de 2025"/"segundo semestre desse ano" (achado testando o
+  // lote de perguntas ao vivo — Lote 10, pergunta 19): forma NUMERADA de
+  // semestre (1º/2º) nunca tinha sido implementada — ao contrário de
+  // trimestre (que já suporta a forma numerada, ver trimestreNumeradoMatch
+  // mais abaixo), "semestre" só reconhecia "esse"/"passado"/"último".
+  // Checado ANTES de "semestre passado" (mesmo motivo do trimestre
+  // numerado): sem isso, "2º semestre de 2025" perdia a data inteira em
+  // silêncio (nenhum dos padrões de semestre/ano batia, "2025" sozinho
+  // também não vira filtro de ano sem a palavra "em" antes).
+  const semestreNumeradoMatch = text.match(
+    new RegExp(`\\b(${SEMESTRE_ORDINAL_SOURCE})\\s*semestre(?:\\s+d[eo]\\s+(\\d{4})|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?\\b`, "iu"),
+  );
+
+  if (semestreNumeradoMatch) {
+    const semestreNumero = parseSemestreOrdinal(semestreNumeradoMatch[1]);
+    const ano = semestreNumeradoMatch[2] !== undefined
+      ? Number(semestreNumeradoMatch[2])
+      : /\bdo\s+ano\s+passado\b/.test(semestreNumeradoMatch[0])
+        ? agora.getFullYear() - 1
+        : agora.getFullYear();
+    const primeiroMes = semestreNumero * 6;
+
+    return {
+      dataInicio: formatIsoDate(new Date(ano, primeiroMes, 1)),
+      dataFim: formatIsoDate(new Date(ano, primeiroMes + 6, 0)),
     };
   }
 
@@ -1222,6 +1279,7 @@ const TRAILING_RELATIVE_DATE_CLAUSE_PATTERN = new RegExp(
     + "|[úu]ltimo\\s+dia\\s+(?:d[oe]\\s+)?m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+m[êe]s|m[êe]s\\s+passado|m[êe]s\\s+retrasado|[úu]ltimo\\s+m[êe]s"
     + "|(?:d|n)?(?:esse|este)\\s+semestre|semestre\\s+passado|[úu]ltimo\\s+semestre"
+    + `|(?:${SEMESTRE_ORDINAL_SOURCE})\\s*semestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?`
     + "|(?:d|n)?(?:esse|este)\\s+ano|ano\\s+passado|[úu]ltimo\\s+ano"
     + `|(?:${TRIMESTRE_ORDINAL_SOURCE})\\s*trimestre(?:\\s+d[eo]\\s+\\d{4}|\\s+(?:d|n)?(?:esse|este)\\s+ano|\\s+do\\s+ano\\s+passado)?`
     + "|trimestre\\s+passado|[úu]ltimo\\s+trimestre|[úu]ltima\\s+quinzena)(?![\\p{L}\\p{N}]).*$",
@@ -3000,6 +3058,17 @@ export function extractOperatorWorkloadName(value) {
 // inteira caía no fallback genérico, perdendo o 2º nome por completo.
 const CARGA_SYNONYM_SOURCE = "(?:carga|quantidade\\s+de\\s+tickets?|volume\\s+de\\s+tickets?)";
 
+// "Compare DE FORMA DETALHADA a carga do operador X com a do operador Y."
+// (achado testando o lote de perguntas ao vivo — Lote 10, pergunta 8): o
+// qualificador de verbosidade (mesmo vocabulário de DETALHADO_PATTERN/
+// RESUMIDO_PATTERN, declarados mais abaixo no arquivo — duplicado aqui em
+// vez de referenciado porque aquelas duas constantes são declaradas DEPOIS
+// deste ponto do arquivo) interposto entre "compare" e "a carga" quebrava
+// a extração só por não deixar os 2 token ficarem adjacentes — a
+// comparação inteira caía na mensagem genérica "preciso que você diga
+// quem comparar", mesmo com os 2 nomes claramente ditos.
+const VERBOSITY_QUALIFIER_SOURCE = "(?:de\\s+forma\\s+(?:detalhada|resumida|breve)|detalhadamente|resumidamente|com\\s+detalhes?)\\s+";
+
 // "vs"/"x" como conector de comparação (achado testando o lote de
 // perguntas ao vivo): "Compare a área WEB X área Suporte." usa "x"
 // (jeito informal comum de dizer "versus"), mas só "com"/"e" eram
@@ -3014,7 +3083,7 @@ export function extractOperatorComparisonNames(value) {
 
   const patterns = [
     new RegExp(
-      `\\bcompar[ae]\\s+a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
+      `\\bcompar[ae]\\s+(?:${VERBOSITY_QUALIFIER_SOURCE})?a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
         + `(?:a\\s+(?:${CARGA_SYNONYM_SOURCE}\\s+)?d[oa]\\s+)?(.+)$`,
       "iu",
     ),
@@ -5433,7 +5502,16 @@ function routeTicketQuestionCore(pergunta) {
     || /\bmerece\s+(?:minha\s+)?atencao\b/.test(text)
     || /\bsinal\s+de\s+alerta\b/.test(text)
     || /\bdando\s+conta\s+da\s+demanda\b/.test(text)
-    || /\btem\s+algum\s+problema\b/.test(text);
+    || /\btem\s+algum\s+problema\b/.test(text)
+    // "Qual a porcentagem de tickets fechados em relação ao total?"
+    // (achado testando o lote de perguntas ao vivo — Lote 10, pergunta
+    // 13): "porcentagem"/"percentual" era ignorado por completo, caindo
+    // em listar_tickets_fechados cru (sem o total geral em lugar nenhum
+    // pra calcular a porcentagem) — confirmado ao vivo. resumo_
+    // operacional_tickets já devolve total/abertos/fechados numa resposta
+    // só, exatamente os números que faltavam pra responder a proporção
+    // pedida (o cálculo em si fica pro modelo, a partir desses dados).
+    || (/\b(?:porcentagem|percentual)\b/.test(text) && /\btotal\b/.test(text));
 
   // "resumo executivo" ou um pedido de texto pra uma audiência de gestão —
   // pede pro modelo transformar os números já calculados por
