@@ -11,7 +11,7 @@ import {
 import {
   buildToolArguments,
 } from "./routing-utils.js";
-import { isWriteRequest } from "./write-policy.js";
+import { isExternalActionRequest, isWriteRequest } from "./write-policy.js";
 import { detectsContinuation, mergeContinuation } from "./continuation.js";
 import { serveStaticFile } from "./static-files.js";
 import { createRateLimiter } from "./rate-limiter.js";
@@ -325,6 +325,35 @@ const server = http.createServer(async (request, response) => {
           requestId,
           resposta:
             "Este sistema permite somente consultas de tickets. Operações de criação, alteração, mudança de status ou comentário não são permitidas.",
+          fontes: [],
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          duracaoMs,
+        });
+        return;
+      }
+
+      if (
+        isExternalActionRequest(bodyResult.data.pergunta)
+        || (continuacaoDetectada && isExternalActionRequest(perguntaEfetiva))
+      ) {
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "recusado",
+          motivo: "acao_externa_nao_suportada",
+          continuacaoDetectada,
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta:
+            "Este sistema só faz consultas sobre tickets. Não envio e-mails, mensagens ou notificações, nem realizo nenhuma ação fora da consulta.",
           fontes: [],
           toolsUtilizadas: [],
           quantidadeChamadas: 0,

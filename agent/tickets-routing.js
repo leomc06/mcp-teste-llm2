@@ -2930,8 +2930,20 @@ export function extractOperatorWorkloadName(value) {
     // departamento) com uma carga de operador incompleta.
     // Mesmo "cada\\s+" na negação do padrão irmão acima (achado testando o
     // lote de perguntas ao vivo): mesmo gap, mesma correção.
+    // Adjetivo de situação opcional ("abertos"/"fechados"/...) intercalado
+    // entre o substantivo e o nome (achado testando o lote de perguntas ao
+    // vivo — Lote 7, pergunta 18): "Quantos tickets ABERTOS a Wanilene
+    // Cassiano tem?" não batia por causa da palavra extra entre "tickets" e
+    // "a `<nome>` tem" — o nome inteiro sumia (nenhuma entidade capturada),
+    // devolvendo TODOS os tickets abertos do sistema sem filtro nenhum, em
+    // vez de pelo menos tentar resolver o nome (e falhar honesto se não for
+    // um operador real). O "$" no final continua garantindo que a frase
+    // termine em "tem" — "quantos chamados fechados o operador cesar tem no
+    // departamento coids desde..." (frase mais complexa, com filtro extra
+    // depois) continua caindo na rota certa de status+operador+departamento,
+    // não aqui.
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)(?:\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem\\s*[?!.]*$`,
       "iu",
     ),
     // "Me diga a carga de trabalho do operador Helpdesk." / "Qual a carga
@@ -2943,6 +2955,20 @@ export function extractOperatorWorkloadName(value) {
     // "qual a") que as outras alternativas acima não têm.
     new RegExp(
       `\\bcarga\\s+(?:de\\s+trabalho\\s+)?d[oa]\\s+(?:${USER_LOOKUP_NOUN_SOURCE}\\s+)?(.+?)[?!.]*$`,
+      "iu",
+    ),
+    // "Me dá uma análise completa dos tickets do Bruno de Souza Castro."
+    // (achado testando o lote de perguntas ao vivo — Lote 7, pergunta 1):
+    // mesma ideia do padrão de "carga" acima, só com a palavra "análise" em
+    // vez de "carga/sobrecarregado" — sem isso, caía em listar_tickets
+    // genérico, despejando os tickets crus em várias páginas em vez de um
+    // resumo de carga. Sem "^" pelo mesmo motivo do padrão de carga (quase
+    // sempre vem depois de um prefixo tipo "me dá uma"). "an[áa]lise" (não
+    // só "análise") porque esta função recebe o texto CRU, com acento —
+    // mesma cautela já usada noutros pontos do arquivo pra acento em texto
+    // não normalizado.
+    new RegExp(
+      `\\ban[áa]lise\\s+(?:completa\\s+|geral\\s+)?(?:d[oa]s?\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?(?:${USER_LOOKUP_NOUN_SOURCE}\\s+)?(.+?)[?!.]*$`,
       "iu",
     ),
   ]);
@@ -3209,12 +3235,48 @@ export function extractClientComparisonNames(value) {
       `^(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+abr(?:e|em|iu|iram)\\s+mais\\s+(?:tickets?|chamados?|atendimentos?)\\s+(?:do\\s+)?que\\s+(?:o\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
       "iu",
     ),
+    // "Compare os tickets do cliente X com os tickets do cliente Y" (achado
+    // testando o lote de perguntas ao vivo — Lote 7, perguntas 19/20): forma
+    // BARE mencionando "tickets" (não "atividade"/"cliente" sozinho), já
+    // suportada pro espelho de operador (extractOperatorComparisonNames,
+    // que inclusive REJEITA esse match de propósito quando "cliente"
+    // aparece em qualquer um dos 2 lados, pra deixar pra esta função) — mas
+    // nunca foi replicada aqui. Sem este par de padrões, a frase caía na
+    // mensagem genérica "preciso que você diga quem comparar" mesmo com os
+    // 2 nomes claramente ditos. A palavra de cliente só precisa aparecer em
+    // UM dos 2 lados (jeito comum na fala — "compare os tickets da Wanilene
+    // com os tickets do cliente Zeca"); por isso 2 variantes: cliente à
+    // esquerda (direita opcional) e cliente só à direita (esquerda bare).
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+)?(?:os\\s+|as\\s+)?(?:d[oa]\\s+)?(?:${CLIENT_LOOKUP_NOUN_SOURCE}\\s+)?(.+)$`,
+      "iu",
+    ),
+    new RegExp(
+      `\\bcompar[ae]\\s+(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+(?:(?:os\\s+|as\\s+)?(?:tickets?|chamados?|atendimentos?)\\s+)?(?:os\\s+|as\\s+)?(?:d[oa]\\s+)?${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(.+)$`,
+      "iu",
+    ),
   ];
+
+  // Mesmo guard de extractOperatorComparisonNames (achado testando esta
+  // própria correção): os 2 novos padrões BARE acima (cliente obrigatório
+  // em só 1 dos 2 lados) também bateriam, por engano, numa comparação de
+  // ÁREA/DEPARTAMENTO disfarçada de "tickets" ("compare os tickets da área
+  // Suporte com os tickets do cliente Y" — mistura rara, mas a mesma defesa
+  // já existe pro espelho de operador).
+  const AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE = "\\b(?:areas?|categorias?|equipes?|setores?)\\b|\\bdepartamentos?\\b";
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
     if (!match) {
+      continue;
+    }
+
+    const mencionaAreaOuDepartamentoNoMatch =
+      new RegExp(AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE, "u").test(normalizeText(match[1]))
+      || new RegExp(AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE, "u").test(normalizeText(match[2]));
+
+    if (mencionaAreaOuDepartamentoNoMatch) {
       continue;
     }
 
@@ -5174,6 +5236,26 @@ function routeTicketQuestionCore(pergunta) {
     "u",
   ).test(text);
 
+  // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
+  // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
+  // mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
+  // "Quem está [mais] sobrecarregado?" (achado testando o lote de perguntas
+  // ao vivo — Lote 7, pergunta 14): pergunta de ranking tão comum quanto
+  // "quem tem mais tickets", só com o adjetivo direto em vez do verbo
+  // "tem" — não batia em nenhuma forma acima, e "sobrecarregado" também não
+  // está no vocabulário de RANKING_CUE_SOURCE (que exige "mais"/"menos"
+  // logo antes/depois de um verbo, não de um adjetivo solto) — por isso
+  // declarado ANTES de hasResumoIntent (ao contrário da posição original) e
+  // somado ao próprio OR-list de hasResumoIntent abaixo, igual aos 4
+  // isWorstBest*RankingIntent já fazem — sem isso, mesmo com o ranking por
+  // operador reconhecendo a forma, hasResumoIntent sozinho continuava falso
+  // e a pergunta caía em listar_tickets filtrado só pela data ("hoje"),
+  // perdendo o "quem" por completo (nenhum operador identificado).
+  const isOperatorRankingIntent =
+    /\bquem\s+(?:tem|possui|esta\s+com)\s+(?:mais|menos)\b/.test(text)
+    || /\bquem\s+(?:mais|menos)\s+(?:tem|possui|esta\s+com)\b/.test(text)
+    || /\bquem\s+esta\s+(?:mais\s+)?sobrecarregad[oa]s?\b/.test(text);
+
   const hasResumoIntent =
     /\bresumo\b/.test(text)
     || /\bdistribuicao\b/.test(text)
@@ -5188,14 +5270,8 @@ function routeTicketQuestionCore(pergunta) {
     || isWorstBestOperatorRankingIntent
     || isWorstBestClienteRankingIntent
     || isWorstBestAreaRankingIntent
-    || isWorstBestDepartamentoRankingIntent;
-
-  // "Quem tem mais chamados...?" / "Quem mais tem...?" (ordem invertida) /
-  // "Quem tem menos...?" já implicam ranking por operador nesse domínio,
-  // mesmo sem a palavra "operador" (ex.: "...no time"/"na equipe").
-  const isOperatorRankingIntent =
-    /\bquem\s+(?:tem|possui|esta\s+com)\s+(?:mais|menos)\b/.test(text)
-    || /\bquem\s+(?:mais|menos)\s+(?:tem|possui|esta\s+com)\b/.test(text);
+    || isWorstBestDepartamentoRankingIntent
+    || isOperatorRankingIntent;
 
   // Direção do ranking pedido: "menos"/"menor" (ascendente, menor primeiro)
   // vs. "mais"/"maior"/nada (descendente, padrão). Exclui "menos de N dias"/

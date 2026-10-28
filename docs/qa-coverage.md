@@ -146,6 +146,127 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 7 — gerado, aguardando execução — ângulos: D (análise/comparar resumos inteiros colidindo com tool), I (contradição — dimensões ainda não testadas: situação e união+exclusão de prioridade), L (robustez a erro de digitação/abreviação, revisitado com nomes novos), B (negação explícita de área/departamento/cliente, isolada da negação de operador/nome já coberta), O (ação externa/destrutiva fraseada como pergunta direta, não especulativa), K (sinônimo de tool ambíguo: "atrasados"/"sobrecarregado"/"não atribuído"), C (ano bissexto, intervalo de vários anos), M (integridade cruzada com dados recém-puxados), J (comparar o mesmo valor com ele mesmo; comparar cliente real com cliente inexistente)
+
+Motivo da escolha: D só foi tocado no Lote 1 (a colisão "análise"/"comparar
+resumos" com a tool errada) e nunca revisitado. I também só apareceu no
+Lote 1, e só nas formas "que não são" (operador) e 2 prazos contraditórios
+— nunca contradição de `situacao` (aberto E fechado) nem união+exclusão da
+mesma prioridade na mesma frase. L (robustez a typo/abreviação) idem, só
+Lote 1, com nomes diferentes dos usados desde então. B até agora só isolou
+negação de operador/nome/prioridade/status — nunca área/departamento/
+cliente isoladamente. O sempre testou frases especulativas ("seria possível
+apagar", ação externa embutida numa pergunta de consulta) — nunca um
+pedido DIRETO de ação destrutiva/externa ("pode fechar", "manda um
+e-mail", "reatribui"), que é o teste de write-guard mais realista e mais
+arriscado se falhar. K já testou sinônimo de listagem (Lote 6) — faltam
+sinônimos que cruzam tools inteiras ("atrasados" pode significar vencidos
+OU abertos mais antigos; "sobrecarregado" sem nome é ranking, não
+`analisar_carga_operador`; "não atribuído" é sinônimo de "sem operador"
+nunca testado). C nunca testou ano bissexto nem intervalo de vários anos
+inteiros. M usa dados frescos puxados agora mesmo (não os mesmos 3 números
+já re-testados nos Lotes 5/6). J nunca testou comparar um valor com ele
+mesmo nem um nome real junto de um inexistente na mesma comparação.
+
+- Perguntas: L07-T01 .. L07-T20 (ver mensagem do lote)
+- Dados reais usados: departamentos "SECRETARIA"/"COIDS"/"SUPERCOMPUTAÇÃO"
+  (puxados agora, nunca usados antes), status real "AGUARDANDO RDM",
+  operadores "Bruno de Souza Castro"/"João Pedro Guimarães" (puxados
+  agora via ranking real, nunca usados antes), clientes "Luiz Henrique
+  Coura"/"Wanilene Cassiano" (puxados agora via ranking real de clientes
+  com tickets abertos, nunca usados antes), área "Governança"
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo, conforme protocolo)
+- Bugs encontrados (5, por ordem de severidade):
+  1. **T18 — mais grave: resposta silenciosamente errada.** "Quantos
+     tickets abertos a Wanilene Cassiano tem?" devolveu os 66 tickets
+     abertos do sistema INTEIRO (nenhum filtro de cliente aplicado) como
+     se fosse a resposta pra ela — confirmado ao vivo. Causa: quando uma
+     palavra de situação ("abertos"/"fechados") se intercala entre
+     "tickets" e "`<nome>` tem", nem `extractOperatorWorkloadName` nem
+     nenhuma extração de cliente reconhecem a frase (confirmado também com
+     "Quantos chamados abertos o Fabio Gali tem?" — mesmo problema pro
+     lado operador).
+  2. T11 — "Manda um e-mail pro cliente Luiz Henrique Coura avisando que
+     o ticket dele foi resolvido." não é reconhecida como ação externa
+     não suportada (`isWriteRequest` só cobre verbos de CRUD de ticket,
+     não verbos de comunicação como "manda"/"envia") — cai em
+     `listar_tickets_fechados` com o valor de cliente corrompido pela
+     cláusula inteira vazada, resultando no diagnóstico enganoso `cliente
+     "Luiz Henrique Coura avisando que o ticket dele" não encontrado`.
+  3. T19/T20 — "Compare os tickets do cliente X com os tickets do cliente
+     Y" (frase natural, já funciona pro espelho de operador — confirmado
+     com "Compare os tickets do operador Fabio Gali com os tickets do
+     operador Diego Mota." — mas nunca foi replicada pra cliente) cai na
+     mensagem genérica "preciso que você diga quem comparar" mesmo com os
+     2 nomes claramente ditos, inclusive quando repete o mesmo nome 2x
+     (T19) ou mistura 1 nome real com 1 inexistente (T20).
+  4. T14 — "Quem está mais sobrecarregado hoje?" não aciona nenhum
+     ranking por operador (nem `isOperatorRankingIntent` nem
+     `hasResumoIntent` reconhecem essa forma) — cai em `listar_tickets`
+     filtrado só pela data de hoje, devolvendo 6 tickets crus sem
+     identificar ninguém como mais sobrecarregado — confirmado ao vivo.
+  5. T01 — "análise completa dos tickets do operador X" não aciona
+     `analisar_carga_operador` (só "carga"/"tem muitos tickets"/
+     "sobrecarregado" são reconhecidos, não "análise") — cai em
+     `listar_tickets` genérico, despejando 509 tickets crus em 11
+     páginas em vez de um resumo de carga — confirmado ao vivo. Fraseado
+     comum, mas menor severidade que os 4 acima (resposta é verbosa, não
+     enganosa).
+- Confirmados corretos/por design: T02 (comparação com lados de natureza
+  diferente recusa honesto, mensagem genérica mas segura), T03
+  (contradição de `situação` cai em `resumo_operacional`, que mostra os 2
+  lados separados — interpretação razoável de "ao mesmo tempo"), T04
+  (união+exclusão de prioridade recusa via `esclarecimento_uniao_
+  prioridades`, seguro mesmo sem tratar a exclusão em si), T05 (typo
+  "tiket" cai fora do domínio — mesma política já estabelecida no Lote 1
+  pro "tckt", não expandir vocabulário do substantivo de ticket pra esse
+  nível de abreviação/erro), T06 (abreviação "qnts" + status real
+  "Aguardando RDM" resolve certo, 0 tickets reais), T07/T08/T09 (negação
+  explícita de departamento/cliente/área generalizada corretamente — o
+  guard `esclarecimento_negacao` já genérico cobre as 3 dimensões, nenhuma
+  inversão silenciosa), T10/T12 (write-guard bloqueia corretamente as 2
+  ações diretas de escrita, confirmado ao vivo), T13 (sinônimo "atrasados"
+  escolhe `listar_tickets_vencidos` consistentemente, e a tool já trata
+  volume grande com segurança), T15 (sinônimo "não atribuídos a ninguém"
+  reconhecido, `listar_tickets_sem_operador`), T16 (29/02/2024, ano
+  bissexto real, calculado certo), T17 ("últimos 3 anos" calculado certo,
+  unidade "anos" já generalizada).
+- Correções aplicadas: todos os 5 corrigidos e verificados (738 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T18):
+  `extractOperatorWorkloadName` ganhou um grupo opcional de adjetivo de
+  situação (`OPEN_STATE_ADJECTIVE_SOURCE`/`CLOSURE_VERB_SOURCE`) entre o
+  substantivo de ticket e o resto do padrão "quantos tickets `<nome>` tem" —
+  confirmado ao vivo que "Wanilene Cassiano" na verdade também é uma
+  OPERADORA real no catálogo (10 tickets, 5 abertos), não só cliente, então
+  a resposta corrigida já veio certa via `analisar_carga_operador`. Bug 2
+  (T11): novo `isExternalActionRequest` em `write-policy.js` (verbo de
+  comunicação + substantivo de canal) + novo guard dedicado em
+  `agent/server.js`, com mensagem própria distinta do write-guard de CRUD.
+  Bug 3 (T19/T20): `extractClientComparisonNames` ganhou os 2 padrões BARE
+  "compare os tickets do/da cliente X com os tickets do cliente Y" (um
+  exigindo "cliente" à esquerda, outro só à direita), espelhando os que já
+  existiam pra operador — com o mesmo guard de área/departamento que o
+  espelho de operador já tinha, pra não roubar o match de uma comparação de
+  área disfarçada de "tickets". Bug 4 (T14): `isOperatorRankingIntent`
+  ganhou "quem está [mais] sobrecarregado" e foi promovida pra ANTES de
+  `hasResumoIntent` (com `|| isOperatorRankingIntent` adicionado ao
+  OR-list), igual aos 4 `isWorstBest*RankingIntent` — sem isso o ranking
+  era reconhecido mas `hasResumoIntent` sozinho continuava falso (nenhuma
+  outra palavra-gatilho de resumo na frase). Bug 5 (T01): novo padrão
+  "análise [completa/geral] dos tickets do operador X" em
+  `extractOperatorWorkloadName`, mesma ideia do padrão de "carga" já
+  existente.
+- Nota pra um lote futuro (achado incidental, fora do escopo deste lote):
+  "Compare os tickets da área X com os tickets da área Y" (forma BARE
+  mencionando "tickets", igual à de operador/cliente agora corrigida) ainda
+  cai na mensagem genérica "sem nome" — `extractAreaComparisonNames` nunca
+  ganhou o espelho BARE que operador/cliente já têm. Não corrigido agora
+  (não fazia parte das 20 perguntas testadas neste lote).
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-
+  routing.test.js`, `test/write-policy.test.js`)
+
 ### Lote 6 — gerado, aguardando execução — ângulos: K (sinônimos de tool ambíguos), J (comparação 3+/sem nome/dimensões diferentes — 3 esclarecimentos nunca exercitados), C (datas futuras relativas), N (paginação além do total), B (negação explícita de prioridade/status), E (negação de tabela, duplo formato), M (integridade de dados reais — contagens cruzadas), H (limite padrão de resumo_por_cliente)
 
 Motivo da escolha: `esclarecimento_comparacao_3_ou_mais`,

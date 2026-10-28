@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isExternalActionRequest,
   isWriteRequest,
 } from "../agent/write-policy.js";
 
@@ -118,6 +119,49 @@ test("permite consultas sobre ações passadas", () => {
   for (const question of allowedQuestions) {
     assert.equal(
       isWriteRequest(question),
+      false,
+      question,
+    );
+  }
+});
+
+// "Manda um e-mail pro cliente X avisando que o ticket dele foi resolvido."
+// (achado testando o lote de perguntas ao vivo — Lote 7, pergunta 11): não
+// é uma operação de escrita no ticket (isWriteRequest não deve bloquear,
+// esse é um pedido de AÇÃO EXTERNA diferente, com mensagem própria), mas
+// também não é uma consulta de verdade — isExternalActionRequest detecta
+// isso separadamente.
+const externalActionQuestions = [
+  "Manda um e-mail pro cliente Luiz Henrique Coura avisando que o ticket dele foi resolvido.",
+  "Envie uma mensagem pro operador Fabio Gali sobre o ticket 4830.",
+  "Pode notificar o cliente por whatsapp sobre o status do chamado?",
+  "Avisa o cliente por e-mail que o ticket foi encerrado.",
+];
+
+const notExternalActionQuestions = [
+  // Verbo de comunicação sem substantivo de canal — não deve disparar
+  // (achado junto da correção acima): "me avisa" aqui é só um pedido de
+  // resposta nesta própria consulta, algo que o sistema PODE fazer.
+  "Me avisa se tiver ticket aberto na área Suporte.",
+  "Quantos tickets estão abertos?",
+  ...blockedQuestions,
+  ...allowedQuestions,
+];
+
+test("detecta pedido de ação externa de comunicação (e-mail/mensagem/notificação)", () => {
+  for (const question of externalActionQuestions) {
+    assert.equal(
+      isExternalActionRequest(question),
+      true,
+      question,
+    );
+  }
+});
+
+test("não confunde escrita de ticket nem consulta comum com ação externa de comunicação", () => {
+  for (const question of notExternalActionQuestions) {
+    assert.equal(
+      isExternalActionRequest(question),
       false,
       question,
     );

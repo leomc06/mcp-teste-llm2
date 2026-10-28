@@ -215,3 +215,49 @@ export function isWriteRequest(pergunta) {
     || passivePattern.test(text)
   );
 }
+
+// "Manda um e-mail pro cliente Luiz Henrique Coura avisando que o ticket
+// dele foi resolvido." (achado testando o lote de perguntas ao vivo — Lote
+// 7, pergunta 11): pedir uma ação de COMUNICAÇÃO externa (enviar e-mail/
+// mensagem/notificação) não é uma operação de escrita no próprio ticket
+// (vocabulário de isWriteRequest acima é todo de CRUD — criar/alterar/
+// fechar/...), nem uma consulta de verdade — sem este guard, a frase caía
+// no roteamento comum, com a cláusula de comunicação inteira vazando pro
+// valor de cliente capturado ("cliente 'Luiz Henrique Coura avisando que o
+// ticket dele' não encontrado" — diagnóstico enganoso, parecia erro de
+// nome, não de escopo). Exige verbo de comunicação + substantivo de canal
+// (não só o verbo sozinho) pra não bloquear frases comuns tipo "me avisa se
+// tiver ticket aberto" (pedido de resposta nesta própria consulta, não de
+// ação externa).
+const externalActionVerbs = [
+  "manda",
+  "mande",
+  "mandar",
+  "envia",
+  "envie",
+  "enviar",
+  "notifica",
+  "notifique",
+  "notificar",
+  "avisa",
+  "avise",
+  "avisar",
+  "liga",
+  "ligue",
+  "ligar",
+  "comunica",
+  "comunique",
+  "comunicar",
+];
+
+const EXTERNAL_COMMUNICATION_CHANNEL_SOURCE =
+  "(?:e\\s*mails?|mensage(?:m|ns)|sms|whatsapp|avisos?|notificaco(?:es|a)|ligaco(?:es|a))";
+
+const externalActionPattern = new RegExp(
+  `\\b(?:${externalActionVerbs.join("|")})\\b.*\\b${EXTERNAL_COMMUNICATION_CHANNEL_SOURCE}\\b`,
+  "u",
+);
+
+export function isExternalActionRequest(pergunta) {
+  return externalActionPattern.test(normalizeText(pergunta));
+}

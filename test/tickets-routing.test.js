@@ -1267,6 +1267,125 @@ test("routeTicketQuestion: 'Quantos tickets a Ana Costa tem?' vira analisar_carg
   assert.equal(route.entities.operador, "Ana Costa");
 });
 
+// "Quantos tickets ABERTOS a Wanilene Cassiano tem?" (achado testando o
+// lote de perguntas ao vivo — Lote 7, pergunta 18, com dados reais): o nome
+// inteiro desaparecia (nenhuma entidade capturada) quando uma palavra de
+// situação ("abertos"/"fechados"/...) se intercalava entre "tickets" e
+// "<nome> tem" — confirmado ao vivo devolvendo os 66 tickets abertos do
+// SISTEMA INTEIRO como se fosse a resposta pra ela, sem filtro nenhum.
+test("'quantos tickets <situação> <nome> tem?' não perde o nome quando uma palavra de situação se intercala", () => {
+  assert.equal(
+    extractOperatorWorkloadName("Quantos tickets abertos a Wanilene Cassiano tem?"),
+    "Wanilene Cassiano",
+  );
+  assert.equal(
+    extractOperatorWorkloadName("Quantos chamados abertos o Fabio Gali tem?"),
+    "Fabio Gali",
+  );
+  assert.equal(
+    extractOperatorWorkloadName("Quantos tickets fechados a Ana Costa tem?"),
+    "Ana Costa",
+  );
+
+  const route = routeTicketQuestion("Quantos tickets abertos a Wanilene Cassiano tem?");
+  assert.deepEqual(route.toolNames, ["analisar_carga_operador"]);
+  assert.equal(route.entities.operador, "Wanilene Cassiano");
+
+  // Continua não atropelando a pergunta mais complexa com filtro extra
+  // depois de "tem" (mesma garantia do teste acima, com a palavra de
+  // situação intercalada também presente).
+  const routeComplexa = routeTicketQuestion(
+    "Quantos chamados fechados o operador cesar tem no departamento coids desde dia 1 de fevereiro de 2026?",
+  );
+  assert.deepEqual(routeComplexa.toolNames, ["listar_tickets_fechados"]);
+  assert.equal(routeComplexa.entities.operador, "cesar");
+  assert.equal(routeComplexa.entities.departamento, "coids");
+});
+
+// "Me dá uma análise completa dos tickets do Bruno de Souza Castro."
+// (achado testando o lote de perguntas ao vivo — Lote 7, pergunta 1): não
+// batia em nenhum gatilho de carga de operador (só "carga"/"sobrecarregado"/
+// "tem muitos" eram aceitos, não "análise") — caía em listar_tickets
+// genérico, despejando os tickets crus em várias páginas em vez de um
+// resumo de carga.
+test("extractOperatorWorkloadName reconhece 'análise [completa/geral] dos tickets do operador X'", () => {
+  assert.equal(
+    extractOperatorWorkloadName("Me dá uma análise completa dos tickets do Bruno de Souza Castro."),
+    "Bruno de Souza Castro",
+  );
+  assert.equal(
+    extractOperatorWorkloadName("Qual a análise dos chamados do operador Fabio Gali?"),
+    "Fabio Gali",
+  );
+
+  const route = routeTicketQuestion("Me dá uma análise completa dos tickets do Bruno de Souza Castro.");
+  assert.deepEqual(route.toolNames, ["analisar_carga_operador"]);
+  assert.equal(route.entities.operador, "Bruno de Souza Castro");
+
+  // Controle: "análise da atividade do cliente X" continua intacto,
+  // roteando pra analisar_atividade_cliente (não pra operador).
+  const routeCliente = routeTicketQuestion("Analise a atividade do cliente Luiz Henrique Coura.");
+  assert.deepEqual(routeCliente.toolNames, ["analisar_atividade_cliente"]);
+  assert.equal(routeCliente.entities.cliente, "Luiz Henrique Coura");
+});
+
+// "Quem está mais sobrecarregado hoje?" (achado testando o lote de
+// perguntas ao vivo — Lote 7, pergunta 14): não acionava ranking nenhum —
+// caía em listar_tickets filtrado só pela data de hoje, sem identificar
+// ninguém, perdendo a pergunta de "quem" por completo.
+test("'Quem está [mais] sobrecarregado?' vira ranking por operador (resumo_por_operador), não listagem genérica", () => {
+  const route1 = routeTicketQuestion("Quem está mais sobrecarregado hoje?");
+  assert.deepEqual(route1.toolNames, ["resumo_tickets_por_operador"]);
+
+  const route2 = routeTicketQuestion("Quem está sobrecarregado?");
+  assert.deepEqual(route2.toolNames, ["resumo_tickets_por_operador"]);
+  // Controle: "quem" não deve mais ser capturado como se fosse um nome de
+  // operador de verdade (o ranking não precisa de nome nenhum).
+  assert.equal(route2.entities.operador, undefined);
+});
+
+// "Compare os tickets do cliente X com os tickets do cliente Y" (achado
+// testando o lote de perguntas ao vivo — Lote 7, perguntas 19/20): forma
+// natural já suportada pro espelho de operador, nunca replicada pra
+// cliente — caía na mensagem genérica "preciso que você diga quem
+// comparar" mesmo com os 2 nomes claramente ditos.
+test("extractClientComparisonNames reconhece 'compare os tickets do/da cliente X com os tickets do cliente Y'", () => {
+  assert.deepEqual(
+    extractClientComparisonNames(
+      "Compare os tickets do cliente Luiz Henrique Coura com os tickets do cliente Luiz Henrique Coura.",
+    ),
+    ["Luiz Henrique Coura", "Luiz Henrique Coura"],
+  );
+  assert.deepEqual(
+    extractClientComparisonNames(
+      "Compare os tickets da Wanilene Cassiano com os tickets do cliente Zeca Pagodinho.",
+    ),
+    ["Wanilene Cassiano", "Zeca Pagodinho"],
+  );
+
+  const route = routeTicketQuestion(
+    "Compare os tickets da Wanilene Cassiano com os tickets do cliente Zeca Pagodinho.",
+  );
+  assert.equal(route.intent, "comparar_atividade_cliente");
+  assert.deepEqual(route.compare, [
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Wanilene Cassiano" } },
+    { toolName: "analisar_atividade_cliente", args: { cliente: "Zeca Pagodinho" } },
+  ]);
+
+  // Controles: comparação de operador e de área continuam na rota certa,
+  // não sequestradas pelos 2 novos padrões BARE de cliente acima.
+  assert.equal(
+    extractClientComparisonNames(
+      "Compare os tickets do operador Fabio Gali com os tickets do operador Diego Mota.",
+    ),
+    undefined,
+  );
+  const routeOperador = routeTicketQuestion(
+    "Compare os tickets do operador Fabio Gali com os tickets do operador Diego Mota.",
+  );
+  assert.equal(routeOperador.intent, "comparar_carga_operador");
+});
+
 // --- Fase 2: busca textual, resumo por cliente, ranking/percentual, prioridade extra ---
 
 test("extrai texto de busca de diferentes conectores", () => {
