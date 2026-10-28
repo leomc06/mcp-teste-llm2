@@ -5178,6 +5178,81 @@ test("'última segunda-feira' (dia da semana, achado testando com dados reais do
   assert.notEqual(essaSemana.entities.dataInicio, undefined);
 });
 
+// "Tickets abertos toda segunda-feira desse mês." (achado testando o lote
+// de perguntas ao vivo — Lote 8, pergunta 16): RECORRÊNCIA de dia da
+// semana ("toda"/"todo", não "última"/"essa") nunca disparava o
+// esclarecimento de dia da semana, porque "desse mês" já resolvia
+// dataInicio/dataFim antes do guard original (que só dispara sem data
+// nenhuma resolvida) — o mês inteiro era devolvido como resposta, perdendo
+// a restrição "só as segundas" em silêncio.
+test("'toda segunda-feira' (recorrência, achado testando com dados reais do Lote 8) pede esclarecimento mesmo quando já existe um período resolvido por outro caminho ('desse mês')", () => {
+  const route = routeTicketQuestion("Tickets abertos toda segunda-feira desse mês.");
+  assert.equal(route.intent, "esclarecimento_periodo_nao_suportado");
+
+  const semMes = routeTicketQuestion("Tickets abertos toda segunda-feira.");
+  assert.equal(semMes.intent, "esclarecimento_periodo_nao_suportado");
+
+  // Controle: "última segunda-feira" (dia único, já corrigido no Lote 4)
+  // continua funcionando.
+  const ultimaSegunda = routeTicketQuestion("Tickets abertos na última segunda-feira.");
+  assert.equal(ultimaSegunda.intent, "esclarecimento_periodo_nao_suportado");
+
+  // Controle negativo: "todo" não relacionado a dia da semana não dispara
+  // o guard por engano.
+  const todoMundo = routeTicketQuestion("Todo mundo abriu ticket essa semana?");
+  assert.notEqual(todoMundo.intent, "esclarecimento_periodo_nao_suportado");
+});
+
+// "Faz um gráfico dos tickets mais antigos ainda abertos." (achado
+// testando o lote de perguntas ao vivo — Lote 8, perguntas 7/8): o artigo
+// indefinido "um"/"uma" (de "um gráfico"/"uma tabela"/"uma lista"/"um
+// resumo"/"uma planilha") era convertido pra dígito "1" por
+// substituiNumerosPorExtenso (pensada só pra número por extenso real, ex.
+// "dez tickets") e esse "1" sobrava como limite, truncando a listagem pra
+// 1 resultado só sem o usuário ter pedido limite nenhum.
+test("'um gráfico'/'uma tabela'/'uma lista'/'um resumo' não é confundido com limite 1 nos branches de mais_antigos/mais_recentes/vencidos", () => {
+  const casos = [
+    "Faz um gráfico dos tickets mais antigos ainda abertos.",
+    "Faz uma tabela dos tickets mais antigos ainda abertos.",
+    "Faz uma tabela dos tickets mais recentes.",
+    "Gera um gráfico dos tickets vencidos.",
+    "Quero ver uma lista dos tickets mais antigos ainda abertos.",
+    "Me mostra um resumo dos tickets mais antigos.",
+  ];
+
+  for (const pergunta of casos) {
+    const route = routeTicketQuestion(pergunta);
+    assert.equal(route.entities.limite, undefined, pergunta);
+  }
+
+  // Controles: número real por extenso ou dígito continua funcionando.
+  assert.equal(routeTicketQuestion("Liste os 3 tickets mais antigos.").entities.limite, 3);
+  assert.equal(routeTicketQuestion("Liste 5 tickets mais antigos.").entities.limite, 5);
+  assert.equal(routeTicketQuestion("dez tickets mais antigos").entities.limite, 10);
+});
+
+// "E ela é operadora ou cliente?" (achado testando o lote de perguntas ao
+// vivo — Lote 8, pergunta 15): pergunta META sobre qual dimensão uma
+// pessoa ocupa (não um filtro de consulta de verdade) caía direto no
+// fallback final de listar_tickets SEM FILTRO NENHUM, porque as palavras
+// "operador"/"cliente" sozinhas já bastam pro portão de domínio aceitar a
+// frase — confirmado ao vivo devolvendo os 5266 tickets do sistema
+// inteiro como se fosse resposta válida.
+test("'ela é operadora ou cliente?' (pergunta meta sobre dimensão, achado testando com dados reais do Lote 8) cai fora do domínio, não em listar_tickets sem filtro", () => {
+  const route = routeTicketQuestion("E ela é operadora ou cliente?");
+  assert.equal(route.intent, "fora_do_dominio");
+  assert.deepEqual(route.toolNames, []);
+
+  const semContinuacao = routeTicketQuestion("Ela é operadora ou cliente?");
+  assert.equal(semContinuacao.intent, "fora_do_dominio");
+
+  // Controle: a motivação original de aceitar "operador(es)" sozinho no
+  // portão de domínio continua funcionando (comparação que falha por
+  // outro motivo, mas claramente sobre tickets).
+  const comparacao = routeTicketQuestion("Compare os operadores Ana e Bruno, excluindo os fechados.");
+  assert.notEqual(comparacao.intent, "fora_do_dominio");
+});
+
 test("'por prioridade DA área X' (contração 'da', achado testando com dados reais do Lote 5) resolve resumo_por_prioridade, em vez de vazar 'área X' inteiro pro valor de prioridade e derrubar pra resumo_por_status", () => {
   const comDa = routeTicketQuestion("Qual o resumo de tickets por prioridade da área Suporte?");
   assert.equal(comDa.intent, "resumo_por_prioridade");

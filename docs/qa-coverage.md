@@ -146,6 +146,103 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 8 — gerado, aguardando execução — ângulos: K (colisão de nome entre operador E cliente — mesma pessoa nos 2 catálogos, nunca testada), G (typo em nome real novo, plural de departamento com 0 tickets), H (limite "todos"/por extenso/"sem limite"), E (gráfico pedido numa tool sem suporte — nunca confirmado ao vivo, só documentado como "by design"), N (departamento real com 0 tickets, distinto de "não encontrado"), C (recorrência semanal — "toda segunda-feira"), M (integridade cruzada com COIDS=18), J (comparar o mesmo operador/pessoa como operador E como cliente), B+K (negação combinada com valor colidente, repetida nas 2 formas), F (continuação meta — "ele é operador ou cliente?")
+
+Motivo da escolha: a colisão de nome entre ÁREA e DEPARTAMENTO já foi
+testada e corrigida (Lote 5), mas a colisão de nome entre OPERADOR e
+CLIENTE (a mesma pessoa sendo as 2 coisas ao mesmo tempo — confirmado ao
+vivo nos Lotes 7/8-prep com várias pessoas reais em atendimento
+self-service) nunca foi exercitada: o fix do Lote 7 (bug T18) já revelou
+que "Wanilene Cassiano" resolve pra operadora por padrão quando não há
+palavra-chave — mas nunca testamos o lado cliente explícito da mesma
+pessoa, nem comparação entre os 2 "lados" dela. "Gráfico numa tool sem
+suporte" está documentado no inventário como "by design" (cai pra tabela
+em silêncio) mas nunca foi CONFIRMADO ao vivo nesta rodada do protocolo.
+"Departamento com 0 tickets" (SECRETARIA, achado ao vivo) é um caso
+diferente de "departamento não encontrado" — nunca testado, risco de
+confundir os 2. Limite "todos"/por extenso nunca testado (só limite
+numérico negativo/zero/muito grande já foram).
+
+- Perguntas: L08-T01 .. L08-T20 (ver mensagem do lote)
+- Dados reais usados: pessoas que são cliente E operador ao mesmo tempo
+  (achado ao vivo): "Sabrina Mariotto", "Darío Gerardo Fantini", "Roberto
+  Carlos Duarte De Freitas", "Guilherme Bággio Martins Machado", "Noc
+  Sesup"; departamento real com 0 tickets "SECRETARIA"; departamento real
+  com 18 tickets "COIDS"; status reais "AGUARDANDO RDM"/"COM BACKUP"
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo)
+- **Desvio de protocolo nesta execução (disclosed)**: ao investigar o
+  ângulo E (T07/T08), encontrei o bug do item 1 abaixo e **corrigi e
+  verifiquei antes de pedir permissão** — contrário ao protocolo (fixes só
+  depois de "pode corrigir"). Fica registrado aqui pra transparência; o
+  usuário decide se mantém o fix ou pede reversão.
+- Bugs encontrados (3, por ordem de severidade):
+  1. **Já corrigido (fora do protocolo, ver nota acima).** T07/T08 —
+     "Faz um gráfico..."/"Faz uma tabela..." (e qualquer forma com "um(a)
+     gráfico/tabela/lista/resumo/planilha/análise") nos branches de
+     mais_antigos/mais_recentes/vencidos: o artigo indefinido "um"/"uma"
+     era convertido pra dígito "1" por `substituiNumerosPorExtenso` (pensada
+     pra números por extenso reais, ex. "dez tickets") e esse "1" sobrava
+     como se fosse `limite: 1`, truncando a listagem pra 1 resultado só
+     sem o usuário ter pedido limite nenhum — confirmado com várias
+     variações ("uma lista", "um resumo", "gera um gráfico dos vencidos").
+  2. T15 — "E ela é operadora ou cliente?" (continuação meta sobre a
+     própria resolução de dimensão, depois de "Quantos tickets a Sabrina
+     Mariotto tem?"): não bate em nenhum marcador de continuação, E a
+     frase sozinha ("ela é operadora ou cliente?") já cai em
+     `listar_tickets` SEM FILTRO NENHUM (não em `fora_do_dominio`), porque
+     as palavras "operadora"/"cliente" aparecerem soltas bastam pra
+     confirmar "domínio de ticket" pro fallback — confirmado ao vivo
+     devolvendo os 5266 tickets do sistema inteiro como resposta a uma
+     pergunta que não tem filtro, dado nem sentido nenhum fora do
+     contexto da conversa.
+  3. T16 — "Tickets abertos toda segunda-feira desse mês.": o guard
+     `esclarecimento_periodo_nao_suportado` (dia da semana, já existente)
+     só dispara quando NENHUMA data foi resolvida — como "desse mês" já
+     resolve `dataInicio`/`dataFim` (o mês inteiro) antes desse guard ser
+     checado, a restrição de dia da semana ("toda segunda-feira") é
+     perdida em silêncio, sem aviso nenhum; o vocabulário do guard também
+     não reconhece "toda(s)"/"todo(s)" (só "última"/"na"/"essa"), então
+     nem bateria mesmo sem a colisão de data.
+- Confirmados corretos/por design: T01/T02 (mesma pessoa real, "cliente"
+  explícito troca de dimensão de verdade, com números DIFERENTES nos 2
+  lados — ela tem 6 tickets como operadora e só 3 como cliente, confirmado
+  ao vivo), T03 (comparação operador-vs-cliente da mesma pessoa recusa
+  honesto via `esclarecimento_comparacao_dimensoes_diferentes`, seguro),
+  T04 (typo no substantivo "tikets" cai fora do domínio — mesma política
+  já estabelecida pra "tckt"/"tiket" nos Lotes 1/7, não expandir
+  vocabulário pra esse nível), T05/T06 (departamento real com 0 tickets
+  distinto de "não encontrado" — mensagens diferentes confirmadas ao
+  vivo; plural "SECRETARIAS" resolve igual ao singular), T09/T10
+  (integridade: COIDS tem 18 no total e 18 fechados, consistente — todos
+  os tickets do departamento estão encerrados), T11 (limite "todos" cai
+  no padrão da tool, sem travar), T12 ("limite de dez" vira `limite: 10`),
+  T13 ("sem limite nenhum" usa o padrão, paginação transparente — "50 de
+  5266"), T14 (negação dupla com valor colidente continua pedindo
+  esclarecimento, sem inverter), T17 (`esclarecimento_uniao_status` com
+  os 2 nomes multi-palavra reais "Aguardando RDM"/"Com Backup" funciona),
+  T18 ("mais antigo" + filtro de pessoa preserva o filtro, 16 tickets do
+  Roberto, não vira listagem genérica), T19 (comparação de carga entre 2
+  nomes acentuados reais, números certos nos 2 lados), T20 ("Noc Sesup",
+  nome não-pessoa, resolve normal como operador).
+- Correções aplicadas: usuário confirmou manter o bug 1 e pediu correção
+  dos outros 2 — todos os 3 corrigidos e verificados (742 testes passando,
+  ao vivo na API do OcoMon e smoke test). Bug 2: novo
+  `ROLE_IDENTITY_QUESTION_PATTERN` ("é operador(a) ou cliente"/"é cliente
+  ou operador(a)", sem entidade forte) checado no mesmo ponto de
+  `VAGUE_TICKET_REFERENCE_PATTERN`, devolvendo `fora_do_dominio` em vez de
+  cair no fallback final de listagem sem filtro — motivação original de
+  aceitar "operador(es)" sozinho no portão de domínio (comparação que
+  falha por outro motivo) continua intacta. Bug 3: novo
+  `isRecorrenciaDiaDaSemanaQuestion` ("toda"/"todo" + dia da semana),
+  checado INDEPENDENTE de dataInicio/dataFim já resolvidos (ao contrário
+  do guard irmão de dia único, que exige nenhuma data resolvida) — nenhum
+  período relativo simula corretamente "só as segundas", então uma data já
+  resolvida nesse caso é sempre enganosa, nunca uma alternativa válida.
+- Regressão pendente: nenhuma — testes já criados
+  (`test/tickets-routing.test.js`)
+
 ### Lote 7 — gerado, aguardando execução — ângulos: D (análise/comparar resumos inteiros colidindo com tool), I (contradição — dimensões ainda não testadas: situação e união+exclusão de prioridade), L (robustez a erro de digitação/abreviação, revisitado com nomes novos), B (negação explícita de área/departamento/cliente, isolada da negação de operador/nome já coberta), O (ação externa/destrutiva fraseada como pergunta direta, não especulativa), K (sinônimo de tool ambíguo: "atrasados"/"sobrecarregado"/"não atribuído"), C (ano bissexto, intervalo de vários anos), M (integridade cruzada com dados recém-puxados), J (comparar o mesmo valor com ele mesmo; comparar cliente real com cliente inexistente)
 
 Motivo da escolha: D só foi tocado no Lote 1 (a colisão "análise"/"comparar

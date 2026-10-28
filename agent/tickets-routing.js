@@ -3598,8 +3598,18 @@ export function extractPage(value) {
 // "01/01/2026" vira "01 01 2026"), então o primeiro "01" de uma data em
 // "...aberto ENTRE 01/01/2026 e 30/06/2026..." batia como se fosse um
 // pedido de "top 1", truncando a lista em 1 resultado só.
+// "Faz UM gráfico dos tickets mais antigos ainda abertos." (achado
+// testando o lote de perguntas ao vivo — Lote 8, perguntas 7/8): "um"/
+// "uma" é o ARTIGO INDEFINIDO de "gráfico"/"tabela"/"lista"/"resumo"/
+// "planilha"/"análise" aqui, não uma quantidade de tickets — mas
+// substituiNumerosPorExtenso (acima) troca qualquer "um"/"uma" solto por
+// "1" ANTES deste descarte, então "um grafico" virava "1 grafico" e esse
+// "1" sobrava como se fosse o limite pedido, truncando a listagem pra 1
+// resultado só sem o usuário ter pedido limite nenhum. Descartado depois
+// da substituição (igual aos outros descartes acima), por isso o número
+// aqui já é sempre "1" (nunca "um"/"uma").
 const LOOSE_NUMBER_NOISE_PATTERN =
-  /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b|\b\d{1,2}\s+\d{1,2}\s+\d{4}\b|\b\d{4}\s+\d{1,2}\s+\d{1,2}\b/giu;
+  /\bpagina\s+\d+\b|\b(?:n[oa]s\s+)?[úu]ltim[oa]s\s+\d+\s+(?:dias?|semanas?|mes|meses|anos?)\b|\b\d{1,2}\s+\d{1,2}\s+\d{4}\b|\b\d{4}\s+\d{1,2}\s+\d{1,2}\b|\b1\s+(?:graficos?|tabelas?|planilhas?|listas?|resumos?|analises?)\b/giu;
 
 // "dez tickets mais antigos" (achado testando o lote de perguntas ao vivo):
 // número por extenso sem nenhum gatilho específico ("primeiros"/"top"/"com
@@ -4041,10 +4051,28 @@ function routeTicketQuestionCore(pergunta) {
   const DIA_DA_SEMANA_SOURCE = "(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:\\s+feira)?";
   const isDiaDaSemanaQuestion = new RegExp(`\\b(?:[úu]ltim[ao]|n[oa]|ess[ae])\\s+${DIA_DA_SEMANA_SOURCE}\\b`, "u").test(text);
 
-  if (dataInicio === undefined && dataFim === undefined && isDiaDaSemanaQuestion) {
+  // "Tickets abertos toda segunda-feira desse mês." (achado testando o
+  // lote de perguntas ao vivo — Lote 8, pergunta 16): RECORRÊNCIA de dia
+  // da semana ("toda"/"todo", não "última"/"essa") — diferente do caso
+  // acima (um único dia específico), aqui o próprio "desse mês" já resolve
+  // dataInicio/dataFim (o mês inteiro) ANTES deste guard ser checado, então
+  // o guard original (que só dispara sem data nenhuma resolvida) nunca
+  // tinha chance de disparar — a restrição de dia da semana era perdida em
+  // silêncio, o mês inteiro era devolvido como se "toda segunda-feira"
+  // não tivesse sido pedido. Checado INDEPENDENTE de dataInicio/dataFim já
+  // resolvidos (ao contrário do guard de dia único acima): não existe
+  // período relativo nenhum que simule corretamente "só as segundas", então
+  // qualquer data já resolvida aqui é uma resposta ENGANOSA, não uma
+  // alternativa válida a ser preservada.
+  const isRecorrenciaDiaDaSemanaQuestion = new RegExp(`\\btod[ao]s?\\s+${DIA_DA_SEMANA_SOURCE}\\b`, "u").test(text);
+
+  if (
+    isRecorrenciaDiaDaSemanaQuestion
+    || (dataInicio === undefined && dataFim === undefined && isDiaDaSemanaQuestion)
+  ) {
     return createClarificationDecision(
       "esclarecimento_periodo_nao_suportado",
-      "Não consigo filtrar por dia da semana (ex.: \"última segunda-feira\") — só por data específica ou período relativo (hoje, essa semana, mês passado, etc.). Pode perguntar usando um desses jeitos?"
+      "Não consigo filtrar por dia da semana (ex.: \"última segunda-feira\"/\"toda segunda-feira\") — só por data específica ou período relativo (hoje, essa semana, mês passado, etc.). Pode perguntar usando um desses jeitos?"
         + "\n\nExemplos:\n"
         + "- Tickets abertos essa semana.\n"
         + "- Tickets abertos no dia 20/10/2026.",
@@ -6243,6 +6271,37 @@ function routeTicketQuestionCore(pergunta) {
         + "\n\nExemplos:\n"
         + "- Detalhe o ticket 1050.\n"
         + "- Tickets abertos na área Suporte.",
+    );
+  }
+
+  // "E ela é operadora ou cliente?" (achado testando o lote de perguntas ao
+  // vivo — Lote 8, pergunta 15, depois de "Quantos tickets a Sabrina
+  // Mariotto tem?"): pergunta META sobre qual dimensão uma pessoa ocupa,
+  // não um filtro de consulta de verdade. As palavras "operador"/"cliente"
+  // sozinhas já bastam pra TICKET_DOMAIN_VOCABULARY_PATTERN aceitar a frase
+  // como "sobre tickets" (de propósito, pra não recusar comparações como
+  // "Compare os operadores Ana e Bruno" — ver comentário daquele padrão),
+  // então sem este guard a pergunta passava reto pelo portão fora_do_
+  // dominio e caía no fallback final de listar_tickets SEM FILTRO NENHUM —
+  // confirmado ao vivo devolvendo os 5266 tickets do sistema inteiro como
+  // se fosse resposta válida. Mesmo lugar de VAGUE_TICKET_REFERENCE_PATTERN
+  // acima (depois do portão fora_do_dominio, antes do fallback de listagem).
+  const ROLE_IDENTITY_QUESTION_PATTERN = new RegExp(
+    `\\b[ée]\\s+(?:${USER_LOOKUP_NOUN_SOURCE})a?\\s+ou\\s+${CLIENT_LOOKUP_NOUN_SOURCE}\\b`
+      + `|\\b[ée]\\s+${CLIENT_LOOKUP_NOUN_SOURCE}\\s+ou\\s+(?:${USER_LOOKUP_NOUN_SOURCE})a?\\b`,
+    "u",
+  );
+
+  if (Object.keys(entidadesFortes).length === 0 && ROLE_IDENTITY_QUESTION_PATTERN.test(text)) {
+    return createClarificationDecision(
+      "fora_do_dominio",
+      "Não entendi essa pergunta como algo relacionado aos tickets do sistema. "
+        + "Você pode perguntar sobre status, prioridade, área, departamento, "
+        + "operador, cliente, período ou número de um ticket, por exemplo."
+        + "\n\nExemplos:\n"
+        + "- Quantos tickets estão abertos na área Suporte?\n"
+        + "- Qual o resumo dos tickets por prioridade este mês?\n"
+        + "- Detalhe o ticket 1050.",
     );
   }
 
