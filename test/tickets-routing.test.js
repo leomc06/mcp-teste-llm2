@@ -5565,3 +5565,71 @@ test("negação de 'tabela' ('sem tabela nenhuma', achado testando com dados rea
   const semImagem = routeTicketQuestion("Mostra o resumo por área sem imagem nenhuma.");
   assert.equal(semImagem.intent, "resumo_por_area");
 });
+
+// --- Lote 11 (protocolo de QA estruturado) ---
+
+test("negação com 'nunca' (achado testando com dados reais do Lote 11, bug T04) é reconhecida, em vez de inverter o resultado (tratar o nome negado como filtro positivo)", () => {
+  const route = routeTicketQuestion("Tickets que nunca foram do operador Fabio Gali.");
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: "nunca" aplicado à situação aberto/fechado (binária) também
+  // inverte certo pro lado aberto.
+  const situacao = routeTicketQuestion("Tickets que nunca estiveram encerrados.");
+  assert.equal(situacao.intent, "listar_abertos");
+});
+
+test("autocontradição auto-negada generalizada pra prioridade/status (achado testando com dados reais do Lote 11, bugs T02/T03) — mesmo valor afirmado e negado na mesma frase", () => {
+  const prioridade = routeTicketQuestion("Tickets que sejam Urgente e que também não sejam Urgente.");
+  assert.equal(prioridade.intent, "esclarecimento_contradicao");
+
+  const status = routeTicketQuestion(
+    "Tickets que estejam com status Reservado para operador e que também não estejam com status Reservado para operador.",
+  );
+  assert.equal(status.intent, "esclarecimento_contradicao");
+
+  // Controle: o caso original do Lote 9 (área/departamento colidentes)
+  // continua funcionando depois da ampliação do vocabulário verbal.
+  const areaDepartamento = routeTicketQuestion(
+    "Tickets que sejam da Governança e que também não sejam do departamento Governança.",
+  );
+  assert.equal(areaDepartamento.intent, "esclarecimento_contradicao");
+});
+
+test("continuação que repete a MESMA palavra-chave de dimensão com um nome NOVO (achado testando com dados reais do Lote 11, bug T08) usa o nome mais recente, não o do turno anterior", () => {
+  const merged = "Quantos tickets o operador Fabio Gali tem? E quanto ao operador Diego Mota?";
+  const route = routeTicketQuestion(merged);
+  assert.equal(route.entities.operador, "Diego Mota");
+
+  // Controle: 1 menção só continua resolvendo normalmente.
+  const unica = routeTicketQuestion("Quantos tickets o operador Fabio Gali tem?");
+  assert.equal(unica.entities.operador, "Fabio Gali");
+
+  // Controle: autocontradição (mesmo nome 2x, afirmando e negando) não
+  // regride — continua achando o MESMO valor nos 2 lados.
+  const contradicao = routeTicketQuestion(
+    "Tickets do operador Fabio Gali que não são do operador Fabio Gali.",
+  );
+  assert.equal(contradicao.intent, "esclarecimento_contradicao");
+});
+
+test("'Quantos tickets <nome> t' (frase cortada no meio da última palavra, achado testando com dados reais do Lote 11, bug T15) ainda reconhece o nome, em vez de cair em listagem sem filtro nenhum", () => {
+  const route = routeTicketQuestion("Quantos tickets o Cesar Augusto de Mello t");
+  assert.equal(route.intent, "analisar_carga_operador");
+  assert.equal(route.entities.operador, "Cesar Augusto de Mello");
+
+  // Controle: a forma completa ("tem?") continua resolvendo igual.
+  const completa = routeTicketQuestion("Quantos tickets o Cesar Augusto de Mello tem?");
+  assert.equal(completa.entities.operador, "Cesar Augusto de Mello");
+});
+
+test("comparação de prioridade (achado testando com dados reais do Lote 11, bug T13) pede esclarecimento de dimensão não suportada, em vez de tratar o nível como nome de operador", () => {
+  const route = routeTicketQuestion("Compare os tickets de prioridade Alta com os tickets de prioridade Baixa.");
+  assert.equal(route.intent, "esclarecimento_comparacao_dimensao_nao_suportada");
+
+  // Controle: prioridade só como qualificador de PASSAGEM (não o alvo da
+  // comparação) continua funcionando normalmente.
+  const controle = routeTicketQuestion(
+    "Compare os tickets do operador Ana com os tickets do operador Bruno, considerando só prioridade alta.",
+  );
+  assert.equal(controle.intent, "comparar_carga_operador");
+});

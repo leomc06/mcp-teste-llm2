@@ -44,7 +44,18 @@ const TRAILING_MESMO_QUE_CLAUSE_PATTERN = /\s+mesmo\s+que\b.*$/iu;
 // a cláusula aqui (limpeza do nome); a detecção da CONTRADIÇÃO em si (mesmo
 // nome citado 2x, uma vez afirmando e outra negando) é feita à parte em
 // detectaContradicao(), contra o valor já limpo por este pattern.
-const TRAILING_SELF_NEGATION_CLAUSE_PATTERN = /\s+que\s+n[ãa]o\s+(?:[ée]|s[ãa]o)\b.*$/iu;
+// "(?:tambem\\s+)?" e "seja|sejam|esteja|estejam" (achado testando o lote
+// de perguntas ao vivo — Lote 11, bug T03, mesmo vocabulário já ampliado
+// em detectaContradicao() pro Lote 9 — faltava sincronizar aqui): "Tickets
+// que ESTEJAM com status X e que TAMBÉM NÃO ESTEJAM com status X." (status
+// combina com "estar", não "ser") não batia nesta poda — o valor de status
+// capturado ficava com a cláusula inteira vazada ("X e que também não
+// estejam"), e a checagem de contradição (que compara contra o valor JÁ
+// limpo) nunca via o valor certo pra comparar, deixando a contradição
+// passar batido com uma mensagem de "não encontrado" confusa em vez do
+// esclarecimento honesto.
+const TRAILING_SELF_NEGATION_CLAUSE_PATTERN =
+  /\s+(?:e\s+)?que\s+(?:tamb[ée]m\s+)?n[ãa]o\s+(?:[ée]|s[ãa]o|seja|sejam|esteja|estejam)\b.*$/iu;
 
 // "mostra mais tickets Urgentes que o total geral de tickets" (achado
 // testando o lote de perguntas ao vivo — pergunta "meta" comparando 2
@@ -1580,6 +1591,40 @@ function extractByPatterns(value, patterns) {
   return undefined;
 }
 
+// Mesma palavra-chave de dimensão mencionada 2+ vezes no texto (achado
+// testando continuação ao vivo — Lote 11, bug T08): "Quantos tickets o
+// operador Fabio Gali tem? E quanto ao operador Diego Mota?" (2 turnos
+// concatenados por mergeContinuation, cada um com "operador <nome>" por
+// extenso) devolvia Fabio Gali, ignorando por completo o 2º turno — porque
+// `extractByPatterns`/`.match()` sem flag global sempre acha a 1ª posição
+// que bate e para aí, mesmo quando essa captura é gulosa até o fim da
+// string (`(.+)$`, o caso de todo padrão ancorado em palavra-chave deste
+// arquivo). O match MAIS À DIREITA é o pedido mais recente do usuário, não
+// o 1º. Pra achar sucessivas ocorrências de um padrão desse tipo, o
+// `lastIndex` precisa avançar manualmente pra 1 posição depois do INÍCIO
+// do match anterior (não pro fim, que o motor já deixaria lá — aí o loop
+// nunca acharia uma 2ª ocorrência, sempre terminando numa 1ª iteração só).
+function extractLastKeywordMatch(value, pattern) {
+  const originalText = String(value ?? "");
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+  let melhor;
+  let match = globalPattern.exec(originalText);
+
+  while (match !== null) {
+    const cleaned = cleanFreeText(match[1]);
+
+    if (cleaned !== undefined) {
+      melhor = cleaned;
+    }
+
+    globalPattern.lastIndex = match.index + 1;
+    match = globalPattern.exec(originalText);
+  }
+
+  return melhor;
+}
+
 // "ticket" tem sinônimos comuns no vocabulário de helpdesk (o próprio
 // OcoMon vem de "Ocorrência"); todos são aceitos antes do número. "ordem(ns)
 // de serviço" (achado na auditoria de robustez — termo comum fora deste
@@ -2194,43 +2239,60 @@ const OPERATOR_WORKLOAD_EXCLUSION_SOURCE =
 // resposta mostrava o departamento inteiro, não só os tickets do Helpdesk.
 const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|fech(?:ou|aram))";
 
+// "Resumo por operador NESSE ANO..." (achado testando o lote de perguntas
+// ao vivo): diferente dos padrões "por/pelo X" e "do/da X" abaixo, este
+// padrão (ancorado em operador/usuário/responsável/atendente/técnico)
+// nunca tinha ganhado a exclusão de palavras de domínio
+// (OPERATOR_BY_EXCLUSION_SOURCE) nem das formas contraídas de período
+// relativo ("nesse"/"desse"/"essa"/...) — "operador" sem nome nenhum
+// depois, só uma cláusula de data, virava operador: "nesse ano"
+// (cleanFreeText não tem como podar, não sobra nada ANTES da cláusula pra
+// ancorar o corte de \s+ das TRAILING_*_CLAUSE_PATTERN).
+// "(?:é\\s+)?" logo antes dos lookaheads (achado testando o lote de
+// perguntas ao vivo, com dados reais — mesmo espelho do fix já aplicado em
+// extractClientName): "Tickets CUJO OPERADOR É Vanessa Ventura..." tem o
+// verbo "é" entre a palavra "operador" e o nome de verdade — sem pular
+// esse verbo, ele virava parte do nome capturado (operador: "é Vanessa
+// Ventura"). Só o "é" ACENTUADO (não "e" sem acento, que é a conjunção já
+// tratada por DIMENSION_CONNECTOR_LEAK_SOURCE logo abaixo).
+// "(?<!sem\\s)" (achado testando o lote de perguntas ao vivo): "Preciso
+// saber quantos tickets estão SEM OPERADOR e quantos estão congelados."
+// tem a palavra "operador" logo depois de "sem" — ali ela é o marcador de
+// dimensão de isSemOperadorIntent (ninguém atribuído), não uma introdução
+// de nome — mas esse padrão não sabia disso e capturava tudo que vinha
+// depois como se fosse um nome (operador: "e quantos", lixo que nunca bate
+// no catálogo real e derruba a pergunta inteira com "operador não
+// encontrado" em vez de responder pelo menos a parte de congelados). "sem"
+// como prefixo de EXCLUSÃO aqui, não de captura — "sem o operador Fulano"
+// (negação de um NOME específico) continua sendo tratado por outro
+// mecanismo (detectaNegacaoNaoSuportada), não por este padrão.
+// Construído dentro da função (não como const de módulo): referencia
+// USER_LOOKUP_NOUN_SOURCE e outras fontes declaradas MAIS ABAIXO neste
+// arquivo — só funciona em tempo de CHAMADA (depois que o módulo inteiro
+// já carregou), não em tempo de avaliação do módulo.
+function buildOperatorKeywordAnchoredPattern() {
+  return new RegExp(
+    `(?<!\\bsem\\s)\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
+      + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
+      + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
+      + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
+    "iu",
+  );
+}
+
 export function extractOperatorName(value) {
+  // Checado primeiro, via extractLastKeywordMatch (não extractByPatterns):
+  // quando esta palavra-chave aparece 2+ vezes no texto (2 turnos de
+  // continuação concatenados, cada um com "operador <nome>" explícito), o
+  // match mais à direita (o mais recente) vence — ver comentário de
+  // extractLastKeywordMatch pro bug que isso corrige (Lote 11, T08).
+  const ultimaMencaoExplicita = extractLastKeywordMatch(value, buildOperatorKeywordAnchoredPattern());
+
+  if (ultimaMencaoExplicita !== undefined) {
+    return ultimaMencaoExplicita;
+  }
+
   return extractByPatterns(value, [
-    // "Resumo por operador NESSE ANO..." (achado testando o lote de
-    // perguntas ao vivo): diferente dos padrões "por/pelo X" e "do/da X"
-    // abaixo, este 1º padrão (ancorado em operador/usuário/responsável/
-    // atendente/técnico) nunca tinha ganhado a exclusão de palavras de
-    // domínio (OPERATOR_BY_EXCLUSION_SOURCE) nem das formas contraídas de
-    // período relativo ("nesse"/"desse"/"essa"/...) — "operador" sem nome
-    // nenhum depois, só uma cláusula de data, virava operador: "nesse ano"
-    // (cleanFreeText não tem como podar, não sobra nada ANTES da cláusula
-    // pra ancorar o corte de \s+ das TRAILING_*_CLAUSE_PATTERN).
-    // "(?:é\\s+)?" logo antes dos lookaheads (achado testando o lote de
-    // perguntas ao vivo, com dados reais — mesmo espelho do fix já aplicado
-    // em extractClientName): "Tickets CUJO OPERADOR É Vanessa Ventura..."
-    // tem o verbo "é" entre a palavra "operador" e o nome de verdade — sem
-    // pular esse verbo, ele virava parte do nome capturado (operador: "é
-    // Vanessa Ventura"). Só o "é" ACENTUADO (não "e" sem acento, que é a
-    // conjunção já tratada por DIMENSION_CONNECTOR_LEAK_SOURCE logo abaixo).
-    // "(?<!sem\\s)" (achado testando o lote de perguntas ao vivo): "Preciso
-    // saber quantos tickets estão SEM OPERADOR e quantos estão congelados."
-    // tem a palavra "operador" logo depois de "sem" — ali ela é o marcador
-    // de dimensão de isSemOperadorIntent (ninguém atribuído), não uma
-    // introdução de nome — mas esse 1º padrão não sabia disso e capturava
-    // tudo que vinha depois como se fosse um nome (operador: "e quantos",
-    // lixo que nunca bate no catálogo real e derruba a pergunta inteira com
-    // "operador não encontrado" em vez de responder pelo menos a parte de
-    // congelados). "sem" como prefixo de EXCLUSÃO aqui, não de captura —
-    // "sem o operador Fulano" (negação de um NOME específico) continua
-    // sendo tratado por outro mecanismo (detectaNegacaoNaoSuportada), não
-    // por este padrão.
-    new RegExp(
-      `(?<!\\bsem\\s)\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
-        + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
-        + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
-        + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
-      "iu",
-    ),
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
     new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
     // "Quais os tickets de Vanessa Ventura?" (achado testando o lote de
@@ -2631,8 +2693,14 @@ export function extractClientActivityName(value) {
 // marcador reconhecido, e "cancelados" virava filtro POSITIVO (o oposto
 // exato do pedido), a mesma classe de inversão silenciosa já corrigida
 // várias vezes pros outros sinônimos de exclusão.
+// "nunca" (achado testando o lote de perguntas ao vivo — Lote 11, bug
+// T04): "Tickets que NUNCA foram do operador Fabio Gali." não batia em
+// nenhum marcador de negação (só "não"/"nem"/"exceto"/...), e o nome virava
+// filtro POSITIVO — resultado final INVERTIDO (devolvia exatamente os
+// tickets DO Fabio Gali, o oposto exato do pedido), pior que só perder o
+// filtro.
 const NEGATION_MARKER_SOURCE =
-  "(?:n[ãa]o|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|ignorando|ignor[ae]"
+  "(?:n[ãa]o|nunca|excet[oa]|diferentes?\\s+de|tirando|tira|tire|sem|excluindo|ignorando|ignor[ae]"
   // "fora da área X"/"fora do departamento X" (achado testando o lote de
   // perguntas ao vivo): "Tickets FORA DA ÁREA de Suporte." capturava area:
   // "Suporte" como filtro POSITIVO — sentido exatamente invertido ("fora
@@ -3010,8 +3078,17 @@ export function extractOperatorWorkloadName(value) {
     // operador, perdendo o resumo de carga. "a?" pro feminino
     // ("operadora"), mesma ideia de USER_LOOKUP_NOUN_SOURCE em outros
     // pontos do arquivo que não têm a forma feminina própria.
+    // "...t" (achado testando o lote de perguntas ao vivo — Lote 11, bug
+    // T15): "Quantos tickets o Cesar Augusto de Mello t" (frase cortada no
+    // meio da última palavra, "tem" → "t", robustez a corte de rede/envio
+    // acidental) não batia na âncora "tem" completa — o nome inteiro
+    // sumia, caindo no fallback de listagem SEM FILTRO NENHUM (despejo do
+    // sistema inteiro). "|t" como alternativa ao "tem" completo, só
+    // quando é a ÚLTIMA coisa da string (nada depois, nem outra letra) —
+    // não arrisca confundir um "t" solto no MEIO da frase (que já não
+    // bateria aqui mesmo, a âncora `$` exige fim de string).
     new RegExp(
-      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)(?:\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+tem(?:\\s+como\\s+(?:${USER_LOOKUP_NOUN_SOURCE})a?)?\\s*[?!.]*$`,
+      `\\bquantos\\s+(?:tickets?|chamados?|atendimentos?)(?:\\s+(?:${OPEN_STATE_ADJECTIVE_SOURCE}|${CLOSURE_VERB_SOURCE}))?\\s+(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))(?:a\\s+|o\\s+)?(.+?)\\s+(?:tem(?:\\s+como\\s+(?:${USER_LOOKUP_NOUN_SOURCE})a?)?|t)\\s*[?!.]*$`,
       "iu",
     ),
     // "Me diga a carga de trabalho do operador Helpdesk." / "Qual a carga
@@ -3241,6 +3318,35 @@ export function extractOperatorComparisonNames(value) {
       || new RegExp(AREA_OU_DEPARTAMENTO_NORMALIZADO_SOURCE, "u").test(normalizeText(match[2]));
 
     if (mencionaAreaOuDepartamentoNoMatch) {
+      continue;
+    }
+
+    // "Compare os tickets de prioridade Alta com os tickets de prioridade
+    // Baixa." (achado testando o lote de perguntas ao vivo — Lote 11, bug
+    // T13): mesmo raciocínio dos 2 guards acima (cliente/área-departamento)
+    // — o padrão BARE acima também batia quando os 2 lados mencionam
+    // "prioridade"/"status" explicitamente, roubando o match ANTES do
+    // guard dedicado `mencionaComparacaoPrioridadeOuStatus` (mais abaixo em
+    // routeTicketQuestionCore, que já recusa esse tipo de comparação
+    // honestamente) conseguir disparar — virava operador: "prioridade
+    // Alta"/"prioridade Baixa" (nome-lixo, nunca bate no catálogo real de
+    // operadores, com a mensagem confusa "operador 'prioridade Alta' não
+    // encontrado" em vez da recusa honesta sobre dimensão não suportada).
+    // Ancorado no INÍCIO do trecho capturado (não em qualquer lugar, como
+    // os 2 guards acima) — achado rodando a suíte depois desta mesma
+    // correção: "Compare o operador Ana com o operador Bruno, considerando
+    // só prioridade alta." (controle já existente, prioridade só como
+    // qualificador de PASSAGEM no fim da cláusula) tem "prioridade" dentro
+    // do match[2] CRU (antes de cleanFreeText podar a cláusula pela
+    // vírgula), e um teste sem âncora rejeitava esse controle por engano.
+    // Só rejeita quando "prioridade"/"status" é a PRIMEIRA palavra do
+    // trecho (o alvo real da comparação, não uma menção de passagem).
+    const PRIORIDADE_OU_STATUS_NORMALIZADO_SOURCE = "^\\s*(?:d[oa]\\s+|de\\s+)?(?:prioridades?|status)\\b";
+    const mencionaPrioridadeOuStatusNoMatch =
+      new RegExp(PRIORIDADE_OU_STATUS_NORMALIZADO_SOURCE, "u").test(normalizeText(match[1]))
+      || new RegExp(PRIORIDADE_OU_STATUS_NORMALIZADO_SOURCE, "u").test(normalizeText(match[2]));
+
+    if (mencionaPrioridadeOuStatusNoMatch) {
       continue;
     }
 
@@ -4701,8 +4807,14 @@ function routeTicketQuestionCore(pergunta) {
   // NEGATED_CLOSED_SOURCE (isNegatedClosed ficava false), então
   // isFechadoIntent via só a palavra "encerrada" solta e roteava pro OPOSTO
   // exato do pedido (listar_tickets_fechados em vez de excluir os fechados).
+  // "nunca" (achado testando o lote de perguntas ao vivo — Lote 11, bug
+  // T04, mesma classe aplicada aqui por consistência com NEGATION_MARKER_
+  // SOURCE acima — as 2 listas já saíram dessincronizadas antes, ver
+  // comentário logo abaixo sobre "sem"/"excluindo"/"menos"): "tickets que
+  // NUNCA foram encerrados" é a mesma negação de "não foram encerrados".
   const NEGATION_PREFIX_SOURCE =
     "(?:nao\\s+(?:esta\\s+|estao\\s+|esteja\\s+|estejam\\s+|foi\\s+|foram\\s+)?"
+    + "|nunca\\s+(?:esteve\\s+|estiveram\\s+|foi\\s+|foram\\s+)?"
     + "|diferentes?\\s+de\\s+"
     + "|excet[oa]\\s+(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
     + "|sem\\s+(?:contar\\s+)?(?:o\\s+|os\\s+|a\\s+|as\\s+)?"
@@ -5142,10 +5254,29 @@ function routeTicketQuestionCore(pergunta) {
     // "(?:tambem\\s+)?" e "seja|sejam" (além de "e|sao") no vocabulário
     // verbal: a forma subjuntiva com "também" interposto ("que TAMBÉM NÃO
     // SEJAM") é tão comum quanto a indicativa direta já aceita pro operador.
+    // "esteja|estejam" no vocabulário verbal, e prioridade/status no loop
+    // de dimensões (achado testando o lote de perguntas ao vivo — Lote 11,
+    // bugs T02/T03): a generalização do Lote 9 só cobria operador/área/
+    // departamento (que combinam com "ser" — "sejam da área X") — faltavam
+    // prioridade ("Tickets que SEJAM Urgente e que também não SEJAM
+    // Urgente.") e status, que combina com "estar", não "ser" ("Tickets
+    // que ESTEJAM com status X e que também não ESTEJAM com status X.").
+    // Sem isso, os 2 casos caíam no fallback de listagem aplicando só o
+    // lado afirmativo em silêncio (prioridade) ou pior, com texto-lixo
+    // vazando pro operador capturado por engano, já que "status X" pode
+    // conter literalmente a palavra "operador" dentro do próprio valor
+    // (ver Lote 9) — a checagem de contradição abaixo roda ANTES de
+    // qualquer entidade de operador ser usada numa resposta, então
+    // detectar a contradição aqui evita esse vazamento por completo, não
+    // só a prioridade/status em si. "(?:com\\s+)?" antes de "status" pro
+    // mesmo bridge já usado em outros pontos do arquivo ("estejam COM
+    // status Encerrada").
     for (const [valor, nomeDimensao] of [
       [operador, "operador"],
       [area, `(?:${AREA_SYNONYM_SOURCE})`],
       [departamento, "departamento"],
+      [prioridade, "prioridade"],
+      [status, "(?:com\\s+)?status"],
     ]) {
       if (valor === undefined) {
         continue;
@@ -5155,7 +5286,7 @@ function routeTicketQuestionCore(pergunta) {
 
       if (
         new RegExp(
-          `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
+          `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam|esteja|estejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
           "u",
         ).test(text)
       ) {

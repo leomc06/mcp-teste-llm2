@@ -146,7 +146,160 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
-### Lote 10 — gerado, aguardando execução — ângulos: O (pergunta META sobre CAPACIDADE, não um pedido de ação de verdade — nunca testada, risco de falso positivo do write-guard/ação externa), D (análise aplicada a área/departamento, não só pessoa), G (espaçamento/caixa irregular em status real multi-palavra), E+verbosidade (verbosidade combinada com comparação, nunca testada junto), A (coloquial extremo com abreviação/typo), M (integridade por prioridade), N (página absurdamente grande + filtro real), J (percentual revisit), F (continuação de 3 turnos: chip + novo marcador "e como"), K (sinônimo "demorando" para SLA vencido/mais antigo), B (negação de união — "nem X nem Y"), C (semestre numerado + ano explícito), E (negação explícita de formato + pedido do formato oposto na mesma frase)
+### Lote 11 — gerado, aguardando execução — ângulos: K+D (comparação departamento x departamento SEM nenhuma área envolvida — gap conhecido desde o Lote 7, nunca corrigido), I (autocontradição em status/prioridade — o loop generalizado no Lote 9 só cobre operador/área/departamento), B (negação com "nunca" em vez de "não"; negação tripla "nem X nem Y nem Z"; negação de status multi-palavra colidente), O (pergunta de CAPACIDADE negada, em continuação de 2 turnos, e controle de capacidade de LEITURA — isCapabilityQuestion só tem unit test isolado até agora), F (continuação "e quanto AO" no singular; troca de dimensão real via "E como cliente `<nome>`?" COM nome explícito), C (data de calendário inválida 31/02; ano futuro extremo 2099), J (comparação entre 2 pessoas colidentes operador+cliente; comparação de PRIORIDADE, nunca tentada), L (frase truncada no meio do nome, 2 variações), M (integridade cruzada: soma de 2 cargas individuais vs. resumo_por_operador), G (grafia sem nenhum acento em valor multi-palavra real)
+
+Motivo da escolha: comparação DEPARTAMENTO x DEPARTAMENTO sem nenhuma área
+envolvida ficou marcada como gap aberto desde o Lote 7 (só a forma mista
+área+departamento foi testada) e nunca foi corrigida nem exercitada depois
+disso. A generalização de `detectaContradicao` pra área/departamento no
+Lote 9 só cobriu essas 2 dimensões + operador — nunca status nem
+prioridade, que usam vocabulário de valor diferente (ex.: "sejam Urgente")
+e podem não cair no mesmo loop. Negação com "nunca" (em vez de "não") e
+negação tripla "nem X nem Y nem Z" (só dupla testada no Lote 10) nunca
+foram tentadas. `isCapabilityQuestion` (Lote 10) só tem cobertura em teste
+unitário isolado de `write-policy.js` — nunca através do roteador completo
+em continuação, nunca na forma NEGADA ("você NÃO consegue..."), e o
+controle de capacidade de LEITURA (que não deveria bloquear) nunca rodou
+contra o servidor ao vivo. O marcador de continuação "e quanto a(os)" nunca
+foi confirmado na forma singular contraída "ao" isoladamente. O fix do
+Lote 9 (bug T17, "E como cliente?") só tratou o caso SEM nome — nunca
+confirmamos se "E como cliente `<nome>`?" (com o nome repetido) troca a
+dimensão de verdade. Data de calendário inválida (31 de fevereiro) e ano
+futuro extremo (2099) nunca foram tentados. Comparação entre 2 pessoas que
+são operador E cliente ao mesmo tempo (ambas colidentes) nunca foi feita, e
+comparação de PRIORIDADE como dimensão nunca foi tentada (só status já foi,
+e recusou). Frase truncada no meio do próprio nome (não só abreviação
+proposital) é um caso de robustez (L) ainda não exercitado. Integridade
+cruzada (M) comparando o resultado de uma comparação de carga contra o
+resumo_por_operador independente nunca foi verificada formalmente. Grafia
+100% sem acento num valor de catálogo multi-palavra real ("GOVERNANCA" sem
+cedilha/til) nunca foi confirmada ao vivo.
+
+- Perguntas: L11-T01 .. L11-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): departamentos
+  "SYSADMIN"/"COIDS" (sem colisão de área — confirmado agora que as 8
+  áreas reais são DEFAULT/USUÁRIOS/Redes e Segurança/WEB/Suporte/
+  Governança/Infraestrutura Científica/Gestão, nenhuma delas é SYSADMIN
+  nem COIDS), status real multi-palavra "AGENDADO COM O USUÁRIO" e
+  "RESERVADO PARA OPERADOR", prioridades "Alta"/"Baixa"/"Urgente"/"Média",
+  operadores reais "Fabio Gali" (1106 tickets) e "Cesar Augusto de Mello"
+  (1080 tickets, soma confirmada agora via `resumo_tickets_por_operador`),
+  pessoas colidentes (operador E cliente) "Wanilene Cassiano" e "Darío
+  Gerardo Fantini" (ambas confirmadas em lotes anteriores), área
+  "Governança" (pra teste de grafia sem acento)
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo, incluindo 2 encadeamentos
+  de 2 turnos e 1 de 3 turnos)
+- Bugs encontrados (6, por ordem de severidade):
+  1. T04 — "Tickets que nunca foram do operador Fabio Gali.": a negação
+     com "nunca" (em vez de "não"/"nem") não é reconhecida por nenhum
+     vocabulário de negação, e a frase é tratada como filtro AFIRMATIVO —
+     confirmado ao vivo devolvendo exatamente os 1106 tickets QUE SÃO do
+     Fabio Gali, o oposto exato do que foi pedido. Pior bug desta rodada:
+     não é um despejo sem filtro nem uma falha honesta, é uma resposta
+     confiante e INVERTIDA.
+  2. T08 — continuação "E quanto ao operador Diego Mota?" depois de
+     "Quantos tickets o operador Fabio Gali tem?": como o turno anterior
+     também citava a palavra-chave "operador" + nome, o texto mesclado
+     (concatenação pura, re-roteado do zero) tem 2 ocorrências de
+     "operador `<nome>`" — a extração pega a 1ª (Fabio Gali, do turno
+     ANTIGO) e descarta a 2ª (Diego Mota, o que o usuário está pedindo
+     agora) por completo — confirmado ao vivo devolvendo a MESMA resposta
+     do turno 1 (1106 tickets de Fabio Gali) como se fosse a resposta
+     sobre Diego Mota. A forma isolada ("E quanto ao operador Diego
+     Mota?", sem o turno anterior) resolve Diego Mota corretamente (19
+     tickets) — o bug só aparece quando a MESMA palavra-chave de dimensão
+     se repete nos 2 turnos.
+  3. T15 — "Quantos tickets o Cesar Augusto de Mello t" (frase cortada no
+     meio da última palavra, "tem" → "t"): a âncora de verbo completo não
+     bate, o nome inteiro é perdido e a pergunta cai em `listar_tickets`
+     SEM FILTRO NENHUM — confirmado ao vivo devolvendo os 5270 tickets do
+     sistema inteiro.
+  4. T02 — "Tickets que sejam Urgente e que também não sejam Urgente.":
+     autocontradição não detectada pra PRIORIDADE (o loop generalizado no
+     Lote 9 só cobre operador/área/departamento) — aplica só o lado
+     afirmativo em silêncio, confirmado ao vivo devolvendo 24 tickets
+     Urgentes como se a pergunta nonsense tivesse uma resposta válida.
+  5. T03 — mesma autocontradição não detectada, agora pra STATUS
+     multi-palavra ("Reservado para operador") — além de não detectar a
+     contradição, a cláusula residual "e que também não estejam" vaza
+     pros 2 lados (status E operador) simultaneamente, confirmado ao vivo
+     com a mensagem dupla confusa `status "Reservado para operador e que
+     também não estejam" não encontrado; operador "e que também não
+     estejam" não encontrado`.
+  6. T13 — "Compare os tickets de prioridade Alta com os tickets de
+     prioridade Baixa.": comparação de PRIORIDADE nunca foi tentada —
+     `extractOperatorComparisonNames` captura "prioridade Alta"/"prioridade
+     Baixa" inteiros como se fossem NOMES de operador, confirmado ao vivo
+     com a mensagem enganosa `operador "prioridade Alta" não encontrado`
+     em vez de uma recusa honesta sobre dimensão de comparação não
+     suportada (mesmo padrão já usado pra status).
+- Confirmados corretos/por design: T01 (comparação departamento x
+  departamento sem área recusa honesto via `esclarecimento_comparacao_
+  sem_nome` — gap de suporte conhecido desde o Lote 7, mas falha com
+  segurança, não inventa nem escolhe um lado), T05/T06/T07 (`isCapability
+  Question` dispara certo através de continuação de 2 turnos, na forma
+  NEGADA, e corretamente NÃO dispara pro controle de capacidade de
+  leitura — confirmado ao vivo nos 3), T09 ("E como cliente Wanilene
+  Cassiano?" com o nome repetido troca a dimensão de verdade pra cliente,
+  20 tickets, diferente dos 10 como operadora — confirmado ao vivo,
+  melhor que o esperado já que o Lote 9 só garantiu não perder o filtro,
+  não trocar a dimensão), T10 (31/02 cai em `esclarecimento_data_
+  invalida`), T11 (ano futuro 2099 aplica o filtro e devolve 0 tickets com
+  segurança, sem erro), T12 (comparação entre 2 pessoas AMBAS colidentes,
+  cada uma com a dimensão oposta explícita, recusa honesto via
+  `esclarecimento_comparacao_dimensoes_diferentes`, mesmo com a dupla
+  colisão), T14 ("Fabio Gal" truncado resolve por substring pra "Fabio
+  Gali", 1106 tickets, mesmo comportamento já estabelecido), T16 (ação
+  externa persiste nos 3 turnos — turnos 1 e 2 bloqueados pelo guard, e o
+  3º, "Confirma que já foi enviado?", não bate em nenhum marcador de
+  continuação e cai honesto em `fora_do_dominio` SEM confirmar falsamente
+  que algo foi enviado), T17 (integridade: carga de Fabio Gali=1106 e
+  Cesar Augusto de Mello=1080 na comparação batem exatamente com
+  `resumo_tickets_por_operador` isolado), T18 (negação do status
+  multi-palavra colidente "Agendado com o usuário" reconhecida por
+  completo, sem truncar), T19 (grafia 100% sem acento "area GOVERNANCA"
+  resolve pra área Governança, 40 tickets, mesmo total já confirmado em
+  lotes anteriores), T20 (negação tripla "nem X, nem Y, nem Z" cai em
+  `esclarecimento_negacao`, mesmo padrão já usado pra negação dupla/de
+  lista).
+- Correções aplicadas: todos os 6 corrigidos e verificados (758 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T04): "nunca"
+  somado ao vocabulário de `NEGATION_MARKER_SOURCE` (dimensões N-valoradas)
+  e de `NEGATION_PREFIX_SOURCE` (binário aberto/fechado), as 2 listas
+  paralelas que já tinham saído dessincronizadas antes. Bug 2 (T08): nova
+  `extractLastKeywordMatch` (genérica, scaneia TODAS as ocorrências de um
+  padrão ancorado em palavra-chave e usa a MAIS À DIREITA, não a 1ª que
+  `.match()`/`extractByPatterns` sempre prefeririam) aplicada ao 1º padrão
+  de `extractOperatorName` (o ancorado em "operador"/sinônimos) — corrige
+  tanto a continuação mesclada quanto o caso de 1 mensagem só com a mesma
+  palavra-chave repetida 2x. Bug 3 (T15): novo "|t" como alternativa ao
+  verbo completo "tem" no padrão "quantos tickets `<nome>` tem" de
+  `extractOperatorWorkloadName`, só quando é a ÚLTIMA coisa da string (nada
+  depois). Bugs 4/5 (T02/T03): generalizado o loop de autocontradição em
+  `detectaContradicao` (já cobria operador/área/departamento desde o Lote
+  9) pra também cobrir prioridade/status, com "esteja"/"estejam" somado ao
+  vocabulário verbal (status combina com "estar", não "ser"); e
+  `TRAILING_SELF_NEGATION_CLAUSE_PATTERN` (poda a cláusula de autonegação
+  do VALOR capturado, usada por `cleanFreeText` — usada por TODAS as
+  dimensões, não só operador) ganhou o mesmo vocabulário ampliado
+  ("também" opcional + "seja/sejam/esteja/estejam"), que só existia dentro
+  de `detectaContradicao` desde o Lote 9 — mais uma vez as 2 listas
+  paralelas (extração vs. detecção) tinham saído dessincronizadas, mesma
+  classe de bug já vista antes (negação com "nunca" acima, e o aviso
+  explícito já registrado no comentário de `NEGATION_PREFIX_SOURCE`
+  sobre esse exato risco). Bug 6 (T13): novo guard
+  `mencionaPrioridadeOuStatusNoMatch` (ancorado no INÍCIO do trecho
+  capturado, não em qualquer lugar — evita falso positivo quando
+  prioridade/status aparece só como qualificador de passagem no fim da
+  frase) no padrão BARE "compare os tickets de X com os tickets de Y" de
+  `extractOperatorComparisonNames`, mesma família dos guards já existentes
+  pra cliente/área/departamento — sem ele, o guard dedicado
+  `esclarecimento_comparacao_dimensao_nao_suportada` (que já existia) nunca
+  era alcançado, porque o extrator de operador roubava o match antes.
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-
+  routing.test.js`) — gerado, aguardando execução — ângulos: O (pergunta META sobre CAPACIDADE, não um pedido de ação de verdade — nunca testada, risco de falso positivo do write-guard/ação externa), D (análise aplicada a área/departamento, não só pessoa), G (espaçamento/caixa irregular em status real multi-palavra), E+verbosidade (verbosidade combinada com comparação, nunca testada junto), A (coloquial extremo com abreviação/typo), M (integridade por prioridade), N (página absurdamente grande + filtro real), J (percentual revisit), F (continuação de 3 turnos: chip + novo marcador "e como"), K (sinônimo "demorando" para SLA vencido/mais antigo), B (negação de união — "nem X nem Y"), C (semestre numerado + ano explícito), E (negação explícita de formato + pedido do formato oposto na mesma frase)
 
 Motivo da escolha: O sempre testou PEDIDOS de ação (diretos ou
 especulativos) — nunca uma pergunta sobre se o sistema TEM a capacidade,
