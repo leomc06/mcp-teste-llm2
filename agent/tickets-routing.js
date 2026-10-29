@@ -632,6 +632,23 @@ function parseSemestreOrdinal(ordinalBruto) {
 // token de data explícito — calculadas a partir do momento da pergunta.
 // `agora` é parametrizável só para permitir teste determinístico.
 export function extractRelativeDateRange(text, agora = new Date()) {
+  // "essa madrugada"/"essa manhã"/"essa tarde"/"essa noite" (achado
+  // testando o lote de perguntas ao vivo — Lote 12, bug T15): período do
+  // dia com demonstrativo "essa/esse", sem nenhuma palavra "hoje" — por
+  // definição é HOJE (o período ainda não terminou ou acabou de terminar),
+  // mas nenhum padrão de data reconhecia essa forma, e a pergunta ficava
+  // sem filtro de data NENHUM, devolvendo o sistema inteiro. Checado ANTES
+  // do "hoje" bare (mesmo valor final, não importa a ordem aqui), pra ficar
+  // perto do vocabulário de período do dia já usado em outros pontos do
+  // arquivo (extractOperatorName, exclusão de "manha"/"tarde"/"noite" do
+  // nome capturado) — "madrugada" nunca tinha entrado nessa lista em lugar
+  // nenhum, nem lá nem aqui.
+  if (/\bess[ae]\s+(?:madrugada|manha|tarde|noite)\b/.test(text)) {
+    const hoje = formatIsoDate(agora);
+
+    return { dataInicio: hoje, dataFim: hoje };
+  }
+
   if (/\bhoje\b/.test(text)) {
     const hoje = formatIsoDate(agora);
 
@@ -1813,6 +1830,20 @@ const ZERO_LIMIT_PATTERN = new RegExp(
   "iu",
 );
 
+// "Liste os 2.5 tickets mais antigos." (achado testando o lote de
+// perguntas ao vivo — Lote 12, bug T13): mesma família dos limites
+// inválidos acima, mas FRACIONÁRIO — nenhuma tool aceita limite não
+// inteiro, e sem este guard "2.5" era truncado em silêncio pra 2 (direto
+// no parser de número), inconsistente com TODO o resto da família (todas
+// as outras formas de limite sem sentido — negativo, zero, grande demais —
+// já pedem esclarecimento em vez de aplicar um valor "corrigido" sem
+// avisar). "[.,]" cobre tanto o separador decimal americano quanto o
+// brasileiro.
+const DECIMAL_LIMIT_PATTERN = new RegExp(
+  `\\b\\d+[.,]\\d+\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
+  "iu",
+);
+
 // "página -1" (achado testando o lote de perguntas ao vivo): mesma família
 // do limite negativo — normalizeText remove o "-" como pontuação antes de
 // extractPage rodar, então "página -1" virava silenciosamente "pagina 1"
@@ -2033,21 +2064,35 @@ const TRES_OU_MAIS_NOMES_DO_DA_PATTERN = new RegExp(
 // isso não era bloqueado; capturava "tem menos tickets" como se fosse nome.
 // RANKING_CUE_SOURCE já reconhece essa forma com verbo no meio (usado em
 // mentionsDimension/hasResumoIntent), reaproveitado aqui pelo mesmo motivo.
+// "categoria"/"equipe" são sinônimos comuns de "área" fora do vocabulário
+// interno do sistema (quem pergunta não necessariamente sabe que a API
+// chama isso de "área") — resolveMetaId falha graciosamente se não for um
+// nome de área real, então o risco de falso positivo é baixo.
+// "(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)" (achado testando o lote de
+// perguntas ao vivo): "Quantos tickets SEM ÁREA DEFINIDA existem?" não é
+// um nome de área de verdade — mesma ideia já corrigida pra prioridade
+// (ver UNSET_VALUE_ADJECTIVE_SOURCE), sem ela "definida existem" inteiro
+// virava area: "definida existem".
+function buildAreaKeywordAnchoredPattern() {
+  return new RegExp(
+    `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+    "iu",
+  );
+}
+
 export function extractAreaName(value) {
+  // Checado primeiro, via extractLastKeywordMatch (achado testando o lote
+  // de perguntas ao vivo — Lote 12, bug T02, mesma classe do fix do Lote
+  // 11/T08 pra operador, nunca estendida pra área): continuação repetindo
+  // "área `<nome>`" 2x (2 turnos concatenados) ficava com o nome ANTIGO,
+  // ignorando o pedido mais recente do usuário.
+  const ultimaMencaoExplicita = extractLastKeywordMatch(value, buildAreaKeywordAnchoredPattern());
+
+  if (ultimaMencaoExplicita !== undefined) {
+    return ultimaMencaoExplicita;
+  }
+
   return extractByPatterns(value, [
-    // "categoria"/"equipe" são sinônimos comuns de "área" fora do
-    // vocabulário interno do sistema (quem pergunta não necessariamente sabe
-    // que a API chama isso de "área") — resolveMetaId falha graciosamente se
-    // não for um nome de área real, então o risco de falso positivo é baixo.
-    // "(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)" (achado testando o lote de
-    // perguntas ao vivo): "Quantos tickets SEM ÁREA DEFINIDA existem?" não é
-    // um nome de área de verdade — mesma ideia já corrigida pra prioridade
-    // (ver UNSET_VALUE_ADJECTIVE_SOURCE), sem ela "definida existem" inteiro
-    // virava area: "definida existem".
-    new RegExp(
-      `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
-      "iu",
-    ),
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
     // sem usar a palavra "área" — mesmo raciocínio acima.
     new RegExp(`\\bpessoal\\s+d[ao]\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
@@ -2060,13 +2105,19 @@ export function extractAreaName(value) {
 // então o pedido não tem como ser atendido de verdade, mas pelo menos não
 // deve gerar um filtro de departamento "atribuído" (nunca resolve no
 // catálogo real).
+function buildDepartmentKeywordAnchoredPattern() {
+  return new RegExp(
+    `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!atribu[ií]do\\b)(.+)$`,
+    "iu",
+  );
+}
+
 export function extractDepartmentName(value) {
-  return extractByPatterns(value, [
-    new RegExp(
-      `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!atribu[ií]do\\b)(.+)$`,
-      "iu",
-    ),
-  ]);
+  // Via extractLastKeywordMatch (achado testando o lote de perguntas ao
+  // vivo — Lote 12, bug T03, mesma classe do T02 acima pra área): mesmo
+  // raciocínio — o match mais à direita (mais recente) vence quando
+  // "departamento `<nome>`" aparece 2x no texto.
+  return extractLastKeywordMatch(value, buildDepartmentKeywordAnchoredPattern());
 }
 
 // "por" também introduz fórmulas de cortesia/discurso em português ("por
@@ -2508,6 +2559,32 @@ const DOTTED_CLIENTE_PATTERN = new RegExp(
   "iu",
 );
 
+// "(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})" e "(?!${UNSET_VALUE_ADJECTIVE_
+// SOURCE}\\b)" (achado testando o lote de perguntas ao vivo): mesmos 2
+// bugs já corrigidos pra área/operador/departamento (conector "e por X"
+// vazando) e pra prioridade/área ("sem X definido" virando nome literal)
+// — faltavam aqui. "Tickets SEM CLIENTE DEFINIDO." virava cliente:
+// "definido"; "Resumo por cliente E POR OPERADOR." virava cliente: "e por
+// operador".
+// "(?:é\\s+)?" logo antes da captura (achado testando o lote de perguntas
+// ao vivo, com dados reais): "Tickets CUJO CLIENTE É Vanessa Ventura..."
+// tem o verbo "é" entre a palavra "cliente" e o nome de verdade — sem
+// pular esse verbo, ele virava parte do nome capturado (cliente: "é
+// Vanessa Ventura"). Só o "é" ACENTUADO entra aqui — "e" sem acento é a
+// CONJUNÇÃO já tratada por DIMENSION_CONNECTOR_LEAK_SOURCE logo abaixo
+// ("cliente E POR operador"), que depende do "e" continuar colado à
+// cláusula pra ser reconhecida; aceitar "e" aqui também destruiria essa
+// detecção (consumiria o "e" antes do lookahead enxergar a cláusula
+// inteira).
+function buildClientKeywordAnchoredPattern() {
+  return new RegExp(
+    `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?:é\\s+)?`
+      + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
+      + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+    "iu",
+  );
+}
+
 export function extractClientName(value) {
   const text = String(value ?? "");
 
@@ -2536,30 +2613,23 @@ export function extractClientName(value) {
     return dottedMatch[1];
   }
 
+  // Checado primeiro, via extractLastKeywordMatch (achado testando o lote
+  // de perguntas ao vivo — Lote 12, bug T01, mesma classe do fix do Lote
+  // 11/T08 pra operador, nunca estendida pra cliente): continuação
+  // repetindo "cliente `<nome>`" 2x ficava com o nome ANTIGO — e, pior,
+  // sobrava um resíduo do nome novo (ex.: o último sobrenome, "Silva") que
+  // acabava sendo capturado por ENGANO como operador por outro padrão,
+  // devolvendo um erro de "operador ambíguo" completamente fora de
+  // contexto. Corrigir a extração do cliente em si (em vez de só suprimir
+  // o operador fantasma) resolve as 2 pontas de uma vez: o nome fica certo
+  // E some o resíduo que alimentava a captura errada de operador.
+  const ultimaMencaoExplicita = extractLastKeywordMatch(text, buildClientKeywordAnchoredPattern());
+
+  if (ultimaMencaoExplicita !== undefined) {
+    return ultimaMencaoExplicita;
+  }
+
   return extractByPatterns(text, [
-    // "(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})" e "(?!${UNSET_VALUE_ADJECTIVE_
-    // SOURCE}\\b)" (achado testando o lote de perguntas ao vivo): mesmos 2
-    // bugs já corrigidos pra área/operador/departamento (conector "e por X"
-    // vazando) e pra prioridade/área ("sem X definido" virando nome
-    // literal) — faltavam aqui. "Tickets SEM CLIENTE DEFINIDO." virava
-    // cliente: "definido"; "Resumo por cliente E POR OPERADOR." virava
-    // cliente: "e por operador".
-    // "(?:é\\s+)?" logo antes da captura (achado testando o lote de
-    // perguntas ao vivo, com dados reais): "Tickets CUJO CLIENTE É Vanessa
-    // Ventura..." tem o verbo "é" entre a palavra "cliente" e o nome de
-    // verdade — sem pular esse verbo, ele virava parte do nome capturado
-    // (cliente: "é Vanessa Ventura"). Só o "é" ACENTUADO entra aqui — "e"
-    // sem acento é a CONJUNÇÃO já tratada por DIMENSION_CONNECTOR_LEAK_
-    // SOURCE logo abaixo ("cliente E POR operador"), que depende do "e"
-    // continuar colado à cláusula pra ser reconhecida; aceitar "e" aqui
-    // também destruiria essa detecção (consumiria o "e" antes do lookahead
-    // enxergar a cláusula inteira).
-    new RegExp(
-      `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?:é\\s+)?`
-        + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
-        + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
-      "iu",
-    ),
     // "ticket QUE A/O <nome> abriu" (achado testando o lote de perguntas ao
     // vivo — Img 12): quem abre um ticket é o cliente/contato, não precisa
     // da palavra "cliente" explícita — "que" como âncora evita capturar
@@ -4071,10 +4141,14 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
-  if (NEGATIVE_LIMIT_PATTERN.test(pergunta) || ZERO_LIMIT_PATTERN.test(pergunta)) {
+  if (
+    NEGATIVE_LIMIT_PATTERN.test(pergunta)
+    || ZERO_LIMIT_PATTERN.test(pergunta)
+    || DECIMAL_LIMIT_PATTERN.test(pergunta)
+  ) {
     return createClarificationDecision(
       "esclarecimento_limite_invalido",
-      "Esse limite de resultados não parece válido (precisa ser pelo menos 1). Pode pedir uma quantidade positiva?"
+      "Esse limite de resultados não parece válido (precisa ser um número inteiro de pelo menos 1). Pode pedir uma quantidade inteira positiva?"
         + "\n\nExemplos:\n"
         + "- Liste os 2 tickets mais antigos.\n"
         + "- Liste os 5 primeiros tickets.",
@@ -4548,8 +4622,17 @@ function routeTicketQuestionCore(pergunta) {
   // comparação de operador/cliente/área/departamento que só MENCIONE
   // prioridade/status de passagem como qualificador (ex.: "...considerando
   // só prioridade alta").
+  // "Quem tem mais tickets, prioridade Alta ou prioridade Baixa?" (achado
+  // testando o lote de perguntas ao vivo — Lote 12, bug T09): a forma
+  // "quem tem mais tickets: X ou Y" (já aceita como sinônimo de "compare"
+  // pros 4 extratores de operador/cliente/área/departamento acima) também
+  // precisa do mesmo guard — sem "comparar" literal na frase, essa
+  // variante caía direto em `detectaUniaoDePrioridades` mais abaixo
+  // (categoria errada: trata como se o usuário quisesse as 2 prioridades
+  // AO MESMO TEMPO, não como uma comparação entre elas).
   const mencionaComparacaoPrioridadeOuStatus =
-    /\bcompar[ae]\b/.test(text) && /\bprioridades?\b|\bstatus\b/.test(text);
+    (/\bcompar[ae]\b/.test(text) || /\bquem\s+tem\s+mais\s+(?:tickets?|chamados?|atendimentos?)\b/.test(text))
+    && /\bprioridades?\b|\bstatus\b/.test(text);
 
   if (mencionaComparacaoPrioridadeOuStatus) {
     return createClarificationDecision(

@@ -146,6 +146,124 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 12 — gerado, aguardando execução — ângulos: F (o fix do Lote 11, bug T08, só cobriu operador — nunca testado se o mesmo bug de "continuação repete a palavra-chave com um nome novo" também afeta cliente/área/departamento), B (negação com "nunca" — só testada pra operador/situação no Lote 11, nunca pras outras 4 dimensões do loop de `detectaNegacaoNaoSuportada`), J (comparação de prioridade/status via os OUTROS padrões de `extractOperatorComparisonNames` que não ganharam o guard do Lote 11 — só o padrão BARE "tickets de X" foi corrigido; autocomparação da mesma pessoa, nunca testada), M (integridade cruzada com cliente, dados novos), H (limite decimal/notação científica, nunca testados), C (hora do dia informal — "essa madrugada"/"ontem à noite"), G (grafia extrema combinada: maiúscula + sem acento + espaço triplo ao mesmo tempo), N (comparação entre 2 NÚMEROS de ticket, um deles inválido — nunca tentada), L (emoji e code-mixing de idioma, nunca testados)
+
+Motivo da escolha: o fix do Lote 11 (bug T08, `extractLastKeywordMatch`) foi
+aplicado só ao 1º padrão de `extractOperatorName` — nunca confirmamos se
+`extractClientName`/`extractAreaName`/`extractDepartmentName` sofrem do
+MESMO bug (continuação que repete a palavra-chave de dimensão com um nome
+novo ficando com o nome antigo). O vocabulário "nunca" (Lote 11, bug T04)
+só foi testado pra operador (dimensão N-valorada) e pra situação aberto/
+fechado (binária) — nunca pras outras 4 dimensões que também usam o mesmo
+loop (`área`, `departamento`, `status`, `prioridade`, `cliente`). O guard
+de prioridade/status do Lote 11 (bug T13) só foi aplicado ao padrão BARE
+"compare os tickets de X" de `extractOperatorComparisonNames` — os outros
+~6 padrões da mesma função (e os espelhos de cliente/área/departamento)
+nunca foram checados contra o mesmo problema. Autocomparação (mesmo nome
+nos 2 lados) nunca foi tentada em nenhum lote. Limite decimal/notação
+científica nunca foram tentados (só inteiro negativo/zero/muito grande já
+foram). Hora do dia informal (madrugada/noite, sem hora numérica) nunca
+foi tentada — só "pela manhã/tarde/noite" (Lote 6) tocou esse vocabulário,
+de um jeito diferente. Grafia com 3 problemas SIMULTÂNEOS (maiúscula+sem
+acento+espaço triplo) só foi testada 1 problema por vez até agora.
+Comparação entre 2 NÚMEROS de ticket (um deles inválido) nunca foi
+tentada — só comparação entre pessoas/áreas/departamentos/status/
+prioridade. Emoji e mistura de idioma (code-switching) nunca foram
+tentados em nenhuma das 11 rodadas anteriores.
+
+- Perguntas: L12-T01 .. L12-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): clientes reais
+  novos "Luiz Henrique Coura" (18 tickets abertos), "João Messias Alves da
+  Silva" (3 tickets abertos), "Marina Machado Cunha e Mello" (1 ticket
+  aberto) — ranking de clientes por tickets abertos confirmado agora;
+  operador "Fabio Gali"; áreas "Suporte"/"Governança"; departamentos
+  "SYSADMIN"/"COIDS"; status "Cancelado"/"Encerrada"; prioridades "Alta"/
+  "Baixa"/"Urgente"; ticket real 4830
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo, incluindo 3 encadeamentos
+  de 2 turnos)
+- Bugs encontrados (5, por ordem de severidade):
+  1. T15 — "Quantos tickets foram abertos essa madrugada?": "madrugada"
+     não é reconhecida por nenhum vocabulário de hora do dia nem data, e a
+     pergunta cai em `listar_tickets` SEM FILTRO NENHUM — confirmado ao
+     vivo devolvendo os 5270 tickets do sistema inteiro (pior que o
+     esperado: nem o dia de hoje ficou como filtro, a palavra inteira foi
+     descartada sem deixar rastro nenhum).
+  2. T01 — continuação "E quanto ao cliente João Messias Alves da Silva?"
+     depois de "Quantos tickets o cliente Luiz Henrique Coura tem?": o
+     fix do Lote 11 (`extractLastKeywordMatch`) só foi aplicado a
+     `extractOperatorName`, nunca a `extractClientName` — o cliente fica
+     com o valor ANTIGO ("Luiz Henrique Coura") E, pior, o último nome
+     ("Silva") também é capturado por um padrão totalmente diferente como
+     se fosse um nome de OPERADOR solto no fim da frase — confirmado ao
+     vivo com a mensagem `operador "Silva" é ambíguo (pode ser: Rogerio Da
+     Silva E Souza, Pietra Silva)` (e duplicada 2x na mesma resposta),
+     completamente fora de contexto pra uma pergunta que nunca mencionou
+     operador.
+  3. T02/T03 — mesmo bug do Lote 11 (T08), nunca corrigido pra ÁREA/
+     DEPARTAMENTO: "Tickets da área Suporte." → "E quanto à área
+     Governança?" e "Quantos tickets o departamento SYSADMIN tem?" → "E
+     quanto ao departamento COIDS?" ficam com o valor ANTIGO (Suporte/
+     SYSADMIN) nos 2 casos — confirmado ao vivo, mesma contagem do turno
+     1 repetida (4472 e 2541), ignorando por completo o 2º turno.
+  4. T09 — "Quem tem mais tickets, prioridade Alta ou prioridade Baixa?"
+     cai em `esclarecimento_uniao_prioridades` (categoria errada — trata
+     como se o usuário quisesse as 2 prioridades AO MESMO TEMPO) em vez de
+     `esclarecimento_comparacao_dimensao_nao_suportada` (a categoria
+     certa pra uma pergunta de comparação) — confirmado ao vivo. Seguro
+     (não inventa dado, recusa honesto), só com a mensagem um pouco
+     desalinhada do que foi perguntado.
+  5. T13 — "Liste os 2.5 tickets mais antigos.": o limite decimal é
+     truncado em silêncio pra 2 (`Math.trunc`/`parseInt` implícito), sem
+     nenhum aviso — inconsistente com todo o resto da família de
+     validação de limite (negativo/zero/grande demais já pedem
+     esclarecimento) — confirmado ao vivo devolvendo exatamente 2
+     tickets sem menção ao "2.5" original.
+- Confirmados corretos/por design: T04/T05/T06/T07 ("nunca" generalizado
+  no Lote 11 pra operador/situação funciona igual pras outras 4 dimensões
+  do loop — cliente/área/status/prioridade —, todos `esclarecimento_
+  negacao`), T08 (autocomparação do mesmo operador 2x devolve os 2 lados
+  iguais, sem erro nem mensagem confusa), T10/T11 (comparação de
+  status/prioridade via os OUTROS padrões de `extractOperatorComparisonNames`
+  — "compare a carga do X" e a forma BARE com "status" — também recusam
+  honesto: o guard do Lote 11 está no bloco COMPARTILHADO de pós-match,
+  não só no padrão BARE original, cobrindo todos os padrões da função de
+  uma vez), T12 (integridade: 18 tickets abertos do cliente Luiz Henrique
+  Coura bate exatamente com o resumo isolado), T14 (notação científica
+  "1e3" não é reconhecida como número, cai no limite padrão com
+  segurança), T16 ("ontem à noite" preserva o filtro do DIA certo,
+  só não filtra a parte da noite — mesma limitação já aceita desde o
+  Lote 6 pra "pela manhã/tarde/noite"), T17 (grafia com 3 problemas
+  simultâneos — maiúscula + sem acento + espaço triplo — resolve certo
+  pra área Governança, 40 tickets), T18 (comparação com número de ticket
+  inválido cai em `esclarecimento_numero_invalido`, não inventa
+  comparação), T19 (emoji no fim da frase não quebra nada), T20
+  (code-mixing inglês/português reconhece a parte em português
+  normalmente).
+- Correções aplicadas: todos os 5 corrigidos e verificados (763 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T15): novo
+  caso em `extractRelativeDateRange` pra "essa/esse madrugada/manhã/
+  tarde/noite" (sem a palavra "hoje"), mapeado pro mesmo valor de HOJE já
+  calculado pelo caso "hoje" bare. Bug 2 (T01): mesma técnica do Lote 11
+  (`extractLastKeywordMatch`) aplicada ao padrão ancorado em "cliente" de
+  `extractClientName` — corrigir a extração do cliente em si também fez o
+  resíduo que vazava pra operador desaparecer (não precisou de nenhuma
+  mudança em `isOperadorContidoNoCliente`). Bugs 3/4 (T02/T03): mesma
+  técnica aplicada aos padrões ancorados de `extractAreaName` (mantendo o
+  padrão secundário "o pessoal da/do X" como fallback) e
+  `extractDepartmentName` (único padrão da função). Bug 5 (T09):
+  `mencionaComparacaoPrioridadeOuStatus` ganhou uma 2ª forma de gatilho —
+  "quem tem mais tickets: X ou Y" (já aceita pros 4 extratores reais) além
+  do "comparar" literal — sem isso, essa variante nunca alcançava o guard
+  dedicado, caindo em `detectaUniaoDePrioridades` (categoria errada). Bug
+  6 (T13): novo `DECIMAL_LIMIT_PATTERN` (mesma família de
+  `NEGATIVE_LIMIT_PATTERN`/`ZERO_LIMIT_PATTERN`), mensagem do esclarecimento
+  de limite ajustada pra mencionar "número inteiro" (cobre as 3 formas
+  agora).
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-
+  routing.test.js`)
+
 ### Lote 11 — gerado, aguardando execução — ângulos: K+D (comparação departamento x departamento SEM nenhuma área envolvida — gap conhecido desde o Lote 7, nunca corrigido), I (autocontradição em status/prioridade — o loop generalizado no Lote 9 só cobre operador/área/departamento), B (negação com "nunca" em vez de "não"; negação tripla "nem X nem Y nem Z"; negação de status multi-palavra colidente), O (pergunta de CAPACIDADE negada, em continuação de 2 turnos, e controle de capacidade de LEITURA — isCapabilityQuestion só tem unit test isolado até agora), F (continuação "e quanto AO" no singular; troca de dimensão real via "E como cliente `<nome>`?" COM nome explícito), C (data de calendário inválida 31/02; ano futuro extremo 2099), J (comparação entre 2 pessoas colidentes operador+cliente; comparação de PRIORIDADE, nunca tentada), L (frase truncada no meio do nome, 2 variações), M (integridade cruzada: soma de 2 cargas individuais vs. resumo_por_operador), G (grafia sem nenhum acento em valor multi-palavra real)
 
 Motivo da escolha: comparação DEPARTAMENTO x DEPARTAMENTO sem nenhuma área

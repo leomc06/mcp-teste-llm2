@@ -5633,3 +5633,72 @@ test("comparação de prioridade (achado testando com dados reais do Lote 11, bu
   );
   assert.equal(controle.intent, "comparar_carga_operador");
 });
+
+// --- Lote 12 (protocolo de QA estruturado) ---
+
+test("continuação que repete a mesma palavra-chave de CLIENTE com um nome novo (achado testando com dados reais do Lote 12, bug T01) usa o nome mais recente, sem vazar resíduo pro operador", () => {
+  const merged =
+    "Quantos tickets o cliente Luiz Henrique Coura tem? E quanto ao cliente João Messias Alves da Silva?";
+  const route = routeTicketQuestion(merged);
+  assert.equal(route.entities.cliente, "João Messias Alves da Silva");
+  assert.equal(route.entities.operador, undefined);
+
+  // Controle: 1 menção só continua resolvendo normalmente.
+  const unica = routeTicketQuestion("Quantos tickets o cliente Luiz Henrique Coura tem?");
+  assert.equal(unica.entities.cliente, "Luiz Henrique Coura");
+});
+
+test("continuação que repete a mesma palavra-chave de ÁREA/DEPARTAMENTO com um nome novo (achado testando com dados reais do Lote 12, bugs T02/T03) usa o nome mais recente", () => {
+  const area = routeTicketQuestion("Tickets da área Suporte. E quanto à área Governança?");
+  assert.equal(area.entities.area, "Governança");
+
+  const departamento = routeTicketQuestion(
+    "Quantos tickets o departamento SYSADMIN tem? E quanto ao departamento COIDS?",
+  );
+  assert.equal(departamento.entities.departamento, "COIDS");
+
+  // Controles: 1 menção só continua resolvendo normalmente nas 2 dimensões.
+  assert.equal(routeTicketQuestion("Tickets da área Suporte.").entities.area, "Suporte");
+  assert.equal(
+    routeTicketQuestion("Quantos tickets o departamento SYSADMIN tem?").entities.departamento,
+    "SYSADMIN",
+  );
+});
+
+test("'essa madrugada'/'essa manhã'/'essa tarde'/'essa noite' (achado testando com dados reais do Lote 12, bug T15) vira filtro de HOJE, em vez de ser descartado em silêncio", () => {
+  const agora = new Date(2026, 9, 29);
+  const hoje = agora.toISOString().slice(0, 10);
+
+  for (const periodo of ["madrugada", "manha", "tarde", "noite"]) {
+    const route = extractRelativeDateRange(`quantos tickets foram abertos essa ${periodo}`, agora);
+    assert.equal(route.dataInicio, hoje, periodo);
+    assert.equal(route.dataFim, hoje, periodo);
+  }
+});
+
+test("'quem tem mais tickets: prioridade X ou prioridade Y' (achado testando com dados reais do Lote 12, bug T09) pede esclarecimento de dimensão não suportada, em vez de cair em união de prioridades (categoria errada)", () => {
+  const route = routeTicketQuestion("Quem tem mais tickets, prioridade Alta ou prioridade Baixa?");
+  assert.equal(route.intent, "esclarecimento_comparacao_dimensao_nao_suportada");
+
+  // Controles: a mesma forma pra operador continua funcionando normalmente,
+  // inclusive com prioridade só como qualificador de passagem.
+  const operador = routeTicketQuestion("Quem tem mais tickets: o operador Ana ou o operador Bruno?");
+  assert.equal(operador.intent, "comparar_carga_operador");
+
+  const comQualificador = routeTicketQuestion(
+    "Quem tem mais tickets, o Fabio Gali ou o Diego Mota, considerando só prioridade alta?",
+  );
+  assert.equal(comQualificador.intent, "comparar_carga_operador");
+});
+
+test("limite FRACIONÁRIO ('2.5'/'2,5', achado testando com dados reais do Lote 12, bug T13) pede esclarecimento, em vez de truncar em silêncio", () => {
+  const ponto = routeTicketQuestion("Liste os 2.5 tickets mais antigos.");
+  assert.equal(ponto.intent, "esclarecimento_limite_invalido");
+
+  const virgula = routeTicketQuestion("Liste os 2,5 tickets mais antigos.");
+  assert.equal(virgula.intent, "esclarecimento_limite_invalido");
+
+  // Controle: limite inteiro normal continua passando direto.
+  const inteiro = routeTicketQuestion("Liste os 2 tickets mais antigos.");
+  assert.equal(inteiro.entities.limite, 2);
+});
