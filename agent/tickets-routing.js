@@ -1844,6 +1844,22 @@ const DECIMAL_LIMIT_PATTERN = new RegExp(
   "iu",
 );
 
+// "Liste os 99999999999999999999 tickets mais antigos." (achado testando
+// o lote de perguntas ao vivo — Lote 13, bug T14): mesma família dos
+// limites inválidos acima, mas GIGANTE — um número tão grande (bem além
+// de qualquer limite real possível) estourava a precisão segura de
+// `Number` (`Number("99999999999999999999")` === 100000000000000000000,
+// um valor DIFERENTE do que foi digitado) e esse valor incorreto era
+// aplicado como limite sem nenhuma validação nem aviso — pior que só
+// truncar o decimal, aqui o número aplicado nem é o mesmo que foi pedido.
+// "\\d{10,}" (10+ dígitos, bem acima de qualquer quantidade real de
+// tickets pedida) evita qualquer risco de falso positivo com limites
+// grandes mas plausíveis (ex.: "1000 tickets", só 4 dígitos).
+const HUGE_LIMIT_PATTERN = new RegExp(
+  `\\b\\d{10,}\\s+(?:${TICKET_NOUN_SOURCE}s?|primeir[oa]s?|pior(?:es)?|melhor(?:es)?)\\b`,
+  "iu",
+);
+
 // "página -1" (achado testando o lote de perguntas ao vivo): mesma família
 // do limite negativo — normalizeText remove o "-" como pontuação antes de
 // extractPage rodar, então "página -1" virava silenciosamente "pagina 1"
@@ -2781,19 +2797,25 @@ const NEGATION_MARKER_SOURCE =
   + `|fora\\s+d[ao]\\s+(?:${AREA_SYNONYM_SOURCE}|departamento|operador|${CLIENT_LOOKUP_NOUN_SOURCE}|status|prioridade)`
   + "|menos\\s+(?:o|a|os|as)\\b)";
 
+// "(?!e\\s+por\\b)" (achado testando o lote de perguntas ao vivo): "Resumo
+// POR STATUS e por área." usa "status" só como CONECTOR de resumo (a
+// dimensão real pedida é outra, mencionada depois), não como valor de
+// catálogo — sem essa exclusão, "e por área" inteiro virava status: "e
+// por área" (nunca resolve no catálogo real), mesmo a rota certa
+// (resumo_por_area) já tendo sido escolhida em outro lugar.
+function buildStatusKeywordAnchoredPattern() {
+  return new RegExp(
+    `\\bstatus\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+    "iu",
+  );
+}
+
 export function extractTicketStatusName(value) {
-  return extractByPatterns(value, [
-    // "(?!e\\s+por\\b)" (achado testando o lote de perguntas ao vivo):
-    // "Resumo POR STATUS e por área." usa "status" só como CONECTOR de
-    // resumo (a dimensão real pedida é outra, mencionada depois), não como
-    // valor de catálogo — sem essa exclusão, "e por área" inteiro virava
-    // status: "e por área" (nunca resolve no catálogo real), mesmo a rota
-    // certa (resumo_por_area) já tendo sido escolhida em outro lugar.
-    new RegExp(
-      `\\bstatus\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
-      "iu",
-    ),
-  ]);
+  // Via extractLastKeywordMatch (achado testando o lote de perguntas ao
+  // vivo — Lote 13, bug T01, mesma classe do T02/T03 dos Lotes 11/12,
+  // nunca estendida pra status): continuação repetindo "status `<nome>`"
+  // 2x ficava com o valor ANTIGO.
+  return extractLastKeywordMatch(value, buildStatusKeywordAnchoredPattern());
 }
 
 // Conectores usados pra pedir busca textual (grep no assunto/descrição do
@@ -2966,33 +2988,46 @@ const PRIORIDADE_UNIAO_COMPACTA_PATTERN = new RegExp(
 // de adjetivo "vazio" se aplicando a qualquer dimensão, não só prioridade.
 const UNSET_VALUE_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especificad)[ao]s?";
 
+// "(?!e\\s+por\\b)" (mesmo achado de extractTicketStatusName, achado
+// testando o lote de perguntas ao vivo): "Resumo por prioridade E POR
+// ÁREA." usa "prioridade" só como conector, não valor — sem essa
+// exclusão, "e por área" inteiro virava prioridade: "e por área".
+// "(?!(?:[dn][ao]\\s+)?(?:AREA_SYNONYM|departamento)\\b)" (achado
+// testando o lote de perguntas ao vivo, com dados reais): "Resumo dos
+// tickets POR PRIORIDADE na área Suporte..." usa "prioridade" como
+// conector BARE (sem nenhum nível dito), seguido do filtro de OUTRA
+// dimensão ("na área Suporte") — sem essa exclusão, "na área Suporte"
+// inteiro virava prioridade: "na área Suporte" (nome-lixo, nunca bate
+// com nenhuma prioridade real), e esse valor não-undefined escapava
+// silencioso porque o branch de resumo_por_prioridade descartava a
+// própria prioridade capturada de qualquer forma — só virou visível
+// depois que esse descarte ganhou uma exceção pra filtro nomeado.
+// "[dn][ao]" em vez de só "n[ao]" (achado testando o Lote 5, com dados
+// reais): a 1ª versão só previa "na"/"no" — "Qual o resumo de tickets
+// por prioridade DA área Suporte?" (contração de "de", tão comum quanto
+// "na") não batia na exclusão, "da área Suporte" inteiro virava
+// prioridade: "da área Suporte" (nome-lixo), derrubando pra
+// resumo_por_status em vez de resumo_por_prioridade.
+function buildPrioridadeKeywordAnchoredPattern() {
+  return new RegExp(
+    `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
+      + `(?!(?:[dn][ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
+    "iu",
+  );
+}
+
 export function extractPriorityName(value) {
+  // Via extractLastKeywordMatch (achado testando o lote de perguntas ao
+  // vivo — Lote 13, bug T02, mesma classe já corrigida pros outros 5
+  // extratores de palavra-chave): continuação repetindo "prioridade
+  // `<nível>`" 2x ficava com o valor ANTIGO.
+  const ultimaMencaoExplicita = extractLastKeywordMatch(value, buildPrioridadeKeywordAnchoredPattern());
+
+  if (ultimaMencaoExplicita !== undefined) {
+    return ultimaMencaoExplicita;
+  }
+
   return extractByPatterns(value, [
-    // "(?!e\\s+por\\b)" (mesmo achado de extractTicketStatusName, achado
-    // testando o lote de perguntas ao vivo): "Resumo por prioridade E POR
-    // ÁREA." usa "prioridade" só como conector, não valor — sem essa
-    // exclusão, "e por área" inteiro virava prioridade: "e por área".
-    // "(?!(?:[dn][ao]\\s+)?(?:AREA_SYNONYM|departamento)\\b)" (achado
-    // testando o lote de perguntas ao vivo, com dados reais): "Resumo dos
-    // tickets POR PRIORIDADE na área Suporte..." usa "prioridade" como
-    // conector BARE (sem nenhum nível dito), seguido do filtro de OUTRA
-    // dimensão ("na área Suporte") — sem essa exclusão, "na área Suporte"
-    // inteiro virava prioridade: "na área Suporte" (nome-lixo, nunca bate
-    // com nenhuma prioridade real), e esse valor não-undefined escapava
-    // silencioso porque o branch de resumo_por_prioridade descartava a
-    // própria prioridade capturada de qualquer forma — só virou visível
-    // depois que esse descarte ganhou uma exceção pra filtro nomeado.
-    // "[dn][ao]" em vez de só "n[ao]" (achado testando o Lote 5, com dados
-    // reais): a 1ª versão só previa "na"/"no" — "Qual o resumo de tickets
-    // por prioridade DA área Suporte?" (contração de "de", tão comum quanto
-    // "na") não batia na exclusão, "da área Suporte" inteiro virava
-    // prioridade: "da área Suporte" (nome-lixo), derrubando pra
-    // resumo_por_status em vez de resumo_por_prioridade.
-    new RegExp(
-      `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
-        + `(?!(?:[dn][ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
-      "iu",
-    ),
     // Ordem substantivo-nível invertida ("alta prioridade", tão natural
     // quanto "prioridade alta") — achado testando o lote de perguntas ao
     // vivo: "Tickets de ALTA PRIORIDADE." não resolvia prioridade nenhuma
@@ -3875,6 +3910,26 @@ function extractLooseNumberMatch(text) {
   return substituiNumerosPorExtenso(text).replace(LOOSE_NUMBER_NOISE_PATTERN, "").match(/\b(\d+)\b/);
 }
 
+// Validação em paralelo à de extractLimit (achado testando o lote de
+// perguntas ao vivo — Lote 13, bug T14, defesa em profundidade pro mesmo
+// bug do HUGE_LIMIT_PATTERN acima — caso o número gigante chegue aqui por
+// algum fraseado que o guard cedo não cobre): sem isso, `Number(numeroSolto
+// [1])` de um dígito gigante vira um valor diferente do que foi digitado
+// (perda de precisão de float) e é aplicado como limite sem nenhuma
+// validação, inconsistente com extractLimit (que já rejeita qualquer valor
+// fora de 1-100).
+function extractValidatedLooseNumber(text) {
+  const match = extractLooseNumberMatch(text);
+
+  if (!match) {
+    return undefined;
+  }
+
+  const numero = Number(match[1]);
+
+  return Number.isSafeInteger(numero) && numero >= 1 && numero <= 100 ? numero : undefined;
+}
+
 // Pedido explícito de visualização — troca a visão padrão da resposta
 // (texto/tabela/gráfico) no FRONTEND, sem mudar qual tool é chamada nem o
 // texto que o backend gera; mesmo padrão de decision.synthesize, só que pro
@@ -4145,6 +4200,7 @@ function routeTicketQuestionCore(pergunta) {
     NEGATIVE_LIMIT_PATTERN.test(pergunta)
     || ZERO_LIMIT_PATTERN.test(pergunta)
     || DECIMAL_LIMIT_PATTERN.test(pergunta)
+    || HUGE_LIMIT_PATTERN.test(pergunta)
   ) {
     return createClarificationDecision(
       "esclarecimento_limite_invalido",
@@ -5267,9 +5323,53 @@ function routeTicketQuestionCore(pergunta) {
       return true;
     }
 
+    // Restringe à última sentença de verdade (ver `ultimaSentencaCom
+    // NivelDePrioridade` mais abaixo, mesmo achado do Lote 13/T02): sem
+    // isso, "...prioridade Alta? E quanto à prioridade Baixa?" perdia o
+    // "?" na normalização e "alta" ficava colado direto em "e" (de "E
+    // quanto"), parecendo um conector de união de verdade ("alta E baixa
+    // prioridade") quando são 2 perguntas separadas.
+    const sentencaPrioridade = ultimaSentencaComNivelDePrioridade();
+
     return PRIORITY_LEVEL_UNIAO_PATTERNS.some(
-      ([pattern, nivel]) => pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade),
+      ([pattern, nivel]) => pattern.test(sentencaPrioridade) && normalizeText(nivel) !== normalizeText(prioridade),
     );
+  }
+
+  // "Tickets com prioridade Alta? E quanto à prioridade Baixa?" (achado
+  // testando o lote de perguntas ao vivo — Lote 13, bug T02): continuação
+  // de 2 turnos (cada um perguntando por um nível de prioridade diferente)
+  // caía como se fosse 1 contradição/união só, só porque os 2 níveis
+  // aparecem em algum lugar do texto mesclado inteiro — mas "Alta" (turno
+  // ANTIGO) e "Baixa" (turno NOVO, o valor já resolvido) nunca estão na
+  // MESMA frase/pergunta de verdade, só coincidem no mesmo texto
+  // concatenado. Pior ainda: `text` (normalizado) já perdeu toda a
+  // pontuação nesse ponto — "prioridade Alta? E quanto..." vira "prioridade
+  // alta e quanto..." sem o "?", e o "e" de "E quanto" (começo da frase
+  // NOVA) fica colado direto depois de "alta", parecendo um CONECTOR DE
+  // UNIÃO de verdade ("alta E baixa prioridade"). Por isso esta função usa
+  // `pergunta` (o texto CRU, com pontuação) pra achar a fronteira de
+  // sentença — `text` normalizado não serve pra isso. Restringe a checagem
+  // à ÚLTIMA sentença que menciona algum nível — normalmente a pergunta
+  // MAIS RECENTE — em vez do texto inteiro, pra não confundir "2 perguntas
+  // em sequência" com "1 frase só, genuinamente contraditória/de união"
+  // (ex.: "Tickets urgentes de baixa prioridade.", continua pegando certo:
+  // é 1 sentença só, então a "última sentença com nível" é a frase
+  // inteira).
+  function ultimaSentencaComNivelDePrioridade() {
+    const sentencas = pergunta.split(/[.?!]+/u).map((sentenca) => normalizeText(sentenca));
+
+    for (let i = sentencas.length - 1; i >= 0; i--) {
+      const mencionaAlgumNivel =
+        PRIORITY_LEVEL_LITERAL_PATTERNS.some(([pattern]) => pattern.test(sentencas[i]))
+        || /\burgentes?\b/.test(sentencas[i]);
+
+      if (mencionaAlgumNivel) {
+        return sentencas[i];
+      }
+    }
+
+    return text;
   }
 
   function detectaContradicao() {
@@ -5278,8 +5378,10 @@ function routeTicketQuestionCore(pergunta) {
     // prioridade" de nível diferente na mesma frase — mas só quando não é o
     // caso de união (conector "e", tratado antes, à parte).
     if (prioridade !== undefined && !detectaUniaoDePrioridades()) {
+      const sentencaPrioridade = ultimaSentencaComNivelDePrioridade();
+
       for (const [pattern, nivel] of PRIORITY_LEVEL_LITERAL_PATTERNS) {
-        if (pattern.test(text) && normalizeText(nivel) !== normalizeText(prioridade)) {
+        if (pattern.test(sentencaPrioridade) && normalizeText(nivel) !== normalizeText(prioridade)) {
           return true;
         }
       }
@@ -5301,7 +5403,7 @@ function routeTicketQuestionCore(pergunta) {
       // positivo sempre que "urgente" aparecesse em qualquer lugar da
       // frase (ex.: um marcador de continuação "só os Urgente" no fim).
       if (
-        /\burgentes?\b/.test(text)
+        /\burgentes?\b/.test(sentencaPrioridade)
         && ["baixa", "media", "alta"].includes(normalizeText(prioridade))
       ) {
         return true;
@@ -5354,12 +5456,18 @@ function routeTicketQuestionCore(pergunta) {
     // só a prioridade/status em si. "(?:com\\s+)?" antes de "status" pro
     // mesmo bridge já usado em outros pontos do arquivo ("estejam COM
     // status Encerrada").
+    // "do cliente X que não é do cliente X" (achado testando o lote de
+    // perguntas ao vivo — Lote 13, bug T05): mesma contradição, faltava
+    // CLIENTE no loop — sem isso, a negação era ignorada em silêncio e só
+    // o lado afirmativo era aplicado (listar_tickets com o cliente X como
+    // filtro positivo, como se a frase nunca tivesse negado nada).
     for (const [valor, nomeDimensao] of [
       [operador, "operador"],
       [area, `(?:${AREA_SYNONYM_SOURCE})`],
       [departamento, "departamento"],
       [prioridade, "prioridade"],
       [status, "(?:com\\s+)?status"],
+      [cliente, `(?:${CLIENT_LOOKUP_NOUN_SOURCE})`],
     ]) {
       if (valor === undefined) {
         continue;
@@ -6112,7 +6220,7 @@ function routeTicketQuestionCore(pergunta) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
     // como limite (ex.: "10 tickets mais antigos, página 2" não pode virar
     // limite: 2).
-    const numeroSolto = extractLooseNumberMatch(text);
+    const numeroSolto = extractValidatedLooseNumber(text);
 
     const decision = createTicketDecision(
       "listar_abertos_mais_antigos",
@@ -6123,7 +6231,7 @@ function routeTicketQuestionCore(pergunta) {
         operador,
         cliente,
         prioridade,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        limite: limite ?? numeroSolto,
         pagina,
       }),
     );
@@ -6136,7 +6244,7 @@ function routeTicketQuestionCore(pergunta) {
   }
 
   if (isSlaVencidoIntent) {
-    const numeroSolto = extractLooseNumberMatch(text);
+    const numeroSolto = extractValidatedLooseNumber(text);
 
     const decision = createTicketDecision(
       "listar_vencidos",
@@ -6151,7 +6259,7 @@ function routeTicketQuestionCore(pergunta) {
         situacao: situacaoInequivoca,
         dataInicio,
         dataFim,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : undefined),
+        limite: limite ?? numeroSolto,
         pagina,
       }),
     );
@@ -6318,7 +6426,7 @@ function routeTicketQuestionCore(pergunta) {
     isMostRecentIntent && /\bultim[oa]\b/.test(text) && !/\bultim[oa]s\b/.test(text);
 
   if (isOldestOverallIntent) {
-    const numeroSolto = extractLooseNumberMatch(text);
+    const numeroSolto = extractValidatedLooseNumber(text);
 
     const decision = createTicketDecision(
       "listar_mais_antigos",
@@ -6333,7 +6441,7 @@ function routeTicketQuestionCore(pergunta) {
         situacao: situacaoInequivoca,
         dataInicio,
         dataFim,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : (isBareOldestOverallIntent ? 1 : undefined)),
+        limite: limite ?? numeroSolto ?? (isBareOldestOverallIntent ? 1 : undefined),
         pagina,
       }),
     );
@@ -6348,7 +6456,7 @@ function routeTicketQuestionCore(pergunta) {
   if (isMostRecentIntent) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
     // como limite (mesmo cuidado do branch de mais antigos).
-    const numeroSolto = extractLooseNumberMatch(text);
+    const numeroSolto = extractValidatedLooseNumber(text);
 
     const decision = createTicketDecision(
       "listar_mais_recentes",
@@ -6363,7 +6471,7 @@ function routeTicketQuestionCore(pergunta) {
         situacao: situacaoInequivoca,
         dataInicio,
         dataFim,
-        limite: limite ?? (numeroSolto ? Number(numeroSolto[1]) : (isBareMostRecentIntent ? 1 : undefined)),
+        limite: limite ?? numeroSolto ?? (isBareMostRecentIntent ? 1 : undefined),
         pagina,
       }),
     );

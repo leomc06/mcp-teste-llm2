@@ -5702,3 +5702,52 @@ test("limite FRACIONÁRIO ('2.5'/'2,5', achado testando com dados reais do Lote 
   const inteiro = routeTicketQuestion("Liste os 2 tickets mais antigos.");
   assert.equal(inteiro.entities.limite, 2);
 });
+
+// --- Lote 13 (protocolo de QA estruturado) ---
+
+test("continuação que repete a mesma palavra-chave de STATUS com um valor novo (achado testando com dados reais do Lote 13, bug T01) usa o valor mais recente", () => {
+  const merged =
+    "Quantos tickets estão com status Em atendimento? E quanto ao status Aguardando Aprovação?";
+  const route = routeTicketQuestion(merged);
+  assert.equal(route.entities.status, "Aguardando Aprovação");
+
+  // Controle: 1 menção só continua resolvendo normalmente.
+  const unica = routeTicketQuestion("Quantos tickets estão com status Em atendimento?");
+  assert.equal(unica.entities.status, "Em atendimento");
+});
+
+test("continuação que repete a mesma palavra-chave de PRIORIDADE com um valor novo (achado testando com dados reais do Lote 13, bug T02) troca o valor, em vez de cair em contradição/união por engano", () => {
+  const route = routeTicketQuestion("Quantos tickets têm prioridade Alta? E quanto à prioridade Baixa?");
+  assert.equal(route.intent, "listar");
+  assert.equal(route.entities.prioridade, "Baixa");
+
+  // Controles: contradição e união GENUÍNAS (1 sentença só) continuam
+  // funcionando normalmente depois da correção.
+  const contradicao = routeTicketQuestion("Tickets urgentes de baixa prioridade.");
+  assert.equal(contradicao.intent, "esclarecimento_contradicao");
+
+  const uniao = routeTicketQuestion("Tickets com prioridade Urgente ou Alta.");
+  assert.equal(uniao.intent, "esclarecimento_uniao_prioridades");
+
+  const negacao = routeTicketQuestion("Tickets com prioridade Alta, mas sem contar os urgentes.");
+  assert.equal(negacao.intent, "esclarecimento_negacao");
+});
+
+test("autocontradição auto-negada agora cobre CLIENTE também (achado testando com dados reais do Lote 13, bug T05) — mesmo valor afirmado e negado na mesma frase", () => {
+  const route = routeTicketQuestion(
+    "Tickets do cliente Luiz Henrique Coura que não é do cliente Luiz Henrique Coura.",
+  );
+  assert.equal(route.intent, "esclarecimento_contradicao");
+});
+
+test("limite GIGANTE ('99999999999999999999', achado testando com dados reais do Lote 13, bug T14) pede esclarecimento, em vez de aplicar um número com precisão perdida sem aviso", () => {
+  const route = routeTicketQuestion("Liste os 99999999999999999999 tickets mais antigos.");
+  assert.equal(route.intent, "esclarecimento_limite_invalido");
+
+  // Controles: número por extenso e inteiro normal continuam passando.
+  const porExtenso = routeTicketQuestion("Liste dez tickets mais antigos.");
+  assert.equal(porExtenso.entities.limite, 10);
+
+  const inteiro = routeTicketQuestion("Liste os 2 tickets mais antigos.");
+  assert.equal(inteiro.entities.limite, 2);
+});

@@ -146,6 +146,116 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 13 — gerado, aguardando execução — ângulos: F (o bug de continuação "repete a palavra-chave com um nome novo" — corrigido nos Lotes 11/12 só pra operador/cliente/área/departamento — nunca testado pra STATUS nem PRIORIDADE; cadeia de 3 turnos repetindo a palavra-chave; marcador "agora"; mistura de SINÔNIMOS da mesma dimensão entre os 2 turnos; turno 2 introduzindo uma dimensão NOVA em vez de repetir a mesma; turno 2 com nome INEXISTENTE; turno 2 cortado no meio do NOME, não do verbo), I (resíduo da autonegação no SINGULAR "não é" — nota incidental do Lote 9, nunca corrigida, nunca reconfirmada depois dos fixes dos Lotes 11/12 que tocaram esse mesmo pattern), J (autocomparação — só testada pra operador no Lote 12 — agora cliente/área; comparação de status com autocomparação), B (negação de lista "nem X nem Y" — só testada pra área no Lote 10 — agora cliente/departamento), G (typo em nome real novo), H (número gigante tipo overflow/BigInt), C (futuro + período do dia, controle do fix do Lote 12), M (integridade fresca com departamento COIDS)
+
+Motivo da escolha: o fix de `extractLastKeywordMatch` (Lote 11, bug T08)
+foi estendido pra cliente/área/departamento no Lote 12 — mas NUNCA pra
+status nem prioridade, que usam extratores de forma diferente
+(`extractTicketStatusName` tem o mesmo tipo de padrão ancorado em
+palavra-chave que sofria do bug; prioridade usa vocabulário fixo, pode ou
+não ter o mesmo problema). Cadeias de 3+ turnos repetindo a MESMA
+palavra-chave (não só 2) nunca foram tentadas. O marcador "agora" (já
+testado pra troca de dimensão de AGRUPAMENTO no Lote 2) nunca foi testado
+especificamente pra esse bug de repetição de nome. Misturar sinônimos
+diferentes da mesma dimensão (ex.: "atendente" no turno 1, "responsável"
+no turno 2) nunca foi tentado — o fix depende de uma única regex que
+alterna entre todos os sinônimos, pode ter um ponto cego aí. Turno 2
+introduzindo uma dimensão nova (em vez de repetir a mesma) nunca foi
+testado DEPOIS dos fixes dos Lotes 11/12 (risco de regressão: um fix
+pensado pra "mesma palavra-chave 2x" poderia quebrar o caso comum de
+"dimensão nova"). Turno 2 com nome inexistente nunca foi testado (deveria
+falhar honesto com o NOME NOVO, não voltar pro nome antigo). O resíduo de
+autonegação no singular "não é" (nota incidental do Lote 9) nunca foi
+corrigido nem reconfirmado — os fixes dos Lotes 11/12 tocaram bem perto
+desse mesmo pattern (`TRAILING_SELF_NEGATION_CLAUSE_PATTERN`), pode ter
+mudado de comportamento sem ter sido testado de novo. Autocomparação
+(Lote 12, só operador) nunca foi tentada pra cliente/área/status. Negação
+de lista "nem X nem Y" (Lote 10, só área) nunca foi tentada pra
+cliente/departamento.
+
+- Perguntas: L13-T01 .. L13-T20 (ver mensagem do lote)
+- Dados reais usados: status "Cancelado"/"Encerrada"; prioridades "Alta"/
+  "Baixa"; departamentos "SYSADMIN"/"COIDS" (18 tickets, confirmado agora
+  via `resumo_tickets_por_departamento`) e departamento inexistente de
+  propósito; áreas "Suporte"/"Governança"/"Gestão"; operadores "Fabio
+  Gali"/"Diego Mota"; clientes "Luiz Henrique Coura"/"João Messias Alves
+  da Silva"/"Kaue Bastos" (nome novo do Lote 12, com typo proposital
+  "Kaue Bastus")
+- Resultado: **executado por mim** (`routeTicketQuestion`/`extractByPatterns`
+  em lote pra checagem de intenção/entidade + 1 chamada por vez na API do
+  OcoMon pros casos que precisavam de confirmação ao vivo)
+- Bugs encontrados (4, por ordem de severidade):
+  1. T14 — "Liste os 99999999999999999999 tickets mais antigos.": o número
+     gigante estourava a precisão segura de `Number` (virava
+     100000000000000000000, um valor DIFERENTE do digitado) e esse valor
+     incorreto era aplicado como limite sem nenhuma validação — pior que o
+     caso decimal do Lote 12 (ali pelo menos o valor truncado era real).
+  2. T05 — "Tickets do cliente Luiz Henrique Coura que não é do cliente
+     Luiz Henrique Coura.": CLIENTE nunca entrou no loop de
+     `detectaContradicao` (só operador/área/departamento/prioridade/
+     status) — a negação era ignorada em silêncio, aplicando só o lado
+     afirmativo como filtro.
+  3. T01 — mesmo bug de continuação dos Lotes 11/12 (repete a palavra-
+     chave com um valor novo, fica com o valor ANTIGO), nunca estendido
+     pra STATUS — confirmado com frase sem interferência de outro guard
+     ("status Em atendimento? E quanto ao status Aguardando Aprovação?"
+     ficava preso em "Em atendimento").
+  4. T02 — continuação de prioridade ("prioridade Alta? E quanto à
+     prioridade Baixa?") caía em `esclarecimento_uniao_prioridades`
+     (depois do fix inicial de extração) ou `esclarecimento_contradicao`
+     (antes) em vez de trocar o valor — causa raiz foi mais sutil que o
+     esperado: `normalizeText` remove TODA pontuação antes dessas
+     checagens rodarem, então "prioridade Alta? E quanto..." perdia o "?"
+     e "alta" ficava colado direto em "e" (de "E quanto"), parecendo um
+     conector de união/contradição de verdade.
+- Confirmados corretos/por design: T03/T04 (resíduo de autonegação no
+  SINGULAR "não é", nota pendente do Lote 9 — já estava CORRIGIDO como
+  efeito colateral dos fixes dos Lotes 11/12, confirmado agora direto nos
+  3 extratores: `extractDepartmentName`/`extractAreaName`/
+  `extractClientName` devolvem o valor limpo, sem resíduo), T06 (cadeia de
+  3 turnos repetindo a palavra-chave de área funciona, pega a MAIS
+  recente), T07 (marcador "agora" + repetição de palavra-chave funciona),
+  T08 (continuação introduzindo uma dimensão NOVA via marcador reconhecido
+  preserva as 2, sem regressão dos fixes anteriores — nota incidental: a
+  forma "E na área X?", sem "quanto", não é marcador reconhecido, mesma
+  classe de limitação já aceita desde o Lote 2), T09/T10 (autocomparação
+  de cliente/área funciona igual à de operador, sem erro), T11/T12
+  (negação de lista "nem X nem Y" funciona pra cliente/departamento,
+  mesmo padrão do Lote 10), T13 (typo em nome real novo falha honesto,
+  sem fuzzy match), T15 ("amanhã de manhã" resolve pro dia de AMANHÃ, sem
+  regressão do fix do Lote 12), T16 (integridade: departamento COIDS = 18
+  nos 2 caminhos), T17 (sinônimos diferentes nos 2 turnos — "atendente"/
+  "responsável" — resolvem certo, a regex única cobre todos os
+  sinônimos), T18 (nome inexistente numa continuação falha honesto com o
+  NOME NOVO, não volta pro valor antigo), T19 (nome truncado numa
+  continuação cai em ambíguo, não inventa nem volta pro valor antigo;
+  nota incidental: a mensagem de ambiguidade aparece duplicada 2x na
+  resposta, mesmo padrão cosmético já visto no Lote 12/T01 antes do fix —
+  não investigado a fundo, possível tema de lote futuro), T20
+  (autocomparação de status cai na recusa de dimensão não suportada, não
+  em contradição).
+- Correções aplicadas: todos os 4 corrigidos e verificados (767 testes
+  passando, ao vivo na API do OcoMon e smoke test). Bug 1 (T14): novo
+  `HUGE_LIMIT_PATTERN` (10+ dígitos, mesma família de `NEGATIVE_LIMIT_
+  PATTERN`/`ZERO_LIMIT_PATTERN`/`DECIMAL_LIMIT_PATTERN`) checado cedo
+  contra o texto cru; e, em paralelo (defesa em profundidade pro fallback
+  de "número solto" usado por mais_antigos/mais_recentes/vencidos), novo
+  `extractValidatedLooseNumber` com a MESMA validação de `extractLimit`
+  (inteiro seguro, 1-100), substituindo o `Number()` direto sem validação
+  nos 4 pontos que usavam `extractLooseNumberMatch`. Bug 2 (T05): `cliente`
+  somado ao loop de `detectaContradicao`. Bug 3 (T01): mesma técnica
+  `extractLastKeywordMatch` (Lotes 11/12) aplicada ao padrão ancorado de
+  `extractTicketStatusName`. Bug 4 (T02): 2 partes — `extractPriorityName`
+  ganhou a mesma técnica `extractLastKeywordMatch`; e, pra evitar o
+  problema da pontuação removida, nova `ultimaSentencaComNivelDePrioridade`
+  (usa o texto CRU — `pergunta`, não `text` normalizado — pra achar a
+  fronteira de sentença de verdade) usada tanto em `detectaContradicao`
+  quanto em `detectaUniaoDePrioridades`, restringindo as checagens de
+  prioridade à ÚLTIMA sentença que menciona algum nível, não ao texto
+  mesclado inteiro.
+- Regressão pendente: nenhuma — testes já criados (`test/tickets-
+  routing.test.js`)
+
 ### Lote 12 — gerado, aguardando execução — ângulos: F (o fix do Lote 11, bug T08, só cobriu operador — nunca testado se o mesmo bug de "continuação repete a palavra-chave com um nome novo" também afeta cliente/área/departamento), B (negação com "nunca" — só testada pra operador/situação no Lote 11, nunca pras outras 4 dimensões do loop de `detectaNegacaoNaoSuportada`), J (comparação de prioridade/status via os OUTROS padrões de `extractOperatorComparisonNames` que não ganharam o guard do Lote 11 — só o padrão BARE "tickets de X" foi corrigido; autocomparação da mesma pessoa, nunca testada), M (integridade cruzada com cliente, dados novos), H (limite decimal/notação científica, nunca testados), C (hora do dia informal — "essa madrugada"/"ontem à noite"), G (grafia extrema combinada: maiúscula + sem acento + espaço triplo ao mesmo tempo), N (comparação entre 2 NÚMEROS de ticket, um deles inválido — nunca tentada), L (emoji e code-mixing de idioma, nunca testados)
 
 Motivo da escolha: o fix do Lote 11 (bug T08, `extractLastKeywordMatch`) foi
