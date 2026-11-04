@@ -146,6 +146,153 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 14 — testado — ângulos: K (colisão de NOME entre área e departamento — "Gestão"/"GESTÃO" — nunca testada; colisão por substring entre 2 departamentos reais — "COIDS"/"REDES COIDS"), M (integridade cruzada com departamento "Chefia", nunca usado antes; comparação departamento x departamento entre COIDS e REDES COIDS), F (continuação repetindo palavra-chave de CLIENTE com nomes novos nunca usados; continuação introduzindo NEGAÇÃO no 2º turno, nunca tentada), B (negação de lista "nem X nem Y" — nunca testada pra OPERADOR nem STATUS), J (autocomparação de DEPARTAMENTO e de PRIORIDADE, nunca tentadas; formato gráfico pedido numa comparação, nunca confirmado), I (autonegação no SINGULAR "não é" — confirmada só pra departamento/área/cliente no Lote 13 — agora operador/status), H (limite exatamente no limite válido, 100, e 1 acima, 101, bare number — nunca testado o boundary exato), N (departamento real com 0 tickets, distinto de "não encontrado" — nunca usado "SECRETARIA"), G (typo + espaço triplo simultâneos em departamento novo "SUPERCOMPUTAÇÃO"), L (revisita do bug cosmético "mensagem de ambiguidade duplicada 2x", notado no Lote 13/T19, agora com par de CLIENTE novo)
+
+Motivo da escolha: nunca testamos uma colisão de nome entre área e
+departamento (só operador×cliente, em várias rodadas) — "Gestão" existe
+nos 2 catálogos agora (confirmado puxando os catálogos reais). Colisão por
+substring entre 2 departamentos reais (COIDS/REDES COIDS) nunca foi
+testada (só substring de cliente/operador). Departamento "Chefia" (13
+tickets) e "SECRETARIA" (0 tickets, catálogo real) nunca apareceram em
+nenhum lote anterior. Continuação de CLIENTE com nomes novos nunca usados
+("Gabriel Vilela"/"Carlos Renato de Souza") é controle de regressão com
+dados frescos. Continuação introduzindo uma NEGAÇÃO no 2º turno (em vez de
+repetir/trocar um valor) nunca foi tentada — risco de regressão dos fixes
+dos Lotes 11-13. Negação de lista "nem X nem Y" já foi testada pra
+área/cliente/departamento, nunca pra operador nem status. Autocomparação
+já foi testada pra operador/cliente/área/status, nunca pra
+departamento/prioridade. Autonegação singular "não é" foi confirmada como
+corrigida (efeito colateral) só pra departamento/área/cliente no Lote 13 —
+operador e status (que usa "esteja"/"estejam", vocabulário diferente)
+nunca foram checados com essa forma singular específica. O limite válido é
+1-100 (`extractLimit`/`extractValidatedLooseNumber`) — nunca testamos o
+valor exatamente NO limite (100) nem 1 acima (101) na forma "bare number"
+(sem a palavra "tickets"), que usa o mecanismo novo do Lote 13 (bug T14).
+Typo + espaço triplo SIMULTÂNEOS em departamento (G) só foi testado
+separadamente até agora. O bug cosmético "mensagem de ambiguidade
+duplicada 2x" (nota incidental do Lote 13/T19) nunca foi investigado a
+fundo nem confirmado com um par diferente.
+
+- Perguntas: L14-T01 .. L14-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): área "Gestão" e
+  departamento "GESTÃO" (nome colidindo nos 2 catálogos, confirmado agora);
+  departamentos "COIDS" (18 tickets)/"REDES COIDS" (25 tickets, substring
+  um do outro)/"Chefia" (13 tickets, nunca usado)/"SECRETARIA" (0 tickets,
+  catálogo real)/"SUPERCOMPUTAÇÃO" (374 tickets); clientes novos "Gabriel
+  Vilela"/"Carlos Renato de Souza" (nunca usados em nenhum lote) e
+  "Paulo Henrique de Araujo Ribeiro"/"Paulo Yoshio Kubota" (colisão real
+  por "Paulo"); operadores "Fabio Gali"/"Cesar Augusto de Mello"; status
+  "Cancelado"/"Encerrada"; prioridade "Alta"; cliente "Luiz Henrique Coura"
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  checagem de intenção/entidade + 1 chamada por vez na API do OcoMon pros
+  casos que precisavam de confirmação ao vivo, incluindo 3 encadeamentos de
+  2 turnos)
+- Bugs encontrados (4, por ordem de severidade):
+  1. **(novo, nível de orquestração, não de `tickets-routing.js`)** —
+     T06/T19 revelaram a causa raiz real do que vínhamos tratando como
+     "cosmético" desde o Lote 12/T01 e o Lote 13/T19 ("mensagem aparece
+     duplicada 2x"): `quantidadeChamadas: 2` nos 2 casos, com a MESMA tool
+     e os MESMOS argumentos chamados duas vezes — confirmado que NÃO
+     acontece numa pergunta equivalente de 1 turno só (`quantidadeChamadas:
+     1`). Causa: em `agent/agent-loop.js`, mesmo quando o roteador
+     determinístico já decidiu sozinho qual tool/argumentos usar
+     (`routeToolArguments`), o loop ainda consulta o modelo local (Ollama)
+     de verdade — e o texto da continuação mesclada (2 perguntas
+     concatenadas) às vezes faz o modelo pedir a tool 2 VEZES na mesma
+     troca; cada chamada é forçada a usar os MESMOS argumentos do roteador
+     (`resolveToolArguments`), então as 2 chamadas são idênticas e
+     `formatToolResults` simplesmente concatena os 2 resultados iguais no
+     texto final — sem nenhuma deduplicação. Não é um bug de extração de
+     entidade (essas vieram corretas nos 2 casos), é duplicação de
+     EXECUÇÃO/FORMATAÇÃO.
+  2. T13 — continuação "Quantos tickets são do cliente Luiz Henrique
+     Coura?" → "E quanto aos que NÃO são do cliente Luiz Henrique Coura?":
+     cai em `esclarecimento_contradicao` (recusa honesta, mas ERRADA) em
+     vez de aplicar a exclusão pedida — regressão direta do fix do Lote 13
+     (cliente somado ao loop de `detectaContradicao`): o texto mesclado
+     "do cliente Luiz Henrique Coura... não são do cliente Luiz Henrique
+     Coura" tem exatamente a forma de autocontradição de 1 frase só, mas
+     aqui são 2 TURNOS distintos pedindo uma exclusão legítima, não uma
+     frase nonsense — confirmado ao vivo (`quantidadeChamadas: 0`,
+     esclarecimento).
+  3. T20 — "Compare EM GRÁFICO a carga do operador X com a do operador Y.":
+     quebra a extração de comparação de operador por completo, caindo em
+     `esclarecimento_comparacao_sem_nome` (como se nenhum nome tivesse sido
+     dito) — confirmado isolando com `routeTicketQuestion` que a mesma
+     frase SEM "em gráfico" funciona normalmente, e que o guard de
+     qualificador interposto corrigido no Lote 10 (bug T08) só cobre
+     vocabulário de VERBOSIDADE (`VERBOSITY_QUALIFIER_SOURCE`: "de forma
+     detalhada/resumida/breve", "detalhadamente", "com detalhes") — nunca
+     foi estendido pra vocabulário de FORMATO ("em gráfico"/"em
+     tabela"/"graficamente").
+  4. T15 — "Liste os 101 mais antigos." (bare number, 1 acima do limite
+     válido de 100): descartado em SILÊNCIO, sem nenhum
+     `esclarecimento_limite_invalido` — `entities: {}` (confirmado via
+     `routeTicketQuestion`), cai no limite padrão da tool em vez de avisar,
+     inconsistente com negativo/zero/decimal/gigante (que já pedem
+     esclarecimento desde os Lotes 11-13).
+- Confirmados corretos/por design: T01 (ambiguidade área/departamento
+  "Gestão" sem palavra-chave pede esclarecimento, não escolhe um lado),
+  T02/T03 (com "área"/"departamento" explícito resolve certo pros 2 lados,
+  13 e 3 tickets — diferentes entre si, confirmando que não é o mesmo
+  catálogo), T04 (departamento "COIDS" exato não se confunde com "REDES
+  COIDS" por substring, 18 tickets), T05/T09 (comparação departamento x
+  departamento SEM área, incluindo autocomparação, continua sendo o MESMO
+  gap já aceito desde os Lotes 7/11 — `esclarecimento_comparacao_sem_nome`,
+  falha com segurança, não é bug novo), T07/T08 (negação de lista "nem X
+  nem Y" funciona igual pra operador e status, mesmo padrão já usado pras
+  outras dimensões), T10 (autocomparação de prioridade recusa dimensão não
+  suportada, não regride pra contradição/união por ser o mesmo valor nos 2
+  lados), T11/T12 (autonegação singular "não é" funciona limpo pra
+  operador e status, sem resíduo vazando pro valor — mesmo efeito colateral
+  dos fixes do Lote 11/13 confirmado também aqui), T14 (limite exatamente
+  100, bare number, aceito normalmente), T16 (integridade: departamento
+  Chefia = 13 tickets nos 2 caminhos), T17 (departamento real "SECRETARIA"
+  com 0 tickets devolve "nenhum ticket encontrado", não confunde com
+  "departamento não encontrado"), T18 (typo sem acento + espaço triplo
+  simultâneos resolvem certo pra "SUPERCOMPUTAÇÃO", 374 tickets).
+- Correções aplicadas: todos os 4 corrigidos e verificados (766 testes
+  passando + 1 falha PRÉ-EXISTENTE sem relação, ver nota abaixo; ao vivo na
+  API do OcoMon e smoke test) — (1) `agent/agent-loop.js`: quando a rota
+  determinística já decidiu a tool/argumentos, corta pra no máximo 1
+  chamada por rodada e recusa qualquer chamada extra numa rodada seguinte
+  (a causa raiz real da "mensagem duplicada 2x" do Lote 12/T01 e Lote
+  13/T19); (2) `detectaContradicao`/`detectaNegacaoNaoSuportada`
+  (`tickets-routing.js`): autocontradição/autonegação agora são decididas
+  por SENTENÇA CRUA (pontuação intacta), não pelo texto mesclado inteiro —
+  uma continuação que nega de propósito o valor do turno anterior (2
+  sentenças) passa a cair em `esclarecimento_negacao` honesto em vez de
+  `esclarecimento_contradicao` errado ou de aplicar o valor positivo em
+  silêncio; autocontradição de 1 frase só (valor citado 2+ vezes na MESMA
+  sentença) continua detectada igual; (3) `extractOperatorComparisonNames`
+  (`tickets-routing.js`): novo `FORMAT_QUALIFIER_SOURCE` (espelhando
+  `VERBOSITY_QUALIFIER_SOURCE`) aceita "em gráfico"/"em
+  tabela"/"graficamente"/"de forma gráfica/visual/tabular" interposto entre
+  "compare" e "a carga"; (4) `extractLimit` (`routing-utils.js`)/
+  `extractValidatedLooseNumber` (`tickets-routing.js`): número de limite
+  sintaticamente válido mas fora do intervalo 1-100 agora sinaliza `NaN`
+  (distinto de `undefined` = "nenhum limite pedido") e isso dispara
+  `esclarecimento_limite_invalido`, em vez de descartar o limite em
+  silêncio — consistente com negativo/zero/decimal/gigante.
+- Nota sobre a falha de teste pré-existente: `test/tickets-routing.test.js`
+  (linha ~3816, "esse mês"/"este mês") usa datas ABSOLUTAS fixas
+  ("2026-10-01"/"2026-10-31") como esperado — eram corretas quando escritas
+  (data real do sistema em outubro/2026), mas a data real avançou pra
+  novembro/2026 nesta sessão, então "esse mês" agora resolve certo pra
+  novembro e o teste (que não acompanha a data real) passou a falhar. Não
+  tem relação com nenhum dos 4 fixes deste lote — é um "date bomb" no
+  próprio teste (data-dependente sem usar `new Date()` dinamicamente).
+  Ainda não corrigido (fora do escopo dos bugs deste lote; fixes de teste
+  também exigem "pode corrigir" antes de serem commitados).
+- Regressão pendente: nenhuma identificada — suíte completa roda limpa
+  (exceto a falha pré-existente/sem relação acima) e os 4 fixes foram
+  reverificados ao vivo (incluindo o cuidado extra no fix 4: a 1ª tentativa
+  validava `extractValidatedLooseNumber` incondicionalmente pra QUALQUER
+  pergunta, o que quebrava busca por número de ticket tipo "Busque o
+  ticket 1001." — corrigido restringindo a validação aos mesmos branches
+  que já usavam esse número solto, achado rodando a suíte completa antes
+  de reportar como pronto).
+
 ### Lote 13 — gerado, aguardando execução — ângulos: F (o bug de continuação "repete a palavra-chave com um nome novo" — corrigido nos Lotes 11/12 só pra operador/cliente/área/departamento — nunca testado pra STATUS nem PRIORIDADE; cadeia de 3 turnos repetindo a palavra-chave; marcador "agora"; mistura de SINÔNIMOS da mesma dimensão entre os 2 turnos; turno 2 introduzindo uma dimensão NOVA em vez de repetir a mesma; turno 2 com nome INEXISTENTE; turno 2 cortado no meio do NOME, não do verbo), I (resíduo da autonegação no SINGULAR "não é" — nota incidental do Lote 9, nunca corrigida, nunca reconfirmada depois dos fixes dos Lotes 11/12 que tocaram esse mesmo pattern), J (autocomparação — só testada pra operador no Lote 12 — agora cliente/área; comparação de status com autocomparação), B (negação de lista "nem X nem Y" — só testada pra área no Lote 10 — agora cliente/departamento), G (typo em nome real novo), H (número gigante tipo overflow/BigInt), C (futuro + período do dia, controle do fix do Lote 12), M (integridade fresca com departamento COIDS)
 
 Motivo da escolha: o fix de `extractLastKeywordMatch` (Lote 11, bug T08)

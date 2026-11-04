@@ -478,6 +478,29 @@ export async function runAgent({
       assistantMessage.content = "";
     }
 
+    // Quando a rota determinística já decidiu a tool/argumentos
+    // (`routeToolArguments`), só existe UMA resposta certa possível —
+    // qualquer chamada extra é sempre redundante, nunca uma 2ª pergunta de
+    // verdade (achado testando o lote de perguntas ao vivo — Lote 14,
+    // bugs T06/T19): numa continuação de 2 turnos mesclados em 1 texto só,
+    // o modelo local (Ollama) às vezes devolve 2 tool_calls de uma vez só
+    // na MESMA resposta (confirmado com log de depuração: 1 única rodada
+    // do loop, "requestedTools" com 2 itens, nunca 2 rodadas separadas) —
+    // como os argumentos de QUALQUER chamada são sempre forçados pros
+    // mesmos valores já decididos pela rota (ver resolveToolArguments),
+    // as 2 chamadas saem IDÊNTICAS e a resposta final vinha com o
+    // resultado inteiro duplicado, sem nenhuma deduplicação. Corta pra no
+    // máximo 1 chamada por rodada e, por segurança, não aceita NENHUMA
+    // chamada extra numa rodada seguinte (toolCalls.length > 0 já indica
+    // que a única resposta certa já foi executada antes).
+    if (routeToolArguments !== null) {
+      requestedTools =
+        toolCalls.length > 0 ? [] : requestedTools.slice(0, 1);
+
+      assistantMessage.tool_calls =
+        requestedTools;
+    }
+
     messages.push(assistantMessage);
 
     if (requestedTools.length === 0) {

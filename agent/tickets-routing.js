@@ -3251,6 +3251,18 @@ const CARGA_SYNONYM_SOURCE = "(?:carga|quantidade\\s+de\\s+tickets?|volume\\s+de
 // quem comparar", mesmo com os 2 nomes claramente ditos.
 const VERBOSITY_QUALIFIER_SOURCE = "(?:de\\s+forma\\s+(?:detalhada|resumida|breve)|detalhadamente|resumidamente|com\\s+detalhes?)\\s+";
 
+// "Compare EM GRÁFICO a carga do operador X com a do operador Y." (achado
+// testando o lote de perguntas ao vivo — Lote 14, bug T20): mesma quebra de
+// VERBOSITY_QUALIFIER_SOURCE acima, só que com um qualificador de FORMATO
+// (gráfico/tabela) interposto em vez de verbosidade — "em gráfico"/"em
+// tabela"/"graficamente" têm vocabulário próprio (FORMATO_GRAFICO_SOURCE/
+// FORMATO_TABELA_SOURCE, mais abaixo no arquivo, usados por
+// detectFormatoPreferido) mas nenhum dos 2 cobre o caso de aparecer
+// INTERPOSTO entre "compare" e "a carga" — duplicado aqui (não referenciado)
+// pelo mesmo motivo já documentado acima pra VERBOSITY_QUALIFIER_SOURCE.
+const FORMAT_QUALIFIER_SOURCE =
+  "(?:em\\s+(?:um\\s+)?gr[áa]ficos?|em\\s+(?:uma\\s+)?(?:tabelas?|planilhas?)|graficamente|de\\s+forma\\s+(?:gr[áa]fica|visual|tabular))\\s+";
+
 // "vs"/"x" como conector de comparação (achado testando o lote de
 // perguntas ao vivo): "Compare a área WEB X área Suporte." usa "x"
 // (jeito informal comum de dizer "versus"), mas só "com"/"e" eram
@@ -3265,7 +3277,7 @@ export function extractOperatorComparisonNames(value) {
 
   const patterns = [
     new RegExp(
-      `\\bcompar[ae]\\s+(?:${VERBOSITY_QUALIFIER_SOURCE})?a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
+      `\\bcompar[ae]\\s+(?:${VERBOSITY_QUALIFIER_SOURCE}|${FORMAT_QUALIFIER_SOURCE})?a\\s+${CARGA_SYNONYM_SOURCE}\\s+(?:d[oa]\\s+)?(.+?)\\s+(?:com|e|vs|x)\\s+`
         + `(?:a\\s+(?:${CARGA_SYNONYM_SOURCE}\\s+)?d[oa]\\s+)?(.+)$`,
       "iu",
     ),
@@ -3927,7 +3939,17 @@ function extractValidatedLooseNumber(text) {
 
   const numero = Number(match[1]);
 
-  return Number.isSafeInteger(numero) && numero >= 1 && numero <= 100 ? numero : undefined;
+  if (Number.isSafeInteger(numero) && numero >= 1 && numero <= 100) {
+    return numero;
+  }
+
+  // Mesmo sinal de "pedido, mas inválido" (NaN, distinto de `undefined`)
+  // já aplicado em `extractLimit`/routing-utils.js pro mesmo bug (achado
+  // testando o lote de perguntas ao vivo — Lote 14, bug T15) — "Liste os
+  // 101 mais antigos." passa por AQUI (não por extractLimit, que não
+  // reconhece a forma "N mais antigos" sem "primeiro"/"top"/ticket), e sem
+  // isso caía no mesmo descarte em silêncio.
+  return Number.isSafeInteger(numero) ? NaN : undefined;
 }
 
 // Pedido explícito de visualização — troca a visão padrão da resposta
@@ -4163,6 +4185,21 @@ function createClarificationDecision(intent, mensagem) {
   };
 }
 
+// Compartilhada entre o guard de `extractLimit` (incondicional, roda antes
+// de qualquer branch) e os branches de "mais antigos/recentes/vencido"
+// (que validam `extractValidatedLooseNumber` à parte — ver comentário no
+// guard de `limite` dentro de `routeTicketQuestionCore`) — mesma mensagem
+// nos dois casos, só a origem do número inválido muda.
+function createLimiteInvalidoDecision() {
+  return createClarificationDecision(
+    "esclarecimento_limite_invalido",
+    "Esse limite de resultados não parece válido (precisa ser um número inteiro de pelo menos 1). Pode pedir uma quantidade inteira positiva?"
+      + "\n\nExemplos:\n"
+      + "- Liste os 2 tickets mais antigos.\n"
+      + "- Liste os 5 primeiros tickets.",
+  );
+}
+
 // "Compare X e Y" — a MESMA tool roda duas vezes (uma por lado), decidido
 // aqui de forma totalmente determinística (nenhuma escolha do LLM), mesma
 // garantia do caminho de 1 tool só que generalizada pra 2 chamadas fixas.
@@ -4179,6 +4216,15 @@ function createCompareDecision(intent, comparisons) {
 
 function routeTicketQuestionCore(pergunta) {
   const text = normalizeText(pergunta);
+
+  // Sentenças CRUAS (pontuação de `pergunta` intacta, cada uma depois
+  // normalizada) — usadas por `detectaNegacaoNaoSuportada`/`detectaContradicao`
+  // pra distinguir "1 frase só, genuinamente contraditória" de "2 turnos de
+  // continuação mesclados num texto só" (achado testando o lote de
+  // perguntas ao vivo — Lote 14, bug T13): `text` normalizado perde toda a
+  // pontuação, então a fronteira entre turnos desaparece e os 2 casos ficam
+  // indistinguíveis só olhando o texto mesclado inteiro.
+  const rawSentences = pergunta.split(/[.?!]+/u).map((sentenca) => normalizeText(sentenca));
 
   // Checado logo aqui, antes de qualquer outra coisa usar `numero` ou cair
   // no fallback de listagem: uma referência de ticket que PARECE um número
@@ -4318,6 +4364,27 @@ function routeTicketQuestionCore(pergunta) {
   const limite = extractLimit(pergunta);
   const pagina = extractPage(pergunta);
   const { dataInicio, dataFim } = extractDateRange(pergunta);
+
+  // "Liste 101 tickets abertos."/"Top 101 operadores..." (achado testando o
+  // lote de perguntas ao vivo — Lote 14, bug T15): número de limite
+  // sintaticamente válido mas fora do intervalo aceito (1-100) —
+  // `extractLimit` sinaliza esse caso com `NaN` (distinto de `undefined`,
+  // que significa "nenhum limite pedido"); sem este guard, o `NaN` vazaria
+  // pra `compactEntities` mais abaixo (que descarta qualquer valor
+  // "falsy-ish" em silêncio) e o pedido de limite era simplesmente
+  // ignorado, devolvendo a listagem sem filtro de quantidade nenhum —
+  // inconsistente com negativo/zero/decimal/gigante, que já pedem
+  // esclarecimento em vez de aplicar/descartar um valor sem avisar.
+  // (O mesmo sinal de `extractValidatedLooseNumber`, usado só pelos
+  // branches de "mais antigos/recentes/vencido" mais abaixo — ex.: "Liste
+  // os 101 mais antigos." —, é checado DENTRO de cada um desses branches,
+  // via `createLimiteInvalidoDecision`, não aqui: fazer isso aqui,
+  // incondicional pra QUALQUER pergunta, pegava até o número de um ticket
+  // específico, tipo "Busque o ticket 1001.", como se fosse um limite
+  // inválido — achado rodando a suíte depois desta mesma correção.)
+  if (Number.isNaN(limite)) {
+    return createLimiteInvalidoDecision();
+  }
 
   // "dia 31 de abril" (achado testando o lote de perguntas ao vivo): data
   // de calendário impossível — checado logo aqui, antes de qualquer branch
@@ -5152,6 +5219,40 @@ function routeTicketQuestionCore(pergunta) {
     return NEGATION_MARKER_PATTERN.test(janela);
   }
 
+  // Versão de `hasNegationBefore` restrita a menções AVULSAS (uma só por
+  // sentença CRUA) — achado testando o lote de perguntas ao vivo (Lote 14,
+  // bug T13): `hasNegationBefore(text, ...)` olha só a 1ª ocorrência do
+  // valor no `text` mesclado inteiro, então numa continuação de 2 turnos
+  // ("Quantos tickets são do cliente X? E quanto aos que NÃO são do
+  // cliente X?") a 1ª ocorrência (turno antigo, afirmativa) nunca tem
+  // negação antes, e a negação de verdade (2ª ocorrência, turno novo) nunca
+  // chegava a ser examinada — a exclusão virava um filtro POSITIVO em
+  // silêncio em vez da recusa honesta que as outras dimensões já recebem.
+  // Mas simplesmente olhar TODAS as ocorrências (não só a 1ª) no `text`
+  // mesclado reabriria o bug já corrigido pro Lote 9/11/13 ao contrário:
+  // "Tickets do cliente X que não é do cliente X." (autocontradição de
+  // verdade, 1 frase só, X afirmado E negado) passaria a cair aqui como
+  // negação simples em vez de autocontradição (ver `detectaContradicao`,
+  // que já trata exatamente este caso). A distinção certa é por SENTENÇA:
+  // uma negação é "avulsa" (de verdade, deve ser recusada) quando a
+  // sentença em que ela aparece menciona o valor só 1 vez; quando a mesma
+  // sentença menciona o valor 2+ vezes, é autocontradição, não negação —
+  // fica pra `detectaContradicao` decidir.
+  function hasStandaloneNegationBefore(valorNormalizado) {
+    const valorEscapado = valorNormalizado.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const ocorrenciasPattern = new RegExp(`\\b${valorEscapado}s?(?![\\p{L}\\p{N}])`, "gu");
+
+    return rawSentences.some((sentenca) => {
+      const ocorrencias = sentenca.match(ocorrenciasPattern) ?? [];
+
+      if (ocorrencias.length !== 1) {
+        return false;
+      }
+
+      return hasNegationBefore(sentenca, valorNormalizado);
+    });
+  }
+
   function detectaNegacaoNaoSuportada() {
     // "cliente" faltava nesta lista (achado testando o lote de perguntas ao
     // vivo): "Qual cliente abriu mais chamados, SEM CONTAR o cliente Acme?"
@@ -5169,7 +5270,11 @@ function routeTicketQuestionCore(pergunta) {
       // B1: "diferente de X"/"exceto X" às vezes vaza inteiro pro valor
       // capturado (ex.: operador: "diferente de João") — se o próprio valor
       // COMEÇA com o marcador, já é negação, sem precisar procurar antes.
-      if (LEADING_NEGATION_PATTERN.test(valorNormalizado) || hasNegationBefore(text, valorNormalizado)) {
+      if (
+        LEADING_NEGATION_PATTERN.test(valorNormalizado)
+        || hasNegationBefore(text, valorNormalizado)
+        || hasStandaloneNegationBefore(valorNormalizado)
+      ) {
         return true;
       }
     }
@@ -5461,6 +5566,25 @@ function routeTicketQuestionCore(pergunta) {
     // CLIENTE no loop — sem isso, a negação era ignorada em silêncio e só
     // o lado afirmativo era aplicado (listar_tickets com o cliente X como
     // filtro positivo, como se a frase nunca tivesse negado nada).
+    // Checagem por SENTENÇA CRUA, exigindo o valor 2+ vezes na MESMA
+    // sentença (achado testando o lote de perguntas ao vivo — Lote 14, bug
+    // T13): é a mesma armadilha já corrigida pra prioridade (Lote 13) —
+    // numa continuação de 2 turnos mesclados num texto só ("Quantos tickets
+    // são do cliente X? E quanto aos que NÃO são do cliente X?"), o 2º
+    // turno nega de propósito o valor do 1º pra pedir uma EXCLUSÃO, não uma
+    // autocontradição de verdade; mas testar o padrão de negação contra o
+    // `text` normalizado inteiro (que já perdeu a pontuação/fronteira de
+    // frase) batia leitura de contradição mesmo assim, já que o valor
+    // aparece em algum lugar antes da negação. Uma autocontradição de
+    // verdade ("Tickets do cliente X que não é do cliente X.") sempre tem
+    // as 2 menções (afirmando e negando) NA MESMA frase; a continuação tem
+    // 1 menção por turno/frase. Por isso usa `pergunta` CRUA (com
+    // pontuação, mesma técnica de `ultimaSentencaComNivelDePrioridade`),
+    // dividida em sentenças, e só conta como autocontradição quando alguma
+    // sentença isolada bate o padrão de negação E contém o valor 2 vezes
+    // ou mais. Reaproveita `rawSentences` (definida no topo de
+    // `routeTicketQuestionCore`, mesma divisão usada por
+    // `detectaNegacaoNaoSuportada`).
     for (const [valor, nomeDimensao] of [
       [operador, "operador"],
       [area, `(?:${AREA_SYNONYM_SOURCE})`],
@@ -5474,13 +5598,21 @@ function routeTicketQuestionCore(pergunta) {
       }
 
       const valorEscapado = normalizeText(valor).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      const negacaoPattern = new RegExp(
+        `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam|esteja|estejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
+        "u",
+      );
+      const ocorrenciasPattern = new RegExp(valorEscapado, "gu");
 
-      if (
-        new RegExp(
-          `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam|esteja|estejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
-          "u",
-        ).test(text)
-      ) {
+      const autocontradicao = rawSentences.some((sentenca) => {
+        if (!negacaoPattern.test(sentenca)) {
+          return false;
+        }
+
+        return (sentenca.match(ocorrenciasPattern) ?? []).length >= 2;
+      });
+
+      if (autocontradicao) {
         return true;
       }
     }
@@ -6222,6 +6354,13 @@ function routeTicketQuestionCore(pergunta) {
     // limite: 2).
     const numeroSolto = extractValidatedLooseNumber(text);
 
+    // "Liste os 101 mais antigos, ainda abertos." (achado testando o lote
+    // de perguntas ao vivo — Lote 14, bug T15) — ver comentário completo
+    // no guard irmão de `limite`, mais acima.
+    if (Number.isNaN(numeroSolto)) {
+      return createLimiteInvalidoDecision();
+    }
+
     const decision = createTicketDecision(
       "listar_abertos_mais_antigos",
       "listar_tickets_abertos_mais_antigos",
@@ -6245,6 +6384,10 @@ function routeTicketQuestionCore(pergunta) {
 
   if (isSlaVencidoIntent) {
     const numeroSolto = extractValidatedLooseNumber(text);
+
+    if (Number.isNaN(numeroSolto)) {
+      return createLimiteInvalidoDecision();
+    }
 
     const decision = createTicketDecision(
       "listar_vencidos",
@@ -6428,6 +6571,10 @@ function routeTicketQuestionCore(pergunta) {
   if (isOldestOverallIntent) {
     const numeroSolto = extractValidatedLooseNumber(text);
 
+    if (Number.isNaN(numeroSolto)) {
+      return createLimiteInvalidoDecision();
+    }
+
     const decision = createTicketDecision(
       "listar_mais_antigos",
       "listar_tickets_mais_antigos",
@@ -6457,6 +6604,10 @@ function routeTicketQuestionCore(pergunta) {
     // Ignora o número de "página N" ao procurar um número solto pra usar
     // como limite (mesmo cuidado do branch de mais antigos).
     const numeroSolto = extractValidatedLooseNumber(text);
+
+    if (Number.isNaN(numeroSolto)) {
+      return createLimiteInvalidoDecision();
+    }
 
     const decision = createTicketDecision(
       "listar_mais_recentes",

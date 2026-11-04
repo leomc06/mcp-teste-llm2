@@ -109,7 +109,17 @@ export function extractLimit(value) {
       return limit;
     }
 
-    return undefined;
+    // "Liste os 101 mais antigos." (achado testando o lote de perguntas ao
+    // vivo — Lote 14, bug T15): um número sintaticamente válido (inteiro
+    // de verdade, não decimal/negativo/zero/gigante — esses já têm guard
+    // próprio em tickets-routing.js) mas FORA do intervalo aceito (1-100)
+    // caía direto neste `return undefined`, indistinguível de "nenhum
+    // limite foi pedido" — o pedido de limite era descartado em silêncio
+    // em vez de recusado honestamente, inconsistente com o resto da
+    // família de limite inválido. `NaN` sinaliza esse caso ("limite
+    // pedido, mas inválido") de forma distinta de `undefined` ("nenhum
+    // limite na frase"), pro chamador decidir o que fazer com cada um.
+    return Number.isSafeInteger(limit) ? NaN : undefined;
   }
 
   return undefined;
