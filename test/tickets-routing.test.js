@@ -5751,3 +5751,113 @@ test("limite GIGANTE ('99999999999999999999', achado testando com dados reais do
   const inteiro = routeTicketQuestion("Liste os 2 tickets mais antigos.");
   assert.equal(inteiro.entities.limite, 2);
 });
+
+// --- Lote 14 (protocolo de QA estruturado) ---
+
+test("continuação que introduz NEGAÇÃO do valor do turno anterior (achado testando com dados reais do Lote 14, bug T13) pede esclarecimento de exclusão, em vez de contradição falsa ou filtro positivo silencioso", () => {
+  const merged =
+    "Quantos tickets são do cliente Luiz Henrique Coura? E quanto aos que NÃO são do cliente Luiz Henrique Coura?";
+  const route = routeTicketQuestion(merged);
+  assert.equal(route.intent, "esclarecimento_negacao");
+
+  // Controle: autocontradição GENUÍNA (1 frase só, valor afirmado e negado
+  // na MESMA sentença) continua caindo em contradição, não em negação.
+  const contradicao = routeTicketQuestion(
+    "Tickets do cliente Luiz Henrique Coura que não é do cliente Luiz Henrique Coura.",
+  );
+  assert.equal(contradicao.intent, "esclarecimento_contradicao");
+
+  // Controle: a mesma armadilha, generalizada pra ÁREA (não só cliente).
+  const mergedArea =
+    "Quantos tickets são da área Governança? E quanto aos que NÃO são da área Governança?";
+  const routeArea = routeTicketQuestion(mergedArea);
+  assert.equal(routeArea.intent, "esclarecimento_negacao");
+});
+
+test("qualificador de FORMATO (\"em gráfico\"/\"em tabela\"/\"graficamente\") interposto entre 'compare' e 'a carga' (achado testando com dados reais do Lote 14, bug T20) não quebra a extração de comparação de operador", () => {
+  const grafico = routeTicketQuestion(
+    "Compare em gráfico a carga do operador Fabio Gali com a do operador Cesar Augusto de Mello.",
+  );
+  assert.equal(grafico.intent, "comparar_carga_operador");
+
+  const tabela = routeTicketQuestion(
+    "Compare em tabela a carga do operador Fabio Gali com a do operador Cesar Augusto de Mello.",
+  );
+  assert.equal(tabela.intent, "comparar_carga_operador");
+
+  // Controle: qualificador de VERBOSIDADE (já existente desde o Lote 10)
+  // continua funcionando depois da correção.
+  const verbosidade = routeTicketQuestion(
+    "Compare de forma detalhada a carga do operador Fabio Gali com a do operador Cesar Augusto de Mello.",
+  );
+  assert.equal(verbosidade.intent, "comparar_carga_operador");
+});
+
+test("limite sintaticamente válido mas FORA do intervalo 1-100 (achado testando com dados reais do Lote 14, bug T15) pede esclarecimento, em vez de descartar o limite em silêncio", () => {
+  const bareNumber = routeTicketQuestion("Liste os 101 mais antigos.");
+  assert.equal(bareNumber.intent, "esclarecimento_limite_invalido");
+
+  const comPalavraTicket = routeTicketQuestion("Liste 101 tickets abertos.");
+  assert.equal(comPalavraTicket.intent, "esclarecimento_limite_invalido");
+
+  const topN = routeTicketQuestion("Top 101 operadores com mais tickets.");
+  assert.equal(topN.intent, "esclarecimento_limite_invalido");
+
+  // Controle: exatamente no limite válido (100) continua passando direto.
+  const noLimite = routeTicketQuestion("Liste os 100 mais antigos.");
+  assert.equal(noLimite.entities.limite, 100);
+});
+
+// --- Lote 15 (protocolo de QA estruturado) ---
+
+test("cláusula de cortesia/destinatário 'pra mim'/'para mim' no fim da frase (achado testando com dados reais do Lote 15, bug T04) é podada do nome capturado", () => {
+  const route = routeTicketQuestion("Analisa a situação do departamento SYSADMIN pra mim.");
+  assert.equal(route.entities.departamento, "SYSADMIN");
+
+  const paraMim = routeTicketQuestion("Quantos tickets o operador Fabio Gali tem para mim?");
+  assert.equal(paraMim.entities.operador, "Fabio Gali");
+});
+
+test("gatilho de formato com a contração 'numa'/'num' (achado testando com dados reais do Lote 15, bug T06) é podado do nome capturado, não só a forma por extenso 'em uma'", () => {
+  const route = routeTicketQuestion("Me mostra a carga do Fabio Gali numa tabela, por favor.");
+  assert.equal(route.entities.operador, "Fabio Gali");
+  assert.equal(route.formato, "tabela");
+
+  // Controle: forma por extenso "em uma" continua funcionando.
+  const porExtenso = routeTicketQuestion("Me mostra a carga do Fabio Gali em uma tabela.");
+  assert.equal(porExtenso.entities.operador, "Fabio Gali");
+  assert.equal(porExtenso.formato, "tabela");
+});
+
+test("valor de ÁREA não vaza também pro operador via o fallback genérico 'do/da X' (achado testando com dados reais do Lote 15, bug T02, mesma classe do isOperadorContidoNoCliente)", () => {
+  const route = routeTicketQuestion("Quantos chamado tá pendurado pro pessoal da Governança?");
+  assert.equal(route.entities.area, "Governança");
+  assert.equal(route.entities.operador, undefined);
+
+  // Controle: a heurística irmã (operador contido no CLIENTE) continua
+  // funcionando depois da generalização.
+  const cliente = routeTicketQuestion("Quantos tickets o cliente Daniel Guimarães do Lago tem?");
+  assert.equal(cliente.entities.cliente, "Daniel Guimarães do Lago");
+  assert.equal(cliente.entities.operador, undefined);
+});
+
+test("'análise geral'/'raio-x' (achados testando com dados reais do Lote 15, bugs T03/T15) disparam resumo_operacional, em vez de uma listagem crua", () => {
+  const analiseGeral = routeTicketQuestion(
+    "Faz uma análise geral de como estão os tickets da área Infraestrutura Científica.",
+  );
+  assert.equal(analiseGeral.intent, "resumo_operacional");
+  assert.equal(analiseGeral.entities.area, "Infraestrutura Científica");
+
+  const raioX = routeTicketQuestion(
+    "Me dá um raio-x completo de como anda o departamento Governança esse mês.",
+  );
+  assert.equal(raioX.intent, "resumo_operacional");
+  assert.equal(raioX.entities.departamento, "Governança");
+
+  // Controles: gatilhos já existentes continuam funcionando.
+  const resumoGeral = routeTicketQuestion("Resumo geral dos tickets.");
+  assert.equal(resumoGeral.intent, "resumo_operacional");
+
+  const visaoGeral = routeTicketQuestion("Me dá uma visão geral dos tickets.");
+  assert.equal(visaoGeral.intent, "resumo_operacional");
+});

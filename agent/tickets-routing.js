@@ -117,8 +117,19 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // (prioridade: "forma visual"), que não bate em nenhum valor real do
 // catálogo e ainda derruba o roteamento pra um branch errado (o valor
 // "definido" bloqueia o branch certo de resumo_por_prioridade).
+// "numa"/"num" (contração de "em um(a)", achado testando o lote de
+// perguntas ao vivo — Lote 15, bug T06): "Me mostra a carga do Fabio Gali
+// NUMA TABELA, por favor." vazava a cláusula inteira pro nome capturado
+// (operador: "Fabio Gali numa tabela") — só a forma POR EXTENSO "em (uma)"
+// era podada aqui; a mesma contração já é aceita na DETECÇÃO do formato em
+// si (`EM_UMA_OPCIONAL_SOURCE`, usada por `FORMATO_TABELA_SOURCE`/
+// `FORMATO_GRAFICO_SOURCE` mais abaixo no arquivo) mas nunca tinha sido
+// replicada aqui, na limpeza do nome. Duplicado em vez de referenciado
+// (`EM_UMA_OPCIONAL_SOURCE` é declarada bem depois deste ponto do arquivo),
+// mesmo motivo já documentado em VERBOSITY_QUALIFIER_SOURCE/
+// FORMAT_QUALIFIER_SOURCE.
 const TRAILING_FORMAT_CLAUSE_PATTERN =
-  /(?:^|\s+)em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
+  /(?:^|\s+)(?:em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?|numa?\s+)(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
 // "(?:de\\s+)?" opcional, não obrigatório (achado rodando esta própria
 // correção): o próprio "de" inicial já é podado ANTES, pelo removedor de
 // artigo/preposição líder do começo de cleanFreeText (ex.: "de forma
@@ -169,6 +180,18 @@ const TRAILING_BUT_OTHER_OPERATOR_CLAUSE_PATTERN =
 // sobrecarregado olhando o resultado), então só poda a cláusula.
 const TRAILING_TELL_ME_WHO_CLAUSE_PATTERN =
   /\s+e\s+(?:me\s+)?di(?:ga|z)\s+quem\b.*$/iu;
+
+// "pra mim"/"para mim"/"pra nós"/"para nós" (achado testando o lote de
+// perguntas ao vivo — Lote 15, bug T04): "Analisa a situação do
+// departamento SYSADMIN PRA MIM." capturava departamento: "SYSADMIN pra
+// mim" (lixo colado atrás do nome real) — "SYSADMIN" É um departamento
+// real do catálogo, mas a cláusula de cortesia/destinatário nunca foi
+// podada, então a consulta falhava com "departamento não encontrado" pra
+// um valor que existe de verdade. Mesma ideia de cortesia já tratada à
+// parte só pro "por favor" solto (OPERATOR_BY_EXCLUSION_SOURCE, que
+// bloqueia a captura ANTES de "por favor" existir no valor, não depois).
+const TRAILING_FOR_ME_CLAUSE_PATTERN =
+  /\s+(?:pra|para)\s+(?:mim|n[óo]s)\b.*$/iu;
 
 // Achado ao vivo testando continuação conversacional (agent/continuation.js):
 // mergeContinuation só concatena a pergunta anterior com a nova usando um
@@ -1559,6 +1582,7 @@ function cleanFreeText(value) {
     // solto) comeria só o "atendidos" e deixaria o "mas" órfão pra trás.
     .replace(TRAILING_HANDLED_CLAUSE_PATTERN, "")
     .replace(TRAILING_TELL_ME_WHO_CLAUSE_PATTERN, "")
+    .replace(TRAILING_FOR_ME_CLAUSE_PATTERN, "")
     .replace(TRAILING_BARE_VERB_PATTERN, "")
     .replace(TRAILING_SINGLE_DATE_CLAUSE_PATTERN, "")
     .replace(TRAILING_WORKLOAD_QUESTION_CLAUSE_PATTERN, "")
@@ -2701,6 +2725,23 @@ export function isOperadorContidoNoCliente(operador, cliente) {
   }
 
   return normalizeText(cliente).includes(normalizeText(operador));
+}
+
+// Mesma heurística do isOperadorContidoNoCliente acima, só que com ÁREA em
+// vez de cliente (achado testando o lote de perguntas ao vivo — Lote 15,
+// bug T02): "Oloco, quantos chamado tá pendurado PRO PESSOAL DA Governança?"
+// capturava area: "Governança" (certo, via extractAreaName) E operador:
+// "Governança" (fantasma), porque o mesmo fallback genérico "do/da X" de
+// extractOperatorName não sabe que "da Governança" já foi consumido pelo
+// extrator de área — resultado: filtro `area=Governança AND
+// operador=Governança`, que nunca bate com nada (Governança não é nome de
+// operador real).
+export function isOperadorContidoNoArea(operador, area) {
+  if (operador === undefined || area === undefined) {
+    return false;
+  }
+
+  return normalizeText(area).includes(normalizeText(operador));
 }
 
 // "O cliente X abre muito(s) chamado(s)/ticket(s)?" / "...tem muitos
@@ -4359,7 +4400,10 @@ function routeTicketQuestionCore(pergunta) {
   // resultado) — mesma classe do bug "Daniel Guimarães DO LAGO" já
   // documentado em isOperadorContidoNoCliente, só que não aplicado aqui
   // ainda.
-  const operador = isOperadorContidoNoCliente(operadorExtraido, cliente) ? undefined : operadorExtraido;
+  const operador =
+    isOperadorContidoNoCliente(operadorExtraido, cliente) || isOperadorContidoNoArea(operadorExtraido, area)
+      ? undefined
+      : operadorExtraido;
   const prioridade = extractPriorityIntent(pergunta);
   const limite = extractLimit(pergunta);
   const pagina = extractPage(pergunta);
@@ -5957,6 +6001,17 @@ function routeTicketQuestionCore(pergunta) {
     || /\bsinal\s+de\s+alerta\b/.test(text)
     || /\bdando\s+conta\s+da\s+demanda\b/.test(text)
     || /\btem\s+algum\s+problema\b/.test(text)
+    // "Faz uma análise geral de como estão os tickets..."/"Me dá um RAIO-X
+    // COMPLETO de como anda o departamento X." (achado testando o lote de
+    // perguntas ao vivo — Lote 15, bugs T03/T15): "análise geral" e
+    // "raio-x" (sinônimos coloquiais reais de visão geral/resumo) não
+    // estavam nessa lista — caíam em `listar` cru (com o filtro de área/
+    // departamento certo, mas a tool errada: listagem crua em vez da visão
+    // agregada que a pergunta pede de verdade). "raio\\s*x" (não "raio-x"
+    // literal): `normalizeText` já removeu o "-" antes deste ponto,
+    // virando "raio x".
+    || /\banalise\s+geral\b/.test(text)
+    || /\braio\s*x\b/.test(text)
     // "Qual a porcentagem de tickets fechados em relação ao total?"
     // (achado testando o lote de perguntas ao vivo — Lote 10, pergunta
     // 13): "porcentagem"/"percentual" era ignorado por completo, caindo

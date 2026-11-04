@@ -146,6 +146,141 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 15 — testado — ângulos: A (coloquial extremo — nunca revisitado desde o Lote 9), D (análise/resumo com fraseado coloquial colidindo com os nomes das tools — "raio-x completo"/"análise geral"/"situação do departamento" — nunca testado a fundo desde o Lote 7), E (formato aprofundado: "planilha" num resumo por operador, "numa tabela" na carga de 1 operador com cauda educada, "gráfico de pizza" num resumo por prioridade, "em gráfico" pedido numa tool SEM suporte a gráfico — fallback silencioso pra tabela, nunca confirmado com `listar_tickets_vencidos`), O (capacidade de ESCRITA disfarçada de pergunta colloquial "dá pra você fechar automaticamente..." + controle de capacidade de LEITURA "você sabe me dizer..." pra não confundir os 2), C (feriado FUTURO, nunca testado — só "último feriado" no Lote 9), F+I (regressão do Lote 14: negação introduzida no 2º turno de continuação, agora em ÁREA em vez de cliente — mesmo fix de `detectaContradicao`/`detectaNegacaoNaoSuportada` por sentença), F (regressão do Lote 14: duplicação de execução do bug T06/T19, agora em continuação de OPERADOR em vez de cliente — mesmo fix de `agent/agent-loop.js`), J (regressão do Lote 14/T20: qualificador de FORMATO "de forma visual", variante ainda não testada do `FORMAT_QUALIFIER_SOURCE` novo), H (regressão do Lote 14/T15: limite fora do intervalo 1-100 via as formas "N pior/melhor" e "até N resultados" do `extractLimit`, formas ainda não confirmadas com o fix novo — só "top N"/"liste N tickets"/"N mais antigos" foram verificadas ao vivo)
+
+Motivo da escolha: coloquial extremo (A) não é revisitado desde o Lote 9 —
+risco de robustez de vocabulário informal real. Análise/resumo com
+fraseado que colide com nome de tool (D) não é testado a fundo desde o
+Lote 7. Formato (E) ganha 3 combinações nunca tentadas (planilha em
+resumo, tabela com cauda educada, gráfico de pizza) + 1 caso "by design"
+nunca confirmado ao vivo com `listar_tickets_vencidos` especificamente
+(só outras tools já confirmaram o fallback). Capacidade de escrita
+disfarçada de coloquial (O) é um ângulo novo, com controle de capacidade
+de leitura pareado de propósito (mesmo nome de pessoa, mesma frase
+"você sabe me dizer", só a ação muda) pra não confundir os 2 lados.
+Feriado futuro (C) nunca foi tentado (só "último feriado" no Lote 9).
+O resto do lote é regressão DIRECIONADA dos 4 bugs corrigidos no Lote 14,
+cada um com uma dimensão/forma DIFERENTE da que eu mesmo já verifiquei ao
+vivo durante o fix (generalização dos fixes, não repetição do mesmo caso):
+duplicação de execução (bug 1) com continuação de OPERADOR em vez de
+CLIENTE; negação-pós-continuação (bug T13) com ÁREA em vez de CLIENTE;
+qualificador de formato (bug T20) com "de forma visual" em vez de
+"em gráfico"/"em tabela"; limite fora do intervalo (bug T15) com as formas
+"N pior/melhor" e "até N resultados", nunca exercitadas com o fix novo.
+
+- Perguntas: L15-T01 .. L15-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): área
+  "Infraestrutura Científica" (nunca usada); departamento "SYSADMIN"
+  (nunca usado em nenhum lote, id 2) e "SUPERCOMPUTAÇÃO"/"Governança"
+  (reaproveitados de propósito pra regressão); operadores "Kleber Benedito
+  Souza Ligabo" e "Rogerio Da Silva E Souza" (nunca usados); operador
+  "Fabio Gali" (reaproveitado); departamento "SECRETARIA" (0 tickets,
+  reaproveitado como controle); prioridades reais (Baixa/Media/Alta/
+  Urgente, catálogo confirmado agora)
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  T01/T02/T07/T08/T09/T12/T13/T14/T16 + 1 chamada por vez na API do OcoMon
+  pros demais, incluindo os 2 encadeamentos de 2 turnos)
+- **Correção de método, achada ao reexecutar antes de corrigir**: T08/T09
+  tinham sido testados só via `routeTicketQuestion` (geração/bateria
+  estática), mas `isWriteRequest`/`isExternalActionRequest`/
+  `isCapabilityQuestion` (`agent/write-policy.js`) só são checados em
+  `agent/server.js`, ANTES de chamar `routeTicketQuestion` — nunca dentro
+  dele. Reexecutando os 2 contra o servidor ao vivo (de verdade, não
+  estático): T08 devolve corretamente "Não envio e-mails, mensagens ou
+  notificações..." e T09 devolve corretamente "Operações de criação,
+  alteração... não são permitidas" — **nenhum dos 2 é bug**, os 2 foram
+  reclassificados pra "confirmados corretos" abaixo. Lição: pra ângulo O
+  (capacidade/ação externa), testar só com `routeTicketQuestion` não é
+  suficiente — sempre precisa do servidor ao vivo.
+- Bugs encontrados (4, por ordem de severidade):
+  1. T04 — "Analisa a situação do departamento SYSADMIN **pra mim**.":
+     `extractDepartmentName` captura a cláusula inteira até o fim da frase
+     (`departamento: "SYSADMIN pra mim"`) — "pra mim" nunca foi podado do
+     nome capturado (nenhum `TRAILING_*_CLAUSE_PATTERN` cobre esse filler),
+     e "SYSADMIN" (departamento REAL, id 2) vira "departamento não
+     encontrado" em silêncio por causa do lixo colado atrás. Resultado ao
+     vivo confirmado: `"departamento \"SYSADMIN pra mim\" não encontrado."`
+  2. T06 — "Me mostra a carga do Fabio Gali **numa tabela**, por favor.":
+     `operador: "Fabio Gali numa tabela"` — `TRAILING_FORMAT_CLAUSE_PATTERN`
+     (linha ~120) só aceita o prefixo "em" antes de
+     "gráfico/tabela/planilha" (`em\s+(?:uma?|forma\s+de|formato\s+de)\s+`),
+     nunca a contração "numa" — mesma lacuna já coberta em
+     `EM_UMA_OPCIONAL_SOURCE` (usada por `FORMATO_TABELA_SOURCE`, a
+     detecção em si) mas nunca replicada na limpeza do nome capturado.
+     "por favor" foi podado corretamente (mecanismo já existente,
+     confirmado funcionando); só "numa tabela" ficou colado. Resultado ao
+     vivo: `"operador \"Fabio Gali numa tabela\" não encontrado."`
+  3. T02 — "Oloco, quantos chamado tá pendurado **pro pessoal da
+     Governança**?": `entities: { area: "Governança", operador:
+     "Governança" }` — o mesmo valor real (área) vaza TAMBÉM pro operador,
+     via o padrão genérico catch-all `extractOperatorName`
+     (`\bd[oa]\s+(?!EXCLUSÃO)(.+)$`, linha 2364): "da Governança" bate
+     nesse fallback porque "Governança" não está na lista de exclusão
+     (que hoje só cobre palavras de domínio tipo "usuário"/"fornecedor"/
+     "prazo", não valores reais de outras dimensões já resolvidas). Ao
+     vivo isso tende a gerar um filtro `area=Governança AND
+     operador=Governança` que nunca bate com nada (mesma classe do bug já
+     corrigido pra operador×cliente via `isOperadorContidoNoCliente`,
+     nunca estendido pra operador×área). "pendurado" (slang pra
+     pendente/aguardando) também não foi reconhecido como sinônimo de
+     situação — perdido em silêncio, mas sem quebrar o filtro de área.
+  4. T03/T15 — "análise geral"/"raio-x completo" não disparam
+     `isDashboardIntent`: "Faz uma análise geral de como estão os tickets
+     da área Infraestrutura Científica." e "Me dá um raio-x completo de
+     como anda o departamento Governança esse mês." caem em `listar`
+     (listagem crua com o filtro certo) em vez de
+     `resumo_operacional_tickets` (visão agregada, que é o que a pergunta
+     pede de verdade). Vocabulário de `isDashboardIntent` (linha ~5950) é
+     deliberadamente conservador e já foi estendido várias vezes
+     (resumo operacional/geral/executivo, visão geral, situação geral,
+     porcentagem+total, etc.) — "análise geral" e "raio-x" nunca entraram
+     nessa lista. Severidade menor que os 3 acima: o filtro (área/
+     departamento/data) continua certo, só a TOOL escolhida é sub-óptima
+     (lista em vez de resumir).
+- Confirmados corretos/por design: T01 (termo "paradas" cai honestamente
+  em `esclarecimento_termo_ambiguo` sobre "parado" — ambiguidade real de
+  vocabulário, não um bug de roteamento), T05 (planilha num resumo por
+  operador → `resumo_por_operador` + `formato: tabela`, certo), T07
+  (gráfico de pizza não quebra a extração do pedido de gráfico pro resumo
+  por prioridade), T08 (ação externa de notificação por e-mail — testado
+  de verdade contra o servidor ao vivo depois da correção de método acima
+  — recusa honesta via `isExternalActionRequest`), T09 (capacidade de
+  escrita coloquial "dá pra você fechar..." — mesma correção de método,
+  recusa honesta via `isWriteRequest`), T10 (controle de capacidade de
+  LEITURA "você sabe me dizer" resolve normal, departamento SECRETARIA com
+  0 tickets, não confunde com pergunta de capacidade), T11 (regressão Lote 14/T20:
+  qualificador "de forma visual" funciona igual a "em gráfico"/"em
+  tabela"), T12/T13 (regressão Lote 14/T15: limite fora do intervalo
+  1-100 via as formas "N pior/melhor" e "até N resultados" — ambas
+  disparam `esclarecimento_limite_invalido`, fix generaliza certo), T14
+  (feriado futuro cai num `esclarecimento_periodo_nao_suportado` DEDICADO
+  e já existente — recusa honesta, não é bug), T16 ("em gráfico" numa tool
+  sem suporte, `listar_tickets_vencidos`, cai em `formato: tabela` por
+  design, sem erro), T17/T18 (regressão Lote 14/bug 1: continuação de
+  OPERADOR, `quantidadeChamadas: 1`, sem duplicação), T19/T20 (regressão
+  Lote 14/T13: negação-pós-continuação em ÁREA cai em
+  `esclarecimento_negacao` honesto, não em contradição nem filtro
+  positivo silencioso).
+- Correções aplicadas: todos os 4 corrigidos e verificados (775 testes
+  passando + 1 falha PRÉ-EXISTENTE sem relação, mesma do Lote 14; ao vivo
+  na API do OcoMon e smoke test) — T08/T09 reclassificados como falsos
+  positivos de método, não bugs reais (ver nota acima); `extractDepartmentName`/
+  `extractOperatorName` ganharam `TRAILING_FOR_ME_CLAUSE_PATTERN`
+  ("pra mim"/"para mim"/"pra nós"/"para nós"); `TRAILING_FORMAT_CLAUSE_PATTERN`
+  ganhou a contração "numa?" (só aceitava "em" por extenso); novo
+  `isOperadorContidoNoArea` (mesma heurística do `isOperadorContidoNoCliente`,
+  generalizada pra área) descarta o operador fantasma quando o mesmo valor
+  já foi capturado como área; `isDashboardIntent` ganhou "análise geral" e
+  "raio-x" no vocabulário. **Gap achado nesta correção**: o Lote 14 nunca
+  teve testes de regressão adicionados (confirmado no commit `7471576` —
+  só código, sem `test/*.js`) — adicionados agora,
+  junto dos novos, em `test/tickets-routing.test.js` (seções "Lote 14" e
+  "Lote 15") e 1 teste novo em `test/agent-tool-arguments.test.js` pro fix
+  de duplicação de execução (`agent/agent-loop.js`).
+- Regressão pendente: nenhuma — os 4 fixes do Lote 14 seguraram firme em
+  todas as dimensões/formas novas testadas (ver "confirmados" acima); os
+  4 bugs encontrados são todos NOVOS, sem relação com os fixes do Lote 14.
+
 ### Lote 14 — testado — ângulos: K (colisão de NOME entre área e departamento — "Gestão"/"GESTÃO" — nunca testada; colisão por substring entre 2 departamentos reais — "COIDS"/"REDES COIDS"), M (integridade cruzada com departamento "Chefia", nunca usado antes; comparação departamento x departamento entre COIDS e REDES COIDS), F (continuação repetindo palavra-chave de CLIENTE com nomes novos nunca usados; continuação introduzindo NEGAÇÃO no 2º turno, nunca tentada), B (negação de lista "nem X nem Y" — nunca testada pra OPERADOR nem STATUS), J (autocomparação de DEPARTAMENTO e de PRIORIDADE, nunca tentadas; formato gráfico pedido numa comparação, nunca confirmado), I (autonegação no SINGULAR "não é" — confirmada só pra departamento/área/cliente no Lote 13 — agora operador/status), H (limite exatamente no limite válido, 100, e 1 acima, 101, bare number — nunca testado o boundary exato), N (departamento real com 0 tickets, distinto de "não encontrado" — nunca usado "SECRETARIA"), G (typo + espaço triplo simultâneos em departamento novo "SUPERCOMPUTAÇÃO"), L (revisita do bug cosmético "mensagem de ambiguidade duplicada 2x", notado no Lote 13/T19, agora com par de CLIENTE novo)
 
 Motivo da escolha: nunca testamos uma colisão de nome entre área e

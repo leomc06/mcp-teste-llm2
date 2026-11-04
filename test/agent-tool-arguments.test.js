@@ -196,6 +196,92 @@ test("força a tool da rota quando a LLM não cria tool call", async () => {
   );
 });
 
+// --- Lote 14 (protocolo de QA estruturado) ---
+
+test("quando a rota já decidiu a tool, 2 tool_calls IDÊNTICAS na MESMA resposta do modelo (achado testando com dados reais do Lote 14, bugs T06/T19) executam a tool só 1 vez, sem duplicar a resposta final", async () => {
+  let chamadasMcp = 0;
+  let chatCallCount = 0;
+
+  const mcp = {
+    async callTool() {
+      chamadasMcp += 1;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              filtros: { status: "Encerrada" },
+              total: 1,
+              tickets: [
+                {
+                  number: 10,
+                  opening_date: "2026-01-01 09:00:00",
+                  priority: "Alta",
+                  area: "WEB",
+                  issue: "",
+                  description: "Teste.",
+                  operator: "Fulano",
+                  status: "Encerrada",
+                  is_frozen: false,
+                },
+              ],
+            }),
+          },
+        ],
+      };
+    },
+  };
+
+  const ollama = {
+    async chat() {
+      chatCallCount += 1;
+
+      // 1ª resposta: o modelo local pede a MESMA tool 2x de uma vez só
+      // (não-determinístico, confirmado ao vivo com log de depuração —
+      // nunca em 2 rodadas separadas, sempre na mesma resposta).
+      if (chatCallCount === 1) {
+        const duplicatedCall = {
+          function: { name: "listar_tickets", arguments: { status: "Encerrada" } },
+        };
+
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            tool_calls: [duplicatedCall, duplicatedCall],
+          },
+        };
+      }
+
+      return {
+        message: {
+          role: "assistant",
+          content: "Encontrei 1 ticket encerrado.",
+          tool_calls: [],
+        },
+      };
+    },
+  };
+
+  const result = await runAgent({
+    pergunta:
+      "Quantos tickets estão com status Encerrada? E quanto aos que NÃO são do cliente Acme?",
+    mcp,
+    ollama,
+    ollamaTools: [ollamaTools[0]],
+    routeToolArguments: {
+      name: "listar_tickets",
+      args: { status: "Encerrada" },
+    },
+    maxToolCalls: 4,
+  });
+
+  assert.equal(chamadasMcp, 1);
+  assert.equal(result.quantidadeChamadas, 1);
+  assert.deepEqual(result.toolsUtilizadas, ["listar_tickets"]);
+});
+
 test("verbosidade 'detalhado' chega até o texto final da resposta (via runAgent -> formatToolResults)", async () => {
   const ollama = {
     async chat() {
