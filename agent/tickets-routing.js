@@ -1196,7 +1196,10 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // perguntas do dia a dia se refere a um mês sem querer dizer um ano
   // específico.
   const mesNomeadoMatch = text.match(
-    new RegExp(`\\b(?:no\\s+mes\\s+de|em)\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`, "iu"),
+    new RegExp(
+      `\\b(?:no\\s+mes\\s+de|em|(?<!antes\\s)(?<!depois\\s)de)\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`,
+      "iu",
+    ),
   );
 
   if (mesNomeadoMatch) {

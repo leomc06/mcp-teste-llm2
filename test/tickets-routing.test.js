@@ -961,6 +961,28 @@ test("nome de mês solto ('mês de agosto'/'em agosto', sem dia nem ano) assume 
   });
 });
 
+// "tickets de outubro" (achado ao vivo, fora de qualquer lote, conversando
+// direto com o usuário): só "em <mês>"/"no mês de <mês>" eram reconhecidos
+// — o conector "de" sozinho (bem mais comum: "tickets DE outubro") não
+// batia em nada, caindo sem filtro de data nenhum e despejando o catálogo
+// inteiro. "antes de"/"depois de <mês>" continuam sem suporte (semântica
+// diferente de "em"), não devem ser capturados por engano.
+test("'de <mês>' sozinho (sem 'em'/'no mês de') também é reconhecido como mês solto", () => {
+  const agora = new Date(2026, 10, 5); // 2026-11-05
+
+  assert.deepEqual(extractRelativeDateRange("tickets de outubro", agora), {
+    dataInicio: "2026-10-01",
+    dataFim: "2026-10-31",
+  });
+  assert.deepEqual(extractRelativeDateRange("quantos tickets de novembro", agora), {
+    dataInicio: "2026-11-01",
+    dataFim: "2026-11-30",
+  });
+
+  assert.equal(extractRelativeDateRange("tickets antes de outubro", agora), undefined);
+  assert.equal(extractRelativeDateRange("tickets depois de outubro", agora), undefined);
+});
+
 test("'no mês de <nome>' não vaza pro nome do filtro capturado (área/departamento)", () => {
   const porArea = routeTicketQuestion("Quantos tickets urgentes foram abertos no mês de agosto na área WEB?");
   assert.equal(porArea.entities.area, "WEB");
