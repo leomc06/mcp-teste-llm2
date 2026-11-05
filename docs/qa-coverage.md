@@ -146,6 +146,185 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 17 — corrigido — ângulos: E (formato fora do vocabulário — "CSV", nunca testado — só tabela/gráfico/excel têm suporte confirmado), B (negação cruzando 2 DIMENSÕES diferentes na mesma frase — cliente E área juntos — só "nem X nem Y" DENTRO da mesma dimensão foi testado até agora), J (fraseado de comparação "qual `<dimensão>` tem mais", nunca tentado — só "quem tem mais: X ou Y" e "X tem mais que Y" têm suporte confirmado), N (intervalo de data INVERTIDO — fim antes do início — nunca testado; página 0, classe de erro distinta de "página muito além do total"), G (typo em nome de CLIENTE real sem acento — grafia já testada bastante pra operador/departamento, pouco pra cliente; nome de cliente real com PONTO FINAL no próprio catálogo, dado "sujo" de origem nunca notado antes), K (colisão REAL operador×cliente com par novo "João Pedro Guimarães", confirmado agora nos 2 catálogos — distinto do par Fabio Gali usado incidentalmente no Lote 16), I (autocontradição com status de grafia MISTA "Aguardando Aprovação", único Title Case do catálogo — todo o resto é CAIXA ALTA), C (mês relativo "penúltimo mês", sinônimo não documentado de "mês retrasado"; quinzena com qualificador explícito "primeira/segunda", nunca confirmado qual intervalo exato resulta), H (sinônimo de limite "primeiros N", nunca testado), M (integridade cruzada: soma abertos+fechados da área "Redes e Segurança" reconferindo o 315 do Lote 16; limite padrão 20 do resumo_por_cliente, documentado no inventário mas nunca confirmado), O (capacidade sobre ação no próprio ticket com cláusula de motivo — "reabrir... por engano"; forma NEGADA da pergunta de capacidade — "você NÃO consegue..." — gap aberto desde o Lote 11, nunca exercitado), A (contração coloquial "cê" por "você", nunca testada — só "tá" foi exercitado à exaustão), F (regressão do fix do Lote 16/bug T17 — `isBareAnaliseReferencialRequest` — com fraseado mais curto "detalha mais isso", testando deliberadamente a FRONTEIRA do fix: pronome bare "isso" não deveria contar, só "nisso"/"disso"/"sobre isso"/"a respeito disso")
+
+Motivo da escolha: nenhum destes ângulos específicos (CSV, negação cross-
+dimensão, "qual X tem mais", data invertida, página 0, typo de cliente,
+ponto final no nome do catálogo, colisão João Pedro Guimarães, status
+Title Case, "penúltimo mês", quinzena com qualificador, "primeiros N",
+soma abertos+fechados, limite padrão de resumo_por_cliente, "reabrir por
+engano", capacidade negada, "cê", fronteira do fix de continuação do Lote
+16) aparece em nenhum lote anterior — todos são gaps novos, a maioria
+achada relendo o código + o catálogo real (puxado agora via API:
+áreas/departamentos/prioridades/usuários/status/clientes) em busca de
+frases que um usuário real digitaria mas que ainda não foram tentadas.
+Nenhuma pergunta de comunicação externa (ligar/e-mail/mensagem/notificar)
+nem com emoji, conforme o ajuste de protocolo pedido pelo usuário depois
+dos Lotes 15/16.
+
+- Perguntas: L17-T01 .. L17-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): áreas "Suporte"/
+  "Governança"/"WEB"/"Redes e Segurança"; departamento "Infraestrutura
+  Científica"; operadores "Rodrigo Fernandes"/"Diego Mota"/"João Pedro
+  Guimarães" (colisão real com cliente de mesmo nome, confirmada agora);
+  clientes "Luiz Henrique Coura"/"Hortência Cristina da Silva"/"Priscila
+  da Silva Tavares." (ponto final literal no catálogo); status
+  "Aguardando Aprovação" (único Title Case dos 16 status reais)
+- Resultado: **executado por mim** (`routeTicketQuestion`/`isCapabilityQuestion`
+  em lote pra T01-T04/T08-T10/T12-T14/T16-route/T19/T20 (lógica pura, sem
+  servidor) + 1 chamada por vez na API ao vivo pros que dependem de
+  catálogo/ambiguidade/contagem real: T05/T06/T07/T11 (2 consultas +
+  2 incidentais)/T15 (2 turnos)/T16 (comportamento real da API)/T17/T18/T20)
+- Bugs encontrados (9 do roteiro + 2 incidentais, por ordem de severidade):
+  1. T09 — "Quantos tickets foram abertos no penúltimo mês?": termo
+     descartado em silêncio, `entities: {}` — cai em `listar_tickets` SEM
+     FILTRO NENHUM (despeja o catálogo inteiro, pior que uma data errada
+     com aviso). Mesma classe do bug de "antevéspera" do Lote 16/T18, só
+     que pra MÊS em vez de dia.
+  2. T19 — "Quantos tickets foram abertos na primeira quinzena de
+     novembro?": "quinzena" sem qualificador já não tem suporte nenhum
+     (cai sem filtro de data); com o qualificador "primeira" na frente, o
+     sistema confunde com um pedido de RANKING ("primeiro" = top-1) e
+     devolve `listar_mais_antigos` com `limite: 1` — intenção
+     completamente errada, nem data nem contagem fazem sentido.
+  3. T08 — "Tickets com status Aguardando Aprovação que não têm status
+     Aguardando Aprovação.": `detectaContradicao` só reconhece os verbos
+     "é/são/seja/sejam/esteja/estejam" na cláusula de negação — "têm"/
+     "tem" (bem mais comum coloquialmente com status, "que não TEM
+     status X") não está na lista, então a autocontradição nunca é
+     detectada, aplicando só o lado afirmativo em silêncio. Com um status
+     MULTI-PALAVRA (confirmado com "Aguardando Feedback do Usuário"), o
+     problema piora: a cláusula negada inteira vaza pro `operador` como
+     texto-lixo (`"que não têm status Aguardando Feedback do Usuário"`).
+  4. T03 — "Qual área tem mais tickets: Suporte ou Governança?":
+     `extractAreaComparisonNames` só reconhece "quem tem mais tickets: a
+     área X ou a área Y?" e "a área X tem mais tickets que a área Y" —
+     a variante "qual área tem mais tickets: X ou Y?" (super natural em
+     português) não bate em nenhum padrão, caindo no `resumo_por_area`
+     genérico SEM filtro nenhum (perde as 2 áreas citadas por completo,
+     devolve o ranking de todas as áreas em vez da comparação pedida).
+  5. T01 — "Me manda a carga do operador Rodrigo Fernandes em CSV, por
+     favor.": "CSV" não está no vocabulário de formato (só tabela/
+     gráfico/excel) — em vez de ser ignorado de forma neutra, a cláusula
+     inteira "em CSV" vaza pro nome capturado (`operador: "Rodrigo
+     Fernandes em CSV"`), quebrando a resolução do operador real.
+  6. T13 — "Cê sabe quantos chamado tá aberto pro Diego Mota?": isolado o
+     problema NÃO é "cê" (controle confirmou: `isCapabilityQuestion`
+     continua `false`, sem falso positivo) — é a preposição "pro"/"para
+     o" antes do nome no padrão "`<adjetivo de estado>` tem/tá
+     `<nome>`"/"tá aberto pro `<nome>`": só a contração "do" é
+     reconhecida, "pro" não é, perdendo o operador inteiro (confirmado
+     isolando: "...pro Diego Mota" → `entities: {}`; "...do Diego Mota" →
+     `operador: "Diego Mota"`).
+  7. T14 — "Me dá um panorama geral de como anda o departamento
+     Infraestrutura Científica.": "panorama" não está no vocabulário de
+     `isDashboardIntent` (só "visão geral"/"resumo geral"/"análise
+     geral"/"raio-x") — cai numa listagem crua (`listar`) com o filtro de
+     departamento certo, mas a tool sub-ótima, mesma classe do Lote 15/T03.
+  8. T07 — "E como cliente, quantos tickets o João Pedro Guimarães tem?":
+     o qualificador "como cliente" só é reconhecido na forma standalone
+     SEM nome (marcador de continuação do Lote 9) — com o nome explícito
+     na MESMA frase, é ignorado por completo, e a pergunta resolve igual
+     à T06 (como operador), nunca trocando pro lado cliente. Gap
+     documentado como aberto desde o Lote 11 ("nunca confirmamos se 'E
+     como cliente `<nome>`?' troca a dimensão de verdade"), agora
+     confirmado como bug de verdade.
+  9. T16 — "Mostra a página 0 dos tickets abertos.": página 0 não é
+     capturada como `pagina` (nem válida nem inválida) e o sistema cai
+     silenciosamente pra página 1, sem nenhum aviso — inconsistente com
+     "página -1" (que já dispara `esclarecimento_pagina_invalida`
+     corretamente, confirmado em controle).
+  10. **(incidental, achado tentando montar a query de integridade do
+      T11)** — "Quantos tickets com status Cancelado a área Redes e
+      Segurança tem?": `status` captura a frase inteira incluindo a
+      cláusula de área ("Cancelado a área Redes e Segurança" como um
+      valor só), em vez de parar em "Cancelado".
+  11. **(incidental, mesma origem)** — "Quantos tickets da área Redes e
+      Segurança têm status Cancelado?": na ordem inversa (área antes,
+      status depois), é a `area` que captura a frase inteira incluindo a
+      cláusula de status ("Redes e Segurança têm status Cancelado").
+      Os 2 incidentais (10/11) parecem ser a mesma classe de causa-raiz
+      do bug 3 (T08): falta um padrão de cauda pra "têm/tem status X" ser
+      podado de um valor já capturado de outra dimensão, quando as 2
+      aparecem combinadas na mesma frase.
+- Confirmados corretos/por design: T02 (negação cruzando cliente+área cai
+  em `esclarecimento_negacao` honesto, cobrindo as 2 exclusões), T04
+  (intervalo de data invertido JÁ tem esclarecimento dedicado,
+  `esclarecimento_periodo_invertido` — não sabia que já existia, achado
+  bom), T05 (cliente sem acento "Hortencia" resolve certo — filtro de
+  cliente não é por catálogo fechado, é busca textual, tolerante),
+  T06 (colisão João Pedro Guimarães resolve como operador, mesmo padrão
+  do Fabio Gali/Lote 16), T10 ("primeiros 5" funciona — resolve como
+  `listar_mais_antigos` com `limite: 5`, interpretação razoável de
+  "primeiros" = cronologicamente antes, não um bug), T11 (integridade
+  CONFIRMADA: 4 abertos + 295 fechados + 16 cancelados = 315, o total já
+  validado no Lote 16 — CANCELADO fica de fora dos 2 grupos por design,
+  mesmo achado do Lote 9, "M — integridade Cancelado vs fechados"), T12
+  (capacidade sobre "reabrir por engano" funciona igual às formas mais
+  curtas já testadas), T15 (fronteira do fix do Lote 16/T17 confirmada:
+  "detalha mais isso" com pronome bare, sem "n"/"disso", corretamente NÃO
+  é tratado como continuação — cai num "não entendi" honesto, como
+  esperado), T17 (cliente "Priscila da Silva Tavares" sem o ponto final
+  do catálogo resolve certo, mesma tolerância do T05), T18 (resumo por
+  cliente confirmado com exatamente 20 linhas, limite padrão documentado
+  no inventário), T20 (capacidade NEGADA "você não consegue..." continua
+  caindo na recusa de capacidade padrão, gap do Lote 11 finalmente
+  fechado — comportamento já correto, não precisou de fix).
+- Correções aplicadas (todos os 9+2, verificados ao vivo contra o servidor
+  reiniciado + `npm test`, 790/791 passando — a 1 falha restante é o "date
+  bomb" pré-existente de "esse mês"/mês corrente, sem relação com este
+  lote):
+  1. "penúltimo mês" (T09) adicionado como sinônimo de "mês retrasado" em
+     `extractRelativeDateRange`.
+  2. "primeira/segunda quinzena de `<mês>`" (T19) ganhou suporte dedicado
+     em `extractRelativeDateRange` (1–15/16–fim do mês), e a exclusão de
+     `isBareOldestOverallIntent` (que tratava "primeira" sozinho como
+     pedido de ranking `limite:1`) passou a excluir também "quinzena",
+     igual já fazia pra "trimestre".
+  3. `detectaContradicao` (T08) ganhou os verbos "tem/têm/tenha/tenham" no
+     vocabulário de negação (só tinha "é/são/esteja/estejam/seja/sejam"),
+     cobrindo a forma coloquial "que não TEM status X".
+  4. Novo padrão em `extractAreaComparisonNames` (T03) pra "qual `<área>`
+     tem mais tickets: X ou Y?" (área mencionada só 1 vez, não repetida
+     antes de cada nome).
+  5. "CSV" (T01) entrou no vocabulário de formato (`FORMATO_TABELA_SOURCE`)
+     e na poda de cauda do nome capturado (`TRAILING_FORMAT_CLAUSE_PATTERN`)
+     — achado de bolso: "excel" tinha a mesma lacuna na poda (só estava no
+     vocabulário de detecção), corrigido junto.
+  6. "pro"/"para o `<nome>`" (T13) ganhou 2 padrões novos em
+     `extractOperatorName`, espelhando o fallback genérico já existente
+     pra "do/da `<nome>`".
+  7. "panorama geral" (T14) adicionado ao vocabulário de `isDashboardIntent`.
+  8. "E como cliente, `<nome>`..." com o nome explícito (T07): novo guard
+     `temQualificadorComoCliente`, que realoca o nome capturado como
+     operador pro lado cliente quando o qualificador "como cliente"
+     aparece na mesma frase e nenhum cliente já foi resolvido por outro
+     caminho — aplicado tanto na resolução genérica de entidades quanto no
+     branch dedicado de `analisar_carga_operador`/`analisar_atividade_cliente`
+     (que chama o extrator de novo, direto sobre o texto cru).
+  9. "página 0" (T16): nova constante `ZERO_PAGE_PATTERN`, mesma família de
+     `NEGATIVE_PAGE_PATTERN`, disparando `esclarecimento_pagina_invalida`
+     em vez de cair em silêncio pra página 1.
+  10/11. **(incidentais, achados tentando montar a query de integridade do
+      T11)** — `TRAILING_FILTER_CLAUSE_PATTERN` reestruturado em 3
+      alternativas de "lead-in" (antes exigia um conector com/sem/e/que
+      tem/do-da/no-na sempre presente): agora também aceita (a) "tem/têm"
+      sozinho direto antes do substantivo de dimensão, sem conector no
+      meio ("área X TÊM status Y"), e (b) artigo bare "a"/"o" sozinho,
+      sem "tem" nem conector ("status X A ÁREA Y"). Tolerância a acento
+      adicionada em "tem"/"têm" (antes só a forma sem acento), já que o
+      sujeito plural ("as pessoas têm", "a área têm") é comum.
+  Testes de regressão novos em `test/tickets-routing.test.js` (10 testes,
+  todos os 9 bugs do roteiro + o incidental, cobrindo as 2 ordens de
+  menção pro caso 10/11).
+- Regressão pendente: nenhuma constatada (T15/T20 confirmam que os fixes
+  do Lote 16 e o gap antigo do Lote 11 seguram firme; a reestruturação de
+  `TRAILING_FILTER_CLAUSE_PATTERN`, usada em quase todo extrator de nome
+  do arquivo, foi reconferida contra um conjunto de casos antigos — "a
+  galera de Redes e Segurança", "cliente Daniel Guimarães do Lago", "área
+  Suporte sem operador", "área de TI e no departamento de Suporte" — e
+  contra a suíte completa, sem quebrar nenhum).
+
 ### Lote 16 — corrigido — ângulos: K (colisão de nome área×departamento "Redes e Segurança" — 3º par real com o mesmo nome, nunca testado — só "Gestão"/"GESTÃO" no Lote 14), G (grafia extrema em nome real com acento+espaço especiais — "Darío Gerardo Fantini" — sem acento/minúsculo vs. espaço triplo+acento correto, nunca usado), B (negação de status MULTI-PALAVRA — "Aguardando feedback do usuário"/"Encaminhado para operador" — só status de 1 palavra testados em negação até agora), L (frase cortada no meio de uma palavra + emoji, nunca combinados nesta rodada), M (integridade cruzada: departamento "Redes e Segurança" no resumo por departamento, distinto da área do mesmo nome), N (paginação muito além do total + autocomparação de status), regressão DIRECIONADA do Lote 15 (F: "pra mim" com CLIENTE em vez de departamento/operador; E: contração MASCULINA "num gráfico", só "numa tabela" foi testada; K: `isOperadorContidoNoArea` com "Redes e Segurança" e frase coloquial nova "a galera de"; D+F: "análise"/"raio-x" numa CONTINUAÇÃO, não testado ainda — "Faz uma análise mais aprofundada nisso." depois de um resumo), C (termo de data obscuro "antevéspera"), J (comparação por velocidade de resolução — métrica não suportada, sinônimo novo "resolve mais rápido"), O (ação externa via "ligar" SEM a palavra "ligação"/canal explícito — só o verbo, que já É o próprio canal)
 
 Motivo da escolha: "Redes e Segurança" é o 3º par real área×departamento

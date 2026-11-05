@@ -20,8 +20,31 @@ const ESTAR_SOURCE = "est(?:[áa]|[ãa]o)";
 // "a " + substantivo; "no"/"na" (contração de "em"+"o"/"a") depois de "e"
 // não batia em nenhuma das 2 formas (nem "e" sozinho, que exige "o "/"a "
 // logo depois, nem "n[oa]" sozinho, que não prevê um "e" antes).
+// Reestruturado em 3 alternativas pro "lead-in" (achado testando o lote de
+// perguntas ao vivo — Lote 17, bugs incidentais achados montando a query de
+// integridade do T11): a versão anterior exigia um CONECTOR (com/sem/e/que
+// tem/do/da/no/na) sempre presente antes do substantivo de dimensão — 2
+// casos reais não tinham conector nenhum e vazavam a cláusula inteira:
+// (1) "status Cancelado A ÁREA Redes e Segurança" — só o ARTIGO bare ("a"),
+// sem "do/da" nem "com"/"sem" antes; (2) "Redes e Segurança TÊM status
+// Cancelado" — "tem/têm" direto seguido do substantivo, sem conector nenhum
+// no meio (diferente de "que TEM status X", que já era aceito). As 3
+// alternativas agora: (a) tem/possui/está + conector opcional + artigo
+// opcional; (b) conector (sem tem/possui/está) + artigo opcional; (c) artigo
+// BARE sozinho, sem tem nem conector.
+// "t[êe]m" (não só "tem"), aqui e no conector "que tem": a forma PLURAL com
+// acento ("têm", achado testando o lote de perguntas ao vivo — Lote 17,
+// mesmo bug incidental acima) é tão comum quanto a forma sem acento (usada
+// com sujeito singular) — sem essa tolerância, "Redes e Segurança TÊM
+// status Cancelado" não batia, porque o "ê" não é letra ASCII que o literal
+// "tem" cobre (case-insensitive não ajuda aqui: acento é outra letra, não
+// outra caixa).
 const TRAILING_FILTER_CLAUSE_PATTERN = new RegExp(
-  `\\s+(?:(?:tem|possui|${ESTAR_SOURCE})\\s+)?(?:com|sem|e|que\\s+(?:tem|${ESTAR_SOURCE})|(?:e\\s+)?d[oa]|(?:e\\s+)?n[oa])\\s+(?:o\\s+|a\\s+)?(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$`,
+  "\\s+(?:"
+    + `(?:t[êe]m|possui|${ESTAR_SOURCE})\\s+(?:(?:com|sem|e|que\\s+(?:t[êe]m|${ESTAR_SOURCE})|(?:e\\s+)?d[oa]|(?:e\\s+)?n[oa])\\s+)?(?:o\\s+|a\\s+)?`
+    + `|(?:com|sem|e|que\\s+(?:t[êe]m|${ESTAR_SOURCE})|(?:e\\s+)?d[oa]|(?:e\\s+)?n[oa])\\s+(?:o\\s+|a\\s+)?`
+    + "|(?:o|a)\\s+"
+    + ")(?:status|prioridade|[áa]rea|departamento|operador|respons[áa]vel|atendente|cliente|limite)\\b.*$",
   "iu",
 );
 
@@ -128,8 +151,16 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // (`EM_UMA_OPCIONAL_SOURCE` é declarada bem depois deste ponto do arquivo),
 // mesmo motivo já documentado em VERBOSITY_QUALIFIER_SOURCE/
 // FORMAT_QUALIFIER_SOURCE.
+// "em CSV" (achado testando o lote de perguntas ao vivo — Lote 17, bug
+// T01): CSV entrou no vocabulário de formato (FORMATO_TABELA_SOURCE) como
+// sinônimo bare de tabela, mas faltava aqui também — sem isso, "em CSV"
+// continuava vazando pro nome capturado mesmo depois de reconhecido como
+// formato (ex.: operador: "Rodrigo Fernandes em CSV"). Achado o mesmo
+// problema pré-existente com "excel" (já no vocabulário de DETECÇÃO de
+// formato há mais tempo, mas nunca tinha sido podado AQUI, na limpeza do
+// nome) — corrigido junto, mesma causa-raiz.
 const TRAILING_FORMAT_CLAUSE_PATTERN =
-  /(?:^|\s+)(?:em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?|numa?\s+)(?:gr[áa]ficos?|tabelas?|planilhas?)\b.*$/iu;
+  /(?:^|\s+)(?:em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?|numa?\s+)(?:gr[áa]ficos?|tabelas?|planilhas?|csv|excel)\b.*$/iu;
 // "(?:de\\s+)?" opcional, não obrigatório (achado rodando esta própria
 // correção): o próprio "de" inicial já é podado ANTES, pelo removedor de
 // artigo/preposição líder do começo de cleanFreeText (ex.: "de forma
@@ -795,7 +826,12 @@ export function extractRelativeDateRange(text, agora = new Date()) {
   // propósito (regex mais específico primeiro — "retrasado" não contém
   // "passado", então a ordem não causaria colisão de match, mas mantém a
   // leitura em sequência lógica: passado, depois retrasado).
-  if (/\bmes\s+retrasado\b/.test(text)) {
+  // "penúltimo mês" (achado testando o lote de perguntas ao vivo — Lote
+  // 17, bug T09): sinônimo comum de "mês retrasado" (o mês ANTES do mês
+  // passado), nunca documentado no vocabulário — sem ele, a frase inteira
+  // caía em `listar_tickets` SEM NENHUM FILTRO (pior que uma data errada
+  // com aviso, despejava o catálogo inteiro em silêncio).
+  if (/\bmes\s+retrasado\b/.test(text) || /\bpenultimo\s+mes\b/.test(text)) {
     const primeiroDiaMesAtual = new Date(agora.getFullYear(), agora.getMonth(), 1);
     const primeiroDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 2, 1);
     const ultimoDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 1, 0);
@@ -1017,6 +1053,32 @@ export function extractRelativeDateRange(text, agora = new Date()) {
       dataInicio: formatIsoDate(new Date(anoTrimestrePassado, primeiroMes, 1)),
       dataFim: formatIsoDate(new Date(anoTrimestrePassado, primeiroMes + 3, 0)),
     };
+  }
+
+  // "primeira quinzena de novembro"/"segunda quinzena de dezembro" (achado
+  // testando o lote de perguntas ao vivo — Lote 17, bug T19): quinzena
+  // (1-15 ou 16-fim do mês) de um mês NOMEADO, com qualificador explícito
+  // de qual metade — sem suporte nenhum, e pior: "primeira" sozinho era
+  // capturado em outro lugar (isBareOldestOverallIntent, mais abaixo) como
+  // pedido de ranking "limite:1", perdendo a data por completo e virando
+  // um intent errado (listar_mais_antigos em vez de um período). Checado
+  // ANTES de "última quinzena" (mais específico: tem mês nomeado).
+  const quinzenaMesNomeadoMatch = text.match(
+    new RegExp(`\\b(primeira|segunda)\\s+quinzena\\s+de\\s+(${NORMALIZED_MONTH_NAME_SOURCE})\\b`, "iu"),
+  );
+
+  if (quinzenaMesNomeadoMatch) {
+    const metade = quinzenaMesNomeadoMatch[1].toLowerCase();
+    const mes = MONTH_NUMBERS[quinzenaMesNomeadoMatch[2].toLowerCase()];
+    const ano = agora.getFullYear();
+
+    if (metade === "primeira") {
+      return { dataInicio: `${ano}-${mes}-01`, dataFim: `${ano}-${mes}-15` };
+    }
+
+    const ultimoDiaMes = String(new Date(Number(ano), Number(mes), 0).getDate()).padStart(2, "0");
+
+    return { dataInicio: `${ano}-${mes}-16`, dataFim: `${ano}-${mes}-${ultimoDiaMes}` };
   }
 
   // "última quinzena" — mesmo gap de vocabulário acima, mas sem
@@ -1911,6 +1973,15 @@ const HUGE_LIMIT_PATTERN = new RegExp(
 // Checado contra o texto CRU, mesmo motivo dos patterns irmãos acima.
 const NEGATIVE_PAGE_PATTERN = /\bp[áa]gina\s+-\s*\d+\b/iu;
 
+// "página 0" (achado testando o lote de perguntas ao vivo — Lote 17, bug
+// T16): `extractPage` já exige `pagina > 0`, mas só DESCARTA o valor em
+// silêncio (volta pra página 1 por padrão) em vez de avisar — inconsistente
+// com "página -1" acima, que já pede esclarecimento corretamente. "0" é um
+// índice sintaticamente válido (não negativo), mas semanticamente inválido
+// pra paginação (não existe página 0), mesma classe do limite "0" já
+// tratado (ZERO_LIMIT_PATTERN).
+const ZERO_PAGE_PATTERN = /\bp[áa]gina\s+0+\b/iu;
+
 function detectaReferenciaDeTicketInvalida(pergunta) {
   if (NEGATIVE_TICKET_NUMBER_PATTERN.test(pergunta)) {
     return true;
@@ -2420,6 +2491,16 @@ export function extractOperatorName(value) {
   return extractByPatterns(value, [
     new RegExp(`\\b(?:por|pel[ao])\\s+(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`, "iu"),
     new RegExp(`\\bd[oa]\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    // "pro"/"para o" (contração informal de "para o", achado testando o
+    // lote de perguntas ao vivo — Lote 17, bug T13): "Quantos chamado tá
+    // aberto PRO Diego Mota?" não batia em nenhum padrão — só "do X"
+    // (contração de "de o") tinha um fallback genérico (linha acima); "pro"
+    // é tão comum quanto "do" na fala cotidiana ("abrir chamado pro
+    // fulano"), mas sem nenhum padrão equivalente a pergunta inteira
+    // perdia o nome do operador por completo. Mesma lista de exclusão já
+    // usada pro fallback "do/da".
+    new RegExp(`\\bpro\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
+    new RegExp(`\\bpara\\s+o\\s+(?!${OPERATOR_DO_DA_EXCLUSION_SOURCE})(.+)$`, "iu"),
     // "Quais os tickets de Vanessa Ventura?" (achado testando o lote de
     // perguntas ao vivo): "de" sem contração com artigo ("do"/"da") é tão
     // comum quanto elas na fala natural, mas só o padrão "do/da X" acima
@@ -3772,6 +3853,19 @@ export function extractAreaComparisonNames(value) {
         + `(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(.+)$`,
       "iu",
     ),
+    // "Qual área tem mais tickets: Suporte ou Governança?" (achado testando
+    // o lote de perguntas ao vivo — Lote 17, bug T03): variante com "qual"
+    // em vez de "quem", e a palavra de área aparece só UMA vez (logo depois
+    // de "qual"), não repetida antes de cada nome — diferente da forma
+    // "quem tem mais tickets: a área X ou a área Y?" já suportada acima.
+    // Sem este padrão, a frase caía no `resumo_por_area` genérico sem
+    // filtro nenhum, perdendo as 2 áreas citadas por completo.
+    new RegExp(
+      `\\bqual\\s+(?:o\\s+|a\\s+)?${AREA_SYNONYM_SOURCE}\\s+tem\\s+mais\\s+`
+        + `(?:tickets?|chamados?|atendimentos?)\\s*(?:${COMPARISON_NOUN_QUALIFIER_SOURCE})?\\s*:?\\s*`
+        + `(.+?)\\s+ou\\s+(.+)$`,
+      "iu",
+    ),
     // "Quantos tickets a área X fechou COMPARADO COM a área Y?" (achado
     // testando o lote de perguntas ao vivo): forma comparativa afirmativa,
     // sem a palavra "compare" — sem este padrão, a 2ª área citada era
@@ -4133,7 +4227,17 @@ const FORMATO_TABELA_SOURCE =
   // Palavra bare "excel" é segura o bastante pra não precisar de uma
   // palavra de ligação antes (baixo risco de colisão com outro sentido
   // dentro do domínio de tickets).
-  + "|\\bexcel\\b";
+  + "|\\bexcel\\b"
+  // "em CSV" (achado testando o lote de perguntas ao vivo — Lote 17, bug
+  // T01): mesma ideia do "excel" bare acima — CSV é outro formato tabular
+  // comum, sem suporte de verdade (sem tool que gere CSV de fato), mas
+  // sem reconhecê-lo aqui a cláusula inteira ("em CSV") vazava pro nome
+  // capturado em qualquer extrator de entidade (ex.: operador: "Rodrigo
+  // Fernandes em CSV"), quebrando a resolução do nome real. Tratado como
+  // sinônimo de tabela (fallback mais próximo) pelo mesmo motivo do
+  // "em gráfico" pedido numa tool sem suporte: cai pra tabela em silêncio,
+  // by design.
+  + "|\\bcsv\\b";
 // "faça" chega aqui já normalizado (normalizeText despe a cedilha via NFD),
 // virando "faca" — por isso o padrão usa fa[cz], não fa[çz], senão "faça um
 // gráfico" (bem comum) nunca bateria, só a forma "faz".
@@ -4403,7 +4507,7 @@ function routeTicketQuestionCore(pergunta) {
     );
   }
 
-  if (NEGATIVE_PAGE_PATTERN.test(pergunta)) {
+  if (NEGATIVE_PAGE_PATTERN.test(pergunta) || ZERO_PAGE_PATTERN.test(pergunta)) {
     return createClarificationDecision(
       "esclarecimento_pagina_invalida",
       "Esse número de página não parece válido (precisa ser pelo menos 1). Pode pedir uma página positiva?"
@@ -4495,7 +4599,22 @@ function routeTicketQuestionCore(pergunta) {
   const area = extractAreaName(pergunta);
   const departamento = extractDepartmentName(pergunta);
   const operadorExtraido = extractOperatorName(pergunta);
-  const cliente = extractClientName(pergunta);
+  const clienteExtraido = extractClientName(pergunta);
+  // "E como cliente, quantos tickets o João Pedro Guimarães tem?" (achado
+  // testando o lote de perguntas ao vivo — Lote 17, bug T07): o
+  // qualificador "como cliente" só era reconhecido na forma standalone SEM
+  // nome (marcador de continuação do Lote 9, `agent/continuation.js`) —
+  // com o nome explícito NA MESMA frase (colisão real operador×cliente,
+  // pedindo o lado cliente de propósito), o qualificador era ignorado por
+  // completo e a pergunta resolvia sempre como operador (resultado da
+  // extração "crua", sem olhar pro pedido explícito de desambiguação).
+  // Só reinterpreta quando NENHUM cliente já foi capturado por outro
+  // caminho (não sobrescreve um cliente genuinamente diferente) e existe
+  // um nome de operador pra realocar.
+  const temQualificadorComoCliente = /\bcomo\s+clientes?\b/u.test(normalizeText(pergunta));
+  const deveRealocarParaCliente =
+    temQualificadorComoCliente && clienteExtraido === undefined && operadorExtraido !== undefined;
+  const cliente = deveRealocarParaCliente ? operadorExtraido : clienteExtraido;
   // Todo branch abaixo que monta `entities` deve usar ESTA variável (não
   // chamar extractOperatorName(pergunta) de novo) — achado testando o lote
   // de perguntas ao vivo (Lote extra 1, pergunta 21): vários branches
@@ -4506,7 +4625,9 @@ function routeTicketQuestionCore(pergunta) {
   // documentado em isOperadorContidoNoCliente, só que não aplicado aqui
   // ainda.
   const operador =
-    isOperadorContidoNoCliente(operadorExtraido, cliente) || isOperadorContidoNoArea(operadorExtraido, area)
+    deveRealocarParaCliente
+    || isOperadorContidoNoCliente(operadorExtraido, cliente)
+    || isOperadorContidoNoArea(operadorExtraido, area)
       ? undefined
       : operadorExtraido;
   const prioridade = extractPriorityIntent(pergunta);
@@ -5758,9 +5879,14 @@ function routeTicketQuestionCore(pergunta) {
         continue;
       }
 
+      // "que não TÊM status X" (achado testando o lote de perguntas ao
+      // vivo — Lote 17, bug T08): forma coloquial com "ter" (tem/têm/
+      // tenha/tenham), tão comum quanto "estejam com status X" pra status
+      // — sem esses verbos no vocabulário, a autocontradição nunca era
+      // detectada (aplicava só o lado afirmativo em silêncio).
       const valorEscapado = normalizeText(valor).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
       const negacaoPattern = new RegExp(
-        `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam|esteja|estejam)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
+        `\\bque\\s+(?:tambem\\s+)?nao\\s+(?:e|sao|seja|sejam|esteja|estejam|tem|tenha|tenham)\\s+(?:d[oa]\\s+)?(?:${nomeDimensao}\\s+)?${valorEscapado}\\b`,
         "u",
       );
       const ocorrenciasPattern = new RegExp(valorEscapado, "gu");
@@ -6129,6 +6255,11 @@ function routeTicketQuestionCore(pergunta) {
     // virando "raio x".
     || /\banalise\s+geral\b/.test(text)
     || /\braio\s*x\b/.test(text)
+    // "panorama geral" (achado testando o lote de perguntas ao vivo —
+    // Lote 17, bug T14): mesmo sinônimo coloquial de visão geral/resumo
+    // que "análise geral"/"raio-x" acima, nunca testado — sem ele, caía
+    // em `listar` cru (mesma classe de bug do Lote 15/T03).
+    || /\bpanorama\s+geral\b/.test(text)
     // "Qual a porcentagem de tickets fechados em relação ao total?"
     // (achado testando o lote de perguntas ao vivo — Lote 10, pergunta
     // 13): "porcentagem"/"percentual" era ignorado por completo, caindo
@@ -6598,7 +6729,22 @@ function routeTicketQuestionCore(pergunta) {
   const mencionaDimensaoNaoSuportadaNaAnalise =
     departamento !== undefined || area !== undefined;
 
-  const operadorCarga = extractOperatorWorkloadName(pergunta);
+  // "E como cliente, quantos tickets o João Pedro Guimarães tem?" (achado
+  // testando o lote de perguntas ao vivo — Lote 17, bug T07): sem este
+  // guard, `extractOperatorWorkloadName` resolve o nome de carga ANTES de
+  // qualquer checagem do qualificador "como cliente" (computado lá em
+  // cima, perto da resolução de `operador`/`cliente`) — essa checagem,
+  // feita só na resolução genérica, nunca era consultada aqui porque este
+  // branch chama o extrator de novo, direto sobre `pergunta` crua. Com o
+  // qualificador presente (e nenhum cliente já capturado por outro
+  // caminho), a pessoa pedida é o lado CLIENTE da colisão, não operador —
+  // suprime esta interpretação (guarda o nome bruto pra realocar pro
+  // branch irmão de atividade de cliente, mais abaixo — `extractClientActivityName`
+  // não entende a estrutura "quantos tickets X tem", só "cliente X tem
+  // muitos tickets"/"X abriu", então o nome precisa ser repassado, não
+  // recapturado).
+  const operadorCargaBruto = extractOperatorWorkloadName(pergunta);
+  const operadorCarga = temQualificadorComoCliente ? undefined : operadorCargaBruto;
 
   if (operadorCarga !== undefined) {
     if (mencionaDimensaoNaoSuportadaNaAnalise) {
@@ -6620,7 +6766,12 @@ function routeTicketQuestionCore(pergunta) {
 
   // "O cliente X abre muito(s) chamado(s)?" (Img 7) — mesma ideia de
   // operadorCarga acima, só que pra atividade de UM cliente só.
-  const clienteAtividade = extractClientActivityName(pergunta);
+  // `?? (temQualificadorComoCliente ? operadorCargaBruto : undefined)`
+  // (achado testando o lote de perguntas ao vivo — Lote 17, bug T07):
+  // realoca o nome bruto suprimido do branch de operador acima, quando o
+  // qualificador "como cliente" pediu essa reinterpretação.
+  const clienteAtividade =
+    extractClientActivityName(pergunta) ?? (temQualificadorComoCliente ? operadorCargaBruto : undefined);
 
   if (clienteAtividade !== undefined) {
     if (mencionaDimensaoNaoSuportadaNaAnalise) {
@@ -6670,8 +6821,13 @@ function routeTicketQuestionCore(pergunta) {
   // exclusão, a pergunta inteira era sequestrada pra isOldestOverallIntent
   // (limite:1, TODOS os status, ignorando o filtro "abertos"), perdendo o
   // recorte de trimestre e o filtro de situação por completo.
+  // "primeira quinzena de novembro" (achado testando o lote de perguntas
+  // ao vivo — Lote 17, bug T19): mesma exclusão de "primeiro trimestre"
+  // abaixo, extractRelativeDateRange já sabe calcular essa data agora —
+  // "primeira" aqui qualifica a QUINZENA (período), não pede "o ticket
+  // mais antigo".
   const isBareOldestOverallIntent =
-    !isOldestOverallWithCountIntent && /\bprimeir[oa]\b(?!\s+trimestres?\b)/.test(text);
+    !isOldestOverallWithCountIntent && /\bprimeir[oa]\b(?!\s+(?:trimestres?|quinzenas?)\b)/.test(text);
 
   // "mais antigo" SEM "aberto" (ver mentionsMaisAntigo/isOldestOpenIntent
   // acima) também entra aqui — é o mesmo pedido de "TODOS os status" que o

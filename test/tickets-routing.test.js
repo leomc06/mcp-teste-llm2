@@ -3811,10 +3811,22 @@ test("'desse'/'deste'/'nessa'/'nesta'/'nesse'/'neste' (contrações de 'esse/est
     "Tickets abertos neste mês.",
   ];
 
+  // Calculado a partir de "agora" (não fixo) — achado rodando a suíte num
+  // mês diferente do mês em que o teste foi escrito originalmente ("esse
+  // mês" resolvia certo pro mês ATUAL de verdade, mas a asserção comparava
+  // contra outubro/2026 fixo, uma data que só coincidia com "esse mês"
+  // durante aquele mês específico — "date bomb", destinada a falhar assim
+  // que o mês virasse).
+  const hoje = new Date();
+  const primeiroDiaMesAtual = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  const ultimoDiaMesAtual = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0);
+  const isoInicioMes = primeiroDiaMesAtual.toISOString().slice(0, 10);
+  const isoFimMes = ultimoDiaMesAtual.toISOString().slice(0, 10);
+
   for (const pergunta of casosMes) {
     const route = routeTicketQuestion(pergunta);
-    assert.equal(route.entities.dataInicio, "2026-10-01", pergunta);
-    assert.equal(route.entities.dataFim, "2026-10-31", pergunta);
+    assert.equal(route.entities.dataInicio, isoInicioMes, pergunta);
+    assert.equal(route.entities.dataFim, isoFimMes, pergunta);
   }
 
   const casosSemana = [
@@ -3829,9 +3841,11 @@ test("'desse'/'deste'/'nessa'/'nesta'/'nesse'/'neste' (contrações de 'esse/est
     assert.notEqual(route.entities.dataInicio, undefined, pergunta);
   }
 
+  // Mesmo cuidado do mês acima, pro ano (date bomb anual em vez de mensal).
+  const anoAtual = hoje.getFullYear();
   const ano = routeTicketQuestion("Tickets abertos desse ano.");
-  assert.equal(ano.entities.dataInicio, "2026-01-01");
-  assert.equal(ano.entities.dataFim, "2026-12-31");
+  assert.equal(ano.entities.dataInicio, `${anoAtual}-01-01`);
+  assert.equal(ano.entities.dataFim, `${anoAtual}-12-31`);
 
   // Poda de cláusula continua funcionando com as formas contraídas
   const comNome = routeTicketQuestion("Tickets do departamento Governança nessa semana.");
@@ -3914,7 +3928,9 @@ test("'operador <cláusula de data>' sem nome nenhum não vira operador fantasma
   const route = routeTicketQuestion("Resumo por operador nesse ano, ordenado do maior pro menor, top 5.");
   assert.equal(route.entities.operador, undefined);
   assert.equal(route.entities.limite, 5);
-  assert.equal(route.entities.dataInicio, "2026-01-01");
+  // Date bomb anual corrigido (era "2026-01-01" fixo): calcula o 1º de
+  // janeiro do ano ATUAL, não um ano fixo.
+  assert.equal(route.entities.dataInicio, `${new Date().getFullYear()}-01-01`);
 });
 
 test("comparação de 3 operadores/clientes via 'e com a do Z' (sem repetir a palavra operador/cliente) também pede esclarecimento", () => {
@@ -5920,4 +5936,142 @@ test("'galera' (achado testando com dados reais do Lote 16, bug T15) é reconhec
   const equipe = routeTicketQuestion("Quantos chamado é da equipe de Redes e Segurança?");
   assert.equal(equipe.entities.area, "Redes e Segurança");
   assert.equal(equipe.entities.operador, undefined);
+});
+
+// --- Lote 17 (protocolo de QA estruturado) ---
+
+test("'penúltimo mês' (achado testando com dados reais do Lote 17, bug T09) é reconhecido como sinônimo de 'mês retrasado', não descartado em silêncio", () => {
+  const hoje = new Date();
+  const primeiroDiaMesAtual = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+  const primeiroDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 2, 1);
+  const ultimoDiaMesRetrasado = new Date(primeiroDiaMesAtual.getFullYear(), primeiroDiaMesAtual.getMonth() - 1, 0);
+  const isoInicio = primeiroDiaMesRetrasado.toISOString().slice(0, 10);
+  const isoFim = ultimoDiaMesRetrasado.toISOString().slice(0, 10);
+
+  const penultimo = routeTicketQuestion("Quantos tickets foram abertos no penúltimo mês?");
+  assert.equal(penultimo.entities.dataInicio, isoInicio);
+  assert.equal(penultimo.entities.dataFim, isoFim);
+
+  // Controle: "mês retrasado" (já suportado) continua resolvendo pro mesmo
+  // intervalo.
+  const retrasado = routeTicketQuestion("Quantos tickets foram abertos no mês retrasado?");
+  assert.equal(retrasado.entities.dataInicio, isoInicio);
+  assert.equal(retrasado.entities.dataFim, isoFim);
+});
+
+test("'primeira'/'segunda quinzena de <mês>' (achado testando com dados reais do Lote 17, bug T19) resolve o intervalo certo, sem confundir 'primeira' com pedido de ranking (limite:1)", () => {
+  const primeira = routeTicketQuestion("Quantos tickets foram abertos na primeira quinzena de novembro?");
+  assert.equal(primeira.entities.dataInicio, `${new Date().getFullYear()}-11-01`);
+  assert.equal(primeira.entities.dataFim, `${new Date().getFullYear()}-11-15`);
+  assert.equal(primeira.entities.limite, undefined);
+  assert.equal(primeira.intent, "listar");
+
+  const segunda = routeTicketQuestion("Quantos tickets foram abertos na segunda quinzena de novembro?");
+  assert.equal(segunda.entities.dataInicio, `${new Date().getFullYear()}-11-16`);
+  assert.equal(segunda.entities.dataFim, `${new Date().getFullYear()}-11-30`);
+
+  // Controles: "primeiro ticket"/"5 primeiros tickets" continuam pedindo
+  // ranking normalmente (não ficaram cegos pra essa forma).
+  const primeiroTicket = routeTicketQuestion("Qual foi o primeiro ticket registrado?");
+  assert.equal(primeiroTicket.intent, "listar_mais_antigos");
+  assert.equal(primeiroTicket.entities.limite, 1);
+
+  const cincoPrimeiros = routeTicketQuestion("Liste os 5 primeiros tickets.");
+  assert.equal(cincoPrimeiros.entities.limite, 5);
+});
+
+test("autocontradição de STATUS com o verbo 'têm'/'tem' (achado testando com dados reais do Lote 17, bug T08) é detectada, mesmo com status multi-palavra", () => {
+  const simples = routeTicketQuestion(
+    "Tickets com status Aguardando Aprovação que não têm status Aguardando Aprovação.",
+  );
+  assert.equal(simples.intent, "esclarecimento_contradicao");
+
+  const multiPalavra = routeTicketQuestion(
+    "Tickets com status Aguardando Feedback do Usuário que não têm status Aguardando Feedback do Usuário.",
+  );
+  assert.equal(multiPalavra.intent, "esclarecimento_contradicao");
+  // Sem vazamento de texto-lixo pro operador.
+  assert.equal(multiPalavra.entities.operador, undefined);
+});
+
+test("'Qual <dimensão> tem mais tickets: X ou Y?' (achado testando com dados reais do Lote 17, bug T03) é reconhecida como comparação de área, não cai no resumo genérico sem filtro", () => {
+  const route = routeTicketQuestion("Qual área tem mais tickets: Suporte ou Governança?");
+  assert.equal(route.intent, "comparar_tickets_area");
+  assert.deepEqual(
+    route.compare.map((c) => c.args.area),
+    ["Suporte", "Governança"],
+  );
+
+  // Controle: a forma "quem tem mais" já suportada continua funcionando.
+  const quemTemMais = routeTicketQuestion("Quem tem mais tickets: a área de Suporte ou a área WEB?");
+  assert.equal(quemTemMais.intent, "comparar_tickets_area");
+});
+
+test("'em CSV' (achado testando com dados reais do Lote 17, bug T01) não vaza pro nome capturado, mesmo problema pré-existente com 'em excel' corrigido junto", () => {
+  const csv = routeTicketQuestion("Me manda a carga do operador Rodrigo Fernandes em CSV, por favor.");
+  assert.equal(csv.entities.operador, "Rodrigo Fernandes");
+  assert.equal(csv.formato, "tabela");
+
+  const excel = routeTicketQuestion("Me manda a carga do operador Rodrigo Fernandes em excel, por favor.");
+  assert.equal(excel.entities.operador, "Rodrigo Fernandes");
+});
+
+test("'pro'/'para o' (contração informal, achado testando com dados reais do Lote 17, bug T13) é reconhecida no padrão 'tá aberto pro <nome>', não só 'do <nome>'", () => {
+  const pro = routeTicketQuestion("Quantos chamado tá aberto pro Diego Mota?");
+  assert.equal(pro.entities.operador, "Diego Mota");
+
+  const paraO = routeTicketQuestion("Quantos chamado tá aberto para o Diego Mota?");
+  assert.equal(paraO.entities.operador, "Diego Mota");
+
+  // Controle: a forma "do" já suportada continua funcionando.
+  const doForma = routeTicketQuestion("Quantos chamado tá aberto do Diego Mota?");
+  assert.equal(doForma.entities.operador, "Diego Mota");
+});
+
+test("'panorama geral' (achado testando com dados reais do Lote 17, bug T14) dispara resumo_operacional, em vez de uma listagem crua", () => {
+  const route = routeTicketQuestion("Me dá um panorama geral de como anda o departamento Infraestrutura Científica.");
+  assert.equal(route.intent, "resumo_operacional");
+  assert.equal(route.entities.departamento, "Infraestrutura Científica");
+});
+
+test("'E como cliente, <nome>...' com o nome EXPLÍCITO na mesma frase (achado testando com dados reais do Lote 17, bug T07) troca a dimensão pro lado cliente da colisão", () => {
+  const comoCliente = routeTicketQuestion("E como cliente, quantos tickets o João Pedro Guimarães tem?");
+  assert.equal(comoCliente.intent, "analisar_atividade_cliente");
+  assert.equal(comoCliente.entities.cliente, "João Pedro Guimarães");
+  assert.equal(comoCliente.entities.operador, undefined);
+
+  // Controles: sem o qualificador (ou com "como operador"), continua
+  // resolvendo como operador, igual ao padrão já estabelecido no Lote 16.
+  const semQualificador = routeTicketQuestion("Quantos tickets o João Pedro Guimarães tem?");
+  assert.equal(semQualificador.intent, "analisar_carga_operador");
+  assert.equal(semQualificador.entities.operador, "João Pedro Guimarães");
+
+  const comoOperador = routeTicketQuestion("E como operador, quantos tickets o João Pedro Guimarães tem?");
+  assert.equal(comoOperador.intent, "analisar_carga_operador");
+});
+
+test("'página 0' (achado testando com dados reais do Lote 17, bug T16) pede esclarecimento, em vez de cair em silêncio pra página 1", () => {
+  const zero = routeTicketQuestion("Mostra a página 0 dos tickets abertos.");
+  assert.equal(zero.intent, "esclarecimento_pagina_invalida");
+
+  // Controles: página válida e página negativa (já tratada) continuam OK.
+  const valida = routeTicketQuestion("Mostra a página 2 dos tickets abertos.");
+  assert.equal(valida.entities.pagina, 2);
+
+  const negativa = routeTicketQuestion("Mostra a página -1 dos tickets abertos.");
+  assert.equal(negativa.intent, "esclarecimento_pagina_invalida");
+});
+
+test("cláusula de OUTRA dimensão sem conector (achado testando com dados reais do Lote 17, bug incidental do T11) é podada do valor capturado, nas 2 ordens", () => {
+  const statusDepoisArea = routeTicketQuestion(
+    "Quantos tickets com status Cancelado a área Redes e Segurança tem?",
+  );
+  assert.equal(statusDepoisArea.entities.status, "Cancelado");
+  assert.equal(statusDepoisArea.entities.area, "Redes e Segurança");
+
+  const areaDepoisStatus = routeTicketQuestion(
+    "Quantos tickets da área Redes e Segurança têm status Cancelado?",
+  );
+  assert.equal(areaDepoisStatus.entities.status, "Cancelado");
+  assert.equal(areaDepoisStatus.entities.area, "Redes e Segurança");
 });
