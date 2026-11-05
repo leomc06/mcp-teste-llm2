@@ -678,6 +678,26 @@ export function extractRelativeDateRange(text, agora = new Date()) {
     return { dataInicio: hoje, dataFim: hoje };
   }
 
+  // "anteontem"/"ante ontem" (junto ou separado)/"antevéspera" bare
+  // (achado testando o lote de perguntas ao vivo — Lote 16, bug T18):
+  // nenhuma forma de "2 dias antes de hoje" tinha suporte algum —
+  // confirmado com "antevéspera de ontem" resolvendo como literalmente
+  // "ontem" (1+ dia errado, "antevéspera"/"ante" descartado em silêncio).
+  // A forma SEPARADA "ante ontem" (com espaço) contém a palavra "ontem"
+  // como substring de verdade, com fronteira de palavra válida nos 2
+  // lados — checado ANTES do "ontem" bare abaixo, de propósito, mesmo
+  // motivo do "depois de amanhã" acima (senão "ante ontem" perderia o
+  // "ante" em silêncio, resolvendo como se fosse só "ontem"). "\\s*"
+  // (zero ou mais espaços) cobre as 2 grafias, junta e separada, com 1 só
+  // pattern.
+  if (/\bante\s*ontem\b|\bantev[ée]spera\b/.test(text)) {
+    const anteontem = new Date(agora);
+    anteontem.setDate(anteontem.getDate() - 2);
+    const isoAnteontem = formatIsoDate(anteontem);
+
+    return { dataInicio: isoAnteontem, dataFim: isoAnteontem };
+  }
+
   if (/\bontem\b/.test(text)) {
     const ontem = new Date(agora);
     ontem.setDate(ontem.getDate() - 1);
@@ -2134,8 +2154,22 @@ export function extractAreaName(value) {
 
   return extractByPatterns(value, [
     // "o pessoal da/do X" é um jeito comum de gestor se referir a uma área
-    // sem usar a palavra "área" — mesmo raciocínio acima.
-    new RegExp(`\\bpessoal\\s+d[ao]\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
+    // sem usar a palavra "área" — mesmo raciocínio acima. "galera"/
+    // "equipe"/"time"/"turma" (achado testando o lote de perguntas ao
+    // vivo — Lote 16, bug T15): sinônimos coloquiais igualmente comuns no
+    // português do Brasil pra se referir ao mesmo grupo, mas só "pessoal"
+    // estava nessa lista — "Quantos chamado é da GALERA DE Redes e
+    // Segurança?" não reconhecia a área nenhuma, e a cláusula inteira
+    // ("galera de Redes e Segurança") vazava pro fallback genérico de
+    // operador (ver extractOperatorName, mais abaixo), virando um
+    // "operador não encontrado" enganoso em vez de resolver a área certa.
+    // "d(?:[ao]|e)" em vez de "d[ao]" (achado rodando esta própria
+    // correção): "galera DE Redes e Segurança" usa "de" SEM contração de
+    // artigo (comum antes de nome próprio composto, diferente de "equipe
+    // DO Suporte"/"time DA Governança", que contraem) — só "do/da" batia,
+    // então "galera de X" continuava caindo no mesmo fallback de operador
+    // mesmo com "galera" já na lista.
+    new RegExp(`\\b(?:pessoal|galera|equipe|time|turma)\\s+d(?:[ao]|e)\\s+(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`, "iu"),
   ]);
 }
 
@@ -2470,6 +2504,39 @@ export function extractOperatorName(value) {
         + `\\s+tem\\s+(?:o\\s+|a\\s+)?(${NOME_PROPRIO_SOURCE})\\b`,
       "u",
     ),
+    // "Quantos tickets tem Redes e Segurança?"/"Quantos tickets tem Fabio
+    // Gali?" (achado testando o lote de perguntas ao vivo — Lote 16, bug
+    // 1): forma BARE do sujeito invertido — sem o adjetivo de estado
+    // "abertos/fechados" exigido pelo padrão irmão acima, e sem "de/da"
+    // (que já tem fallback próprio, mais abaixo no arquivo). Sem este
+    // padrão, "tem" aparecia sozinho entre "tickets" e o nome sem bater em
+    // NENHUM padrão desta função — nem o direto (exige o nome ANTES de
+    // "tem") nem o invertido irmão (exige o adjetivo de estado ANTES de
+    // "tem") — o nome inteiro era perdido, mesmo sendo um operador real
+    // sem ambiguidade nenhuma ("Fabio Gali"), e a pergunta caía no
+    // fallback de listagem SEM FILTRO NENHUM, despejando o catálogo
+    // inteiro. Mesma cautela do padrão irmão (exige MAIÚSCULA logo depois
+    // de "tem", pra não arriscar capturar "tem na fila"/"tem aberto"), mas
+    // com captura GULOSA até o fim da frase (não travada em
+    // NOME_PROPRIO_SOURCE, token por token) — "Redes E Segurança" tem um
+    // conector minúsculo ("e", fora de NOME_PROPRIO_CONECTOR_SOURCE, que só
+    // aceita de/da/do/dos/das) que quebraria a captura token-a-token no
+    // meio do nome.
+    // SEM flag "i" de propósito (achado rodando esta própria correção):
+    // `\p{Lu}` (letra MAIÚSCULA) deixa de ser estrito com "i" no JS — vira
+    // "qualquer letra, maiúscula OU minúscula" (confirmado:
+    // `/\p{Lu}/iu.test("n")` dá `true`!), o que destruiria a âncora de
+    // nome-próprio (bateria em "tem na fila"/"tem aberto" também). Como
+    // "Quantos" só vem maiúsculo quando é a 1ª palavra da frase (início de
+    // pergunta, sempre), "[Qq]" manual resolve os 2 casos sem precisar da
+    // flag "i" pro resto do padrão (tickets/tem/exclusões já aparecem
+    // minúsculos no meio da frase).
+    new RegExp(
+      `\\b[Qq]uantos\\s+(?:tickets?|chamados?|atendimentos?)\\s+tem\\s+`
+        + `(?!(?:a\\s+|o\\s+|cada\\s+)?(?:${OPERATOR_WORKLOAD_EXCLUSION_SOURCE}))`
+        + `(?:o\\s+|a\\s+)?(\\p{Lu}.+?)\\s*[?!.]*$`,
+      "u",
+    ),
     // "os tickets QUE o Fábio Gali tratou/atendeu/fechou" (achado testando o
     // lote de perguntas ao vivo): mesma ideia de "que X abriu" já aceita
     // por extractClientName, só do lado do operador — quem ABRE um ticket é
@@ -2736,12 +2803,27 @@ export function isOperadorContidoNoCliente(operador, cliente) {
 // extrator de área — resultado: filtro `area=Governança AND
 // operador=Governança`, que nunca bate com nada (Governança não é nome de
 // operador real).
+// Checagem BIDIRECIONAL (achado testando o lote de perguntas ao vivo — Lote
+// 16, bug T14): "Quantos chamado é da galera de Redes e Segurança?" captura
+// area: "Redes e Segurança" (certo) E operador: "galera de Redes e
+// Segurança" (fantasma, via o mesmo fallback genérico "do/da X" de
+// extractOperatorName, que inclui o prefixo coloquial "galera de" que o
+// extrator de área já consumiu) — aqui é a ÁREA que está contida dentro do
+// OPERADOR capturado (superset), o oposto do caso T02 original (onde o
+// operador é que está contido na área). Só checar `area.includes(operador)`
+// não pega esse sentido inverso; precisa checar os 2 lados.
 export function isOperadorContidoNoArea(operador, area) {
   if (operador === undefined || area === undefined) {
     return false;
   }
 
-  return normalizeText(area).includes(normalizeText(operador));
+  const operadorNormalizado = normalizeText(operador);
+  const areaNormalizada = normalizeText(area);
+
+  return (
+    areaNormalizada.includes(operadorNormalizado)
+    || operadorNormalizado.includes(areaNormalizada)
+  );
 }
 
 // "O cliente X abre muito(s) chamado(s)/ticket(s)?" / "...tem muitos
@@ -4109,6 +4191,29 @@ export function isBareFormatoRequest(pergunta) {
   return detectFormatoPreferido(text) !== undefined && !TICKET_DOMAIN_VOCABULARY_PATTERN.test(text);
 }
 
+// "Faz uma análise mais aprofundada nisso." depois de um resumo (achado
+// testando o lote de perguntas ao vivo — Lote 16, bug T17): mesmo problema
+// do isBareFormatoRequest acima, só que pedindo mais PROFUNDIDADE de
+// análise em vez de um formato diferente — "análise"/"aprofundada" não
+// estão no vocabulário de domínio (TICKET_DOMAIN_VOCABULARY_PATTERN, que é
+// todo sobre substantivos de ticket/área/operador/etc.), e o pronome
+// referencial "nisso"/"disso" (aponta pro turno anterior, não introduz
+// nenhum filtro novo) também não. Sem este sinal, a frase isolada falhava
+// o portão de domínio e caía honestamente em "não entendi", perdendo a
+// chance de herdar o filtro do resumo anterior.
+const ANALYSIS_DEEPENING_WORD_SOURCE =
+  "(?:analise|analises|aprofund\\w*|detalh\\w*|explor\\w*|investig\\w*)";
+const REFERENTIAL_PRONOUN_SOURCE = "(?:nisso|disso|sobre\\s+isso|a\\s+respeito\\s+disso)";
+
+export function isBareAnaliseReferencialRequest(pergunta) {
+  const text = normalizeText(pergunta);
+  return (
+    new RegExp(`\\b${ANALYSIS_DEEPENING_WORD_SOURCE}\\b`, "u").test(text)
+    && new RegExp(`\\b${REFERENTIAL_PRONOUN_SOURCE}\\b`, "u").test(text)
+    && !TICKET_DOMAIN_VOCABULARY_PATTERN.test(text)
+  );
+}
+
 // Nível de detalhe pedido explicitamente — só tem efeito nos branches de
 // LISTAGEM (cada um chama formatTicket por ticket; "detalhado" mostra o
 // comentário de abertura, "resumido" garante que não mostra, mesmo nas
@@ -4944,7 +5049,19 @@ function routeTicketQuestionCore(pergunta) {
     // "Qual o ticket com mais comentários?" (achado testando o lote de
     // perguntas ao vivo): mesma família de atributo inexistente — não há
     // contagem de comentários exposta em nenhuma tool.
-    || /\b(?:mais|menos)\s+coment[áa]rios\b/.test(text);
+    || /\b(?:mais|menos)\s+coment[áa]rios\b/.test(text)
+    // "Quem resolve mais rápido: o operador X ou o operador Y?" (achado
+    // testando o lote de perguntas ao vivo — Lote 16, bug T19): VELOCIDADE
+    // de resolução é outro atributo inexistente (mesma família de
+    // "tempo médio"/"custo" acima, só que comparando 2 pessoas em vez de
+    // uma métrica solta) — sem este guard, a frase inteira caía no
+    // fallback genérico, que não reconhece "resolve mais rápido" como
+    // comparação nenhuma e perde o 1º operador por completo, aplicando só
+    // o 2º como filtro POSITIVO (como se a pergunta fosse sobre ele
+    // sozinho, sem nenhuma comparação).
+    || /\bresolv(?:e|em)\s+mais\s+r[áa]pido\b/.test(text)
+    || /\bmais\s+r[áa]pido\s+(?:para|pra)\s+resolver\b/.test(text)
+    || /\bvelocidade\s+de\s+resolu[çc][ãa]o\b/.test(text);
 
   if (isUnsupportedMetricQuestion) {
     return createClarificationDecision(

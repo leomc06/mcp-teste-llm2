@@ -5861,3 +5861,63 @@ test("'análise geral'/'raio-x' (achados testando com dados reais do Lote 15, bu
   const visaoGeral = routeTicketQuestion("Me dá uma visão geral dos tickets.");
   assert.equal(visaoGeral.intent, "resumo_operacional");
 });
+
+// --- Lote 16 (protocolo de QA estruturado) ---
+
+test("'Quantos tickets tem <nome>?' (sujeito invertido, sem 'de/da' nem adjetivo de estado antes de 'tem', achado testando com dados reais do Lote 16, bug 1) captura o nome como operador", () => {
+  const operador = routeTicketQuestion("Quantos tickets tem Fabio Gali?");
+  assert.equal(operador.entities.operador, "Fabio Gali");
+
+  const area = routeTicketQuestion("Quantos tickets tem Redes e Segurança?");
+  assert.equal(area.entities.operador, "Redes e Segurança");
+
+  // Controle: a exclusão de carga coletiva (ex.: "quantos tickets tem a
+  // fila?") continua sem capturar nada como nome de operador.
+  const fila = routeTicketQuestion("Quantos tickets tem na fila?");
+  assert.equal(fila.entities.operador, undefined);
+});
+
+test("'resolve mais rápido'/'mais rápido para resolver'/'velocidade de resolução' (achado testando com dados reais do Lote 16, bug T19) são reconhecidos como métrica de velocidade não suportada", () => {
+  const resolveMaisRapido = routeTicketQuestion(
+    "Quem resolve mais rápido: o operador Fabio Gali ou o operador Cesar Augusto de Mello?",
+  );
+  assert.equal(resolveMaisRapido.intent, "esclarecimento_metrica_nao_suportada");
+
+  const maisRapidoPara = routeTicketQuestion(
+    "Qual operador é mais rápido para resolver chamados?",
+  );
+  assert.equal(maisRapidoPara.intent, "esclarecimento_metrica_nao_suportada");
+
+  const velocidade = routeTicketQuestion(
+    "Qual é a velocidade de resolução do operador Fabio Gali?",
+  );
+  assert.equal(velocidade.intent, "esclarecimento_metrica_nao_suportada");
+});
+
+test("'anteontem'/'ante ontem'/'antevéspera' (achado testando com dados reais do Lote 16, bug T18) calculam 2 dias antes de hoje, não a mesma data de 'ontem'", () => {
+  const hoje = new Date();
+  const anteontem = new Date(hoje);
+  anteontem.setDate(anteontem.getDate() - 2);
+  const isoEsperado = anteontem.toISOString().slice(0, 10);
+
+  const junto = routeTicketQuestion("Tickets abertos anteontem.");
+  assert.equal(junto.entities.dataInicio, isoEsperado);
+  assert.equal(junto.entities.dataFim, isoEsperado);
+
+  const separado = routeTicketQuestion("Tickets abertos ante ontem.");
+  assert.equal(separado.entities.dataInicio, isoEsperado);
+
+  const antevespera = routeTicketQuestion("Tickets abertos antevéspera de ontem.");
+  assert.equal(antevespera.entities.dataInicio, isoEsperado);
+});
+
+test("'galera' (achado testando com dados reais do Lote 16, bug T15) é reconhecida como sinônimo coloquial de área, mesmo com a preposição 'de' sem contração, sem vazar operador fantasma", () => {
+  const route = routeTicketQuestion("Quantos chamado é da galera de Redes e Segurança?");
+  assert.equal(route.entities.area, "Redes e Segurança");
+  assert.equal(route.entities.operador, undefined);
+
+  // Controles: os sinônimos já existentes continuam funcionando.
+  const equipe = routeTicketQuestion("Quantos chamado é da equipe de Redes e Segurança?");
+  assert.equal(equipe.entities.area, "Redes e Segurança");
+  assert.equal(equipe.entities.operador, undefined);
+});

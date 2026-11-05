@@ -211,3 +211,19 @@ test("não confunde pergunta sobre capacidade de LEITURA nem escrita/ação exte
     );
   }
 });
+
+// --- Lote 16 (protocolo de QA estruturado) ---
+
+test("pronome interposto entre o modal de capacidade e o verbo ('consegue ME ligar', achado testando com dados reais do Lote 16, bug T20) continua sendo reconhecido como pergunta de capacidade", () => {
+  assert.equal(
+    isCapabilityQuestion("Você consegue me ligar quando abrir um chamado urgente?"),
+    true,
+  );
+  assert.equal(
+    isCapabilityQuestion("Você consegue te avisar quando o ticket for fechado?"),
+    true,
+  );
+
+  // Controle: a forma direta (sem pronome) continua funcionando.
+  assert.equal(isCapabilityQuestion("Você consegue ligar pro cliente?"), true);
+});

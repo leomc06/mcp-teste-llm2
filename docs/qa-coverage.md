@@ -146,6 +146,150 @@ resposta anterior" (E, via continuação).
 
 ## Lotes
 
+### Lote 16 — corrigido — ângulos: K (colisão de nome área×departamento "Redes e Segurança" — 3º par real com o mesmo nome, nunca testado — só "Gestão"/"GESTÃO" no Lote 14), G (grafia extrema em nome real com acento+espaço especiais — "Darío Gerardo Fantini" — sem acento/minúsculo vs. espaço triplo+acento correto, nunca usado), B (negação de status MULTI-PALAVRA — "Aguardando feedback do usuário"/"Encaminhado para operador" — só status de 1 palavra testados em negação até agora), L (frase cortada no meio de uma palavra + emoji, nunca combinados nesta rodada), M (integridade cruzada: departamento "Redes e Segurança" no resumo por departamento, distinto da área do mesmo nome), N (paginação muito além do total + autocomparação de status), regressão DIRECIONADA do Lote 15 (F: "pra mim" com CLIENTE em vez de departamento/operador; E: contração MASCULINA "num gráfico", só "numa tabela" foi testada; K: `isOperadorContidoNoArea` com "Redes e Segurança" e frase coloquial nova "a galera de"; D+F: "análise"/"raio-x" numa CONTINUAÇÃO, não testado ainda — "Faz uma análise mais aprofundada nisso." depois de um resumo), C (termo de data obscuro "antevéspera"), J (comparação por velocidade de resolução — métrica não suportada, sinônimo novo "resolve mais rápido"), O (ação externa via "ligar" SEM a palavra "ligação"/canal explícito — só o verbo, que já É o próprio canal)
+
+Motivo da escolha: "Redes e Segurança" é o 3º par real área×departamento
+com o mesmo nome (confirmado no catálogo agora) — só "Gestão"/"GESTÃO" foi
+testado (Lote 14); nunca testamos esse ângulo com ESTE par específico.
+Grafia extrema nunca foi tentada com "Darío Gerardo Fantini" (acento +
+nome composto real). Negação de status SEMPRE foi testada com status de 1
+palavra só (Cancelado/Encerrada) — nunca com os multi-palavra reais do
+catálogo ("Aguardando feedback do usuário"). Frase cortada + emoji nunca
+foram combinados na mesma pergunta. Resto do lote é regressão DIRECIONADA
+dos 4 fixes do Lote 15, cada um numa forma/dimensão diferente da que eu
+mesmo verifiquei ao vivo durante o fix — generalização, não repetição.
+
+- Perguntas: L16-T01 .. L16-T20 (ver mensagem do lote)
+- Dados reais usados (puxados agora via API do OcoMon): área E
+  departamento "Redes e Segurança" (nome colidindo nos 2 catálogos,
+  confirmado agora, nunca usado antes); operador "Darío Gerardo Fantini"
+  (nunca usado); status multi-palavra "AGUARDANDO FEEDBACK DO USUÁRIO" e
+  "ENCAMINHADO PARA OPERADOR" (catálogo completo confirmado agora, 16
+  status reais); status "CANCELADO"; departamento "Infraestrutura
+  Científica" (reaproveitado); cliente "Luiz Henrique Coura"
+  (reaproveitado); operadores "Fabio Gali"/"Cesar Augusto de Mello"
+  (reaproveitados)
+- Resultado: **executado por mim** (`routeTicketQuestion` em lote pra
+  T06/T07/T08/T09/T11/T12/T18/T19 + 1 chamada por vez na API do OcoMon
+  pros demais, incluindo o encadeamento de 2 turnos T16/T17)
+- Bugs encontrados (6, por ordem de severidade):
+  1. **(achado incidentalmente, fora do roteiro original do T03)** —
+     "Quantos tickets tem `<nome>`?" (sujeito invertido, SEM "de/da" antes
+     do nome e SEM "abertos/fechados" antes de "tem") não bate em NENHUM
+     padrão de `extractOperatorName` — nem o padrão direto ("quantos
+     tickets `<nome>` tem", nome ANTES do verbo) nem o invertido ("abertos
+     e fechados TEM `<nome>`", que exige o adjetivo de estado antes).
+     Confirmado com "Quantos tickets tem Redes e Segurança?" E com
+     "Quantos tickets tem Fabio Gali?" (operador comum, sem ambiguidade
+     nenhuma) — os 2 devolvem `entities: {}` e despejam o catálogo INTEIRO
+     (5284 tickets) sem filtro nenhum e sem aviso. Essa é uma forma bem
+     natural de perguntar "quantos tickets uma pessoa/área tem" em
+     português, não um caso de borda raro.
+  2. T19 — "Quem resolve mais rápido: o operador Fabio Gali ou o operador
+     Cesar Augusto de Mello?": "resolve mais rápido" não é reconhecido
+     como gatilho de comparação em nenhum lugar — a frase cai no
+     fallback genérico, que perde o 1º operador por completo e aplica só
+     o 2º ("Cesar Augusto de Mello") como filtro POSITIVO, sem nenhuma
+     comparação nem aviso sobre a métrica de velocidade não suportada.
+  3. T20 — "Você consegue ME LIGAR quando abrir um chamado urgente?":
+     `isCapabilityQuestion` (`agent/write-policy.js`) exige o verbo
+     IMEDIATAMENTE depois do modal de capacidade
+     (`CAPABILITY_MODAL_SOURCE\s+verbo`) — um pronome interposto ("me")
+     quebra o match (confirmado isolando a função: com "me" → `false`;
+     sem "me" → `true`). A pergunta inteira cai em `listar_tickets` com
+     `prioridade: Urgente` (24 tickets), tratando um pedido de ação
+     externa disfarçado de capacidade como consulta comum.
+  4. T18 — "antevéspera de ontem": termo de data sem suporte nenhum —
+     `dataInicio`/`dataFim` saem como literalmente "ontem" (2026-11-03),
+     ou seja, "antevéspera" é descartado em silêncio e só "ontem" (a
+     palavra reconhecida mais próxima no texto) é usado, perdendo o
+     deslocamento de dia que o termo pede.
+  5. T15 — "Quantos chamado é da GALERA DE Redes e Segurança?": só
+     "pessoal d[ao] X" é reconhecido como sinônimo coloquial de área
+     (linha ~2138) — "galera" (gíria tão comum quanto "pessoal" no
+     português do Brasil) não está nesse vocabulário, então a frase
+     inteira ("galera de Redes e Segurança") vaza pro fallback genérico
+     de operador. **Nota de método**: este NÃO é o mesmo bug do Lote
+     15/T02 (`isOperadorContidoNoArea`) — aqui a área nunca chega a ser
+     capturada, então aquele guard nem tem chance de atuar; é um gap de
+     vocabulário diferente, achado por acaso ao tentar testar a
+     regressão do T02 com uma palavra que não estava no escopo do fix.
+  6. T17 — continuação "Faz uma análise mais aprofundada nisso." (depois
+     de um resumo por departamento): `perguntaEfetiva` confirma que a
+     continuação NUNCA foi detectada (`detectsContinuation` não reconhece
+     "nisso"/"disso" como marcador referencial) — a frase é tratada como
+     pergunta solta, sem nenhuma palavra do domínio, e cai honestamente
+     em "não entendi essa pergunta" em vez de herdar o filtro do turno
+     anterior. Severidade menor que os 5 acima: a resposta é uma recusa
+     HONESTA (não um dado errado nem um despejo sem filtro), só perde a
+     oportunidade de continuar o contexto.
+- Confirmados corretos/por design: T01/T02/T10 (área "Redes e Segurança" e
+  departamento "Redes e Segurança" resolvem com contagens PRÓPRIAS e
+  consistentes entre si — 315/189/189 — sem colisão nem vazamento), T03
+  **retestado com a forma "Tickets de Redes e Segurança."** (a forma bare
+  "quantos tickets TEM X" não exercita o mecanismo de ambiguidade — ver
+  bug 1 acima; com "de X" a ambiguidade área×departamento dispara
+  corretamente, igual ao par Gestão/GESTÃO do Lote 14), T04 **retestado
+  com o nome completo** "dario gerardo fantini" (minúsculo+sem acento,
+  as 3 palavras) — resolve certo; a 1ª tentativa com só 2 das 3 palavras
+  foi erro de execução meu, não teste válido de grafia, T05 (espaço
+  triplo + acento correto resolve igual ao T04), T06/T07 (negação de
+  status multi-palavra, única e em lista, recusa honesta igual às outras
+  dimensões), T08 (frase cortada no meio preserva o filtro de área já
+  capturado), T09 (emojis não quebram a extração de SLA vencido nem de
+  data), T11 (página muito além do total devolve "nenhum ticket
+  encontrado" honesto, não erro cru nem página errada), T12
+  (autocomparação de STATUS generaliza certo pra
+  `esclarecimento_comparacao_dimensao_nao_suportada`, mesmo padrão de
+  prioridade/departamento do Lote 14), T13 (regressão Lote 15/T04: "pra
+  mim" podado também em CLIENTE), T14 (regressão Lote 15/T06: contração
+  MASCULINA "num gráfico" funciona igual à feminina "numa tabela"), T16
+  (baseline da continuação, 150 tickets, consistente com o resumo por
+  departamento do T10).
+- Correções aplicadas (todos os 6, verificados ao vivo contra o servidor
+  reiniciado + `npm test`, 780/781 passando — a 1 falha restante é o
+  "date bomb" pré-existente de "esse mês"/mês corrente, sem relação com
+  este lote):
+  1. Novo padrão em `extractOperatorName` pro sujeito invertido "Quantos
+     tickets tem `<nome>`?" (sem "de/da" nem adjetivo de estado antes de
+     "tem"), com a exclusão de carga coletiva (`OPERATOR_WORKLOAD_EXCLUSION_SOURCE`)
+     já existente mantida (não captura "na fila" etc. como nome).
+     Descoberta no processo: o flag `i` do JS faz `\p{Lu}` (letra
+     MAIÚSCULA) casar com minúscula também — tive que tirar o flag `i` e
+     escrever `[Qq]uantos` à mão em vez de depender dele.
+  2. `isUnsupportedMetricQuestion` ganhou os sinônimos "resolve(m) mais
+     rápido", "mais rápido para/pra resolver" e "velocidade de
+     resolução".
+  3. `CAPABILITY_PRONOUN_SOURCE` novo em `agent/write-policy.js`, pronome
+     opcional ("me"/"te"/"nos"/"lhe") entre o modal de capacidade e o
+     verbo em `isCapabilityQuestion`.
+  4. Novo checagem de data pra "anteontem"/"ante ontem"/"antevéspera"
+     (2 dias antes de hoje), antes da checagem de "ontem" bare (mesma
+     ordem de precedência já usada pra "depois de amanhã" vs. "amanhã").
+  5. `extractAreaName` ganhou "galera" como sinônimo coloquial de
+     área/equipe, e a preposição passou a aceitar "de" solto (não só
+     "do"/"da" contraído, forma que "galera" usa naturalmente: "a galera
+     DE Suporte"). Revelou um bug novo no processo: `isOperadorContidoNoArea`
+     só checava 1 direção de contenção (operador dentro da área) — virou
+     bidirecional pra também descartar o caso em que o operador capturado
+     é um SUPERSET do texto da área (ex.: "galera de Redes e Segurança"
+     contém "Redes e Segurança" por dentro, não o contrário).
+  6. Nova função `isBareAnaliseReferencialRequest` em
+     `agent/tickets-routing.js` (mesmo padrão do `isBareFormatoRequest`
+     já existente), ligada em `agent/continuation.js`: pedido de mais
+     profundidade de análise ("aprofundar"/"detalhar"/"explorar"/
+     "investigar") combinado com pronome referencial ("nisso"/"disso"/
+     "sobre isso"/"a respeito disso") sem nenhuma palavra do domínio de
+     tickets agora conta como continuação.
+  Testes de regressão novos em `test/tickets-routing.test.js` (bugs 1/2/4/5),
+  `test/write-policy.test.js` (bug 3) e `test/continuation.test.js`
+  (bug 6).
+- Regressão pendente: nenhuma — os 4 fixes do Lote 15 seguraram firme
+  (T13/T14 confirmados; T02 não foi genuinamente reexercitado pelo T15,
+  ver nota do bug 5); os 6 bugs encontrados eram todos NOVOS, sem relação
+  direta com os fixes do Lote 15, e os 6 fixes deste lote não quebraram
+  nenhum teste existente.
+
 ### Lote 15 — testado — ângulos: A (coloquial extremo — nunca revisitado desde o Lote 9), D (análise/resumo com fraseado coloquial colidindo com os nomes das tools — "raio-x completo"/"análise geral"/"situação do departamento" — nunca testado a fundo desde o Lote 7), E (formato aprofundado: "planilha" num resumo por operador, "numa tabela" na carga de 1 operador com cauda educada, "gráfico de pizza" num resumo por prioridade, "em gráfico" pedido numa tool SEM suporte a gráfico — fallback silencioso pra tabela, nunca confirmado com `listar_tickets_vencidos`), O (capacidade de ESCRITA disfarçada de pergunta colloquial "dá pra você fechar automaticamente..." + controle de capacidade de LEITURA "você sabe me dizer..." pra não confundir os 2), C (feriado FUTURO, nunca testado — só "último feriado" no Lote 9), F+I (regressão do Lote 14: negação introduzida no 2º turno de continuação, agora em ÁREA em vez de cliente — mesmo fix de `detectaContradicao`/`detectaNegacaoNaoSuportada` por sentença), F (regressão do Lote 14: duplicação de execução do bug T06/T19, agora em continuação de OPERADOR em vez de cliente — mesmo fix de `agent/agent-loop.js`), J (regressão do Lote 14/T20: qualificador de FORMATO "de forma visual", variante ainda não testada do `FORMAT_QUALIFIER_SOURCE` novo), H (regressão do Lote 14/T15: limite fora do intervalo 1-100 via as formas "N pior/melhor" e "até N resultados" do `extractLimit`, formas ainda não confirmadas com o fix novo — só "top N"/"liste N tickets"/"N mais antigos" foram verificadas ao vivo)
 
 Motivo da escolha: coloquial extremo (A) não é revisitado desde o Lote 9 —

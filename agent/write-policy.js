@@ -280,8 +280,20 @@ export function isExternalActionRequest(pergunta) {
 const CAPABILITY_MODAL_SOURCE =
   "(?:voce\\s+)?(?:consegue|sabe|e\\s+capaz\\s+de|tem\\s+capacidade\\s+de|tem\\s+permissao\\s+(?:de|para))";
 
+// "Você consegue ME LIGAR quando abrir um chamado urgente?" (achado
+// testando o lote de perguntas ao vivo — Lote 16, bug T20): um PRONOME
+// interposto entre o modal de capacidade e o verbo ("consegue ME ligar",
+// não "consegue ligar" direto) quebrava o match — o `\s+` sozinho exige o
+// verbo IMEDIATAMENTE depois do modal, e "me" (bem comum em pedidos
+// envolvendo a 1ª/2ª pessoa, "me avisar"/"me notificar"/"me ligar") nunca
+// era tolerado. A pergunta inteira caía no fallback comum (consulta
+// normal), tratando um pedido de ação disfarçado de capacidade como se
+// fosse uma pergunta de dados. Mesma ideia do pronome opcional já tratado
+// em requestPrefixPattern (isWriteRequest, acima) pro mesmo problema.
+const CAPABILITY_PRONOUN_SOURCE = "(?:me|te|nos|lhe)\\s+";
+
 const capabilityQuestionPattern = new RegExp(
-  `\\b${CAPABILITY_MODAL_SOURCE}\\s+(?:${[...imperativeVerbs, ...infinitiveVerbs, ...externalActionVerbs].join("|")})\\b`,
+  `\\b${CAPABILITY_MODAL_SOURCE}\\s+(?:${CAPABILITY_PRONOUN_SOURCE})?(?:${[...imperativeVerbs, ...infinitiveVerbs, ...externalActionVerbs].join("|")})\\b`,
   "u",
 );
 

@@ -1,6 +1,7 @@
 import { normalizeText } from "./routing-utils.js";
 import {
   isBareFormatoRequest,
+  isBareAnaliseReferencialRequest,
   OPEN_STATE_ADJECTIVE_SOURCE,
   CLOSURE_VERB_SOURCE,
 } from "./tickets-routing.js";
@@ -60,7 +61,11 @@ const CONTINUATION_LEADING_MARKERS = [
 export function detectsContinuation(pergunta) {
   const text = normalizeText(pergunta);
 
-  return CONTINUATION_LEADING_MARKERS.some((pattern) => pattern.test(text)) || isBareFormatoRequest(pergunta);
+  return (
+    CONTINUATION_LEADING_MARKERS.some((pattern) => pattern.test(text))
+    || isBareFormatoRequest(pergunta)
+    || isBareAnaliseReferencialRequest(pergunta)
+  );
 }
 
 // Concatenação pura de texto — a frase combinada é re-roteada do zero por

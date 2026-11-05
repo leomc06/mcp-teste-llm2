@@ -80,3 +80,21 @@ test("mergeContinuation: concatena com um espaço, aparando as pontas", () => {
     "Resumo por status na área Suporte. e desses só os abertos",
   );
 });
+
+// "Faz uma análise mais aprofundada nisso." depois de um resumo (achado
+// testando com dados reais do Lote 16, bug T17) — pedido de mais
+// profundidade de análise, sem nenhuma palavra do domínio de tickets, só
+// com o pronome referencial "nisso"/"disso" apontando pro turno anterior.
+test("detectsContinuation: pedido de análise mais aprofundada 'nisso'/'disso' (achado testando com dados reais do Lote 16, bug T17) conta como continuação", () => {
+  assert.equal(detectsContinuation("Faz uma análise mais aprofundada nisso."), true);
+  assert.equal(detectsContinuation("Detalha mais isso, por favor."), false);
+  assert.equal(detectsContinuation("Pode explorar mais a respeito disso?"), true);
+
+  // Com palavra do domínio ("tickets"), não é mais um pedido "solto" —
+  // seria avaliado como pergunta nova de verdade, não precisa de
+  // continuação.
+  assert.equal(
+    detectsContinuation("Faz uma análise mais aprofundada nos tickets abertos."),
+    false,
+  );
+});
