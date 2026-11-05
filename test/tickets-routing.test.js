@@ -6097,3 +6097,42 @@ test("cláusula de OUTRA dimensão sem conector (achado testando com dados reais
   assert.equal(areaDepoisStatus.entities.status, "Cancelado");
   assert.equal(areaDepoisStatus.entities.area, "Redes e Segurança");
 });
+
+// "Resumo de tickets por status e por tabela." (achado conversando direto
+// com o usuário, fora de qualquer lote): "por" é um conector tão válido pra
+// pedir FORMATO ("por tabela"/"por gráfico") quanto já é pra pedir
+// DIMENSÃO de resumo ("por status"/"por área") — nenhuma alternativa de
+// FORMATO_TABELA_SOURCE/FORMATO_GRAFICO_SOURCE reconhecia essa forma,
+// então "tabela"/"gráfico" não entravam como pedido de formato E ainda
+// vazavam como operador fantasma via o fallback genérico "por/pelo X" de
+// extractOperatorName (palavra de formato nunca tinha entrado na lista de
+// exclusão).
+test("'por tabela'/'por gráfico' (conector já usado pra dimensão, achado ao vivo) também é reconhecido como pedido de formato, sem virar operador fantasma", () => {
+  const porTabela = routeTicketQuestion("Me dê um resumo de tickets por status e por tabela.");
+  assert.equal(porTabela.intent, "resumo_por_status");
+  assert.equal(porTabela.formato, "tabela");
+  assert.equal(porTabela.entities.operador, undefined);
+  assert.equal(porTabela.entities.status, undefined);
+
+  const porGrafico = routeTicketQuestion("Me dê um resumo de tickets por status e por gráfico.");
+  assert.equal(porGrafico.formato, "grafico");
+  assert.equal(porGrafico.entities.operador, undefined);
+});
+
+// Mesma pergunta, mas com espaço DUPLO entre "status" e "e" (exatamente como
+// o usuário digitou ao vivo): expõe um bug separado e mais sutil — o "\s+"
+// logo depois de "status"/"área"/"operador"/etc. em todo extrator
+// âncora-por-palavra-chave é GULOSO e pode BACKTRACKAR pra deixar 1 espaço
+// sobrando bem na frente de uma negative lookahead (ex.: "(?!e\\s+por\\b)"),
+// fazendo ela nunca bater — com 1 espaço só isso nunca acontece (o "\s+"
+// já consome tudo de primeira), só aparece com 2+ espaços seguidos. Um
+// "(?!\\s)" logo depois do "\s+" em cada um dos 6 extratores-âncora
+// (área/departamento/operador/cliente/status/prioridade) força o "\s+" a
+// nunca backtrackar deixando espaço pra trás.
+test("espaço duplo entre a palavra-chave e o conector de formato (achado ao vivo, exatamente como o usuário digitou) não quebra a exclusão de 'e por <dimensão/formato>'", () => {
+  const comEspacoDuplo = routeTicketQuestion("me de um resumo de tickets por status  e por tabela");
+  assert.equal(comEspacoDuplo.intent, "resumo_por_status");
+  assert.equal(comEspacoDuplo.formato, "tabela");
+  assert.equal(comEspacoDuplo.entities.status, undefined);
+  assert.equal(comEspacoDuplo.entities.operador, undefined);
+});

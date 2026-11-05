@@ -159,8 +159,14 @@ const TRAILING_METRIC_CLAUSE_PATTERN =
 // problema pré-existente com "excel" (já no vocabulário de DETECÇÃO de
 // formato há mais tempo, mas nunca tinha sido podado AQUI, na limpeza do
 // nome) — corrigido junto, mesma causa-raiz.
+// "por tabela"/"por gráfico" (achado conversando direto com o usuário, fora
+// de qualquer lote, junto da correção de FORMATO_TABELA_SOURCE/
+// FORMATO_GRAFICO_SOURCE acima): mesmo conector "por" aceito agora na
+// DETECÇÃO do pedido de formato precisa valer também aqui, na limpeza do
+// nome capturado — senão "carga do Fabio Gali por tabela" viraria operador:
+// "Fabio Gali por tabela" mesmo depois do formato ser reconhecido.
 const TRAILING_FORMAT_CLAUSE_PATTERN =
-  /(?:^|\s+)(?:em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?|numa?\s+)(?:gr[áa]ficos?|tabelas?|planilhas?|csv|excel)\b.*$/iu;
+  /(?:^|\s+)(?:em\s+(?:(?:uma?|forma\s+de|formato\s+de)\s+)?|numa?\s+|por\s+)(?:gr[áa]ficos?|tabelas?|planilhas?|csv|excel)\b.*$/iu;
 // "(?:de\\s+)?" opcional, não obrigatório (achado rodando esta própria
 // correção): o próprio "de" inicial já é podado ANTES, pelo removedor de
 // artigo/preposição líder do começo de cleanFreeText (ex.: "de forma
@@ -2209,7 +2215,7 @@ const TRES_OU_MAIS_NOMES_DO_DA_PATTERN = new RegExp(
 // virava area: "definida existem".
 function buildAreaKeywordAnchoredPattern() {
   return new RegExp(
-    `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
+    `(?<![\\p{L}\\p{N}])${AREA_SYNONYM_SOURCE}\\s+(?!\\s)(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
     "iu",
   );
 }
@@ -2255,7 +2261,7 @@ export function extractAreaName(value) {
 // catálogo real).
 function buildDepartmentKeywordAnchoredPattern() {
   return new RegExp(
-    `\\bdepartamento\\s+(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!atribu[ií]do\\b)(.+)$`,
+    `\\bdepartamento\\s+(?!\\s)(?:de\\s+)?(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!atribu[ií]do\\b)(.+)$`,
     "iu",
   );
 }
@@ -2400,6 +2406,14 @@ const OPERATOR_BY_EXCLUSION_SOURCE =
   + "|sistema\\b|m[êe]s\\b|ano\\b|semana\\b|per[íi]odo\\b|total\\b|limite\\b|ningu[ée]m\\b|dia\\s+\\d"
   + "|manh[ãa](?![\\p{L}\\p{N}])|tarde\\b|noite\\b"
   + "|vencid[oa]s?\\b|atrasad[oa]s?\\b|estourad[oa]s?\\b"
+  // "tabela(s)"/"planilha(s)"/"gráfico(s)"/"excel"/"csv" (achado conversando
+  // direto com o usuário, fora de qualquer lote): "Resumo por status e POR
+  // TABELA." usa "tabela" como pedido de FORMATO depois do conector "por" —
+  // igual já acontecia com "status"/"área"/"departamento" etc. (todos já
+  // excluídos acima), palavra de formato nunca tinha entrado nessa lista,
+  // então o fallback genérico "por/pelo X" (extractOperatorName) capturava
+  // "tabela" inteiro como se fosse um nome de operador fantasma.
+  + "|tabelas?\\b|planilhas?\\b|gr[áa]ficos?\\b|excel\\b|csv\\b"
   + `|${STATUS_LITERAL_PHRASE_SOURCE}`;
 
 const OPERATOR_DO_DA_EXCLUSION_SOURCE = OPERATOR_BY_EXCLUSION_SOURCE;
@@ -2471,7 +2485,7 @@ const OPERATOR_WORKLOAD_VERB_SOURCE = "(?:tem|trat(?:ou|aram)|atend(?:eu|eram)|f
 // já carregou), não em tempo de avaliação do módulo.
 function buildOperatorKeywordAnchoredPattern() {
   return new RegExp(
-    `(?<!\\bsem\\s)\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?:é\\s+)?`
+    `(?<!\\bsem\\s)\\b(?:${USER_LOOKUP_NOUN_SOURCE})\\s+(?!\\s)(?:é\\s+)?`
       + `(?!(?:mais|menos)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
       + `(?!(?:n[oa]s?\\s+)?(?:d|n)?(?:ess[ae]|est[ae])\\s+(?:semana|m[êe]s|ano)\\b)`
       + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${OPERATOR_BY_EXCLUSION_SOURCE})(.+)$`,
@@ -2769,7 +2783,7 @@ const DOTTED_CLIENTE_PATTERN = new RegExp(
 // inteira).
 function buildClientKeywordAnchoredPattern() {
   return new RegExp(
-    `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?:chamado\\s+|de\\s+nome\\s+)?(?:é\\s+)?`
+    `\\b${CLIENT_LOOKUP_NOUN_SOURCE}\\s+(?!\\s)(?:chamado\\s+|de\\s+nome\\s+)?(?:é\\s+)?`
       + `(?!(?:mais|menos|respons[áa]vel)\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)`
       + `(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)(.+)$`,
     "iu",
@@ -3012,7 +3026,7 @@ const NEGATION_MARKER_SOURCE =
 // (resumo_por_area) já tendo sido escolhida em outro lugar.
 function buildStatusKeywordAnchoredPattern() {
   return new RegExp(
-    `\\bstatus\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
+    `\\bstatus\\s+(?!\\s)(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${NEGATION_MARKER_SOURCE}\\b)(?!${RANKING_CUE_SOURCE})(?!${CONTINUATION_MARKER_SOURCE}\\b)(.+)$`,
     "iu",
   );
 }
@@ -3217,7 +3231,7 @@ const UNSET_VALUE_ADJECTIVE_SOURCE = "(?:definid|atribu[ií]d|informad|especific
 // resumo_por_status em vez de resumo_por_prioridade.
 function buildPrioridadeKeywordAnchoredPattern() {
   return new RegExp(
-    `\\bprioridade\\s+(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
+    `\\bprioridade\\s+(?!\\s)(?:de\\s+)?(?!${DIMENSION_CONNECTOR_LEAK_SOURCE})(?!${UNSET_VALUE_ADJECTIVE_SOURCE}\\b)`
       + `(?!(?:[dn][ao]\\s+)?(?:${AREA_SYNONYM_SOURCE}|departamento)\\b)(.+)$`,
     "iu",
   );
@@ -4223,6 +4237,14 @@ const FORMATO_TABELA_SOURCE =
   + `|\\b${EM_UMA_OPCIONAL_SOURCE}(?:formato\\s+de\\s+)?${TABLE_WORD_SOURCE}\\b`
   + `|\\b${TABLE_WORD_SOURCE}\\s*,?\\s*por\\s+favor\\b`
   + `|\\bformato\\s+de\\s+${TABLE_WORD_SOURCE}\\b`
+  // "e por tabela" (achado conversando direto com o usuário, fora de
+  // qualquer lote): "Me dê um resumo de tickets por status e POR TABELA."
+  // usa o mesmo conector "por" usado pra dimensão ("por status") só que
+  // pedindo formato logo em seguida — nenhuma alternativa acima cobria
+  // "por tabela"/"por planilha" como pedido de formato (só "em"/"numa"
+  // eram reconhecidos como conector antes da palavra), então o pedido de
+  // formato era descartado em silêncio.
+  + `|\\bpor\\s+${TABLE_WORD_SOURCE}\\b`
   // "arquivo excel"/"em excel" (achado testando o lote de perguntas ao
   // vivo): "Excel" é tão comum quanto "tabela"/"planilha" pra pedir o
   // mesmo formato, mas numa construção diferente ("um ARQUIVO excel",
@@ -4254,7 +4276,10 @@ const FORMATO_GRAFICO_SOURCE =
   + "|\\b(?:em\\s+(?:uma?\\s+)?|numa?\\s+)(?:forma\\s+de\\s+)?gr[áa]ficos?\\b"
   + "|\\bformato\\s+de\\s+gr[áa]ficos?\\b"
   + "|\\bgraficamente\\b"
-  + "|\\bde\\s+forma\\s+(?:gr[áa]fica|visual)\\b";
+  + "|\\bde\\s+forma\\s+(?:gr[áa]fica|visual)\\b"
+  // "e por gráfico" (mesma correção acima, espelhada pra gráfico): "por" é
+  // tão válido quanto "em"/"numa" como conector de formato.
+  + "|\\bpor\\s+gr[áa]ficos?\\b";
 const FORMATO_TABELA_PATTERN = new RegExp(FORMATO_TABELA_SOURCE, "iu");
 const FORMATO_GRAFICO_PATTERN = new RegExp(FORMATO_GRAFICO_SOURCE, "iu");
 
