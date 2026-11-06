@@ -23,6 +23,8 @@ import {
   extractTicketNumber,
   extractTicketStatusName,
   extractUserName,
+  isResumoExecutivoIntent,
+  isResumoTicketIntent,
   routeTicketQuestion,
 } from "../agent/tickets-routing.js";
 
@@ -6135,4 +6137,22 @@ test("espaço duplo entre a palavra-chave e o conector de formato (achado ao viv
   assert.equal(comEspacoDuplo.formato, "tabela");
   assert.equal(comEspacoDuplo.entities.status, undefined);
   assert.equal(comEspacoDuplo.entities.operador, undefined);
+});
+
+// Extraídas da rota (Fase 3 do plano de migração pro LLM de nuvem, ver
+// agent/llm-router.js) pra decidir se vale a pena sintetizar em prosa
+// (via Ollama local) a resposta de buscar_ticket_por_numero/
+// resumo_operacional_tickets, mesmo quando é o LLM — não mais o regex —
+// quem decide a tool/argumentos.
+test("isResumoExecutivoIntent reconhece pedido de resumo executivo/texto pra audiência de gestão", () => {
+  assert.equal(isResumoExecutivoIntent("Resumo executivo dos tickets."), true);
+  assert.equal(isResumoExecutivoIntent("Escreva um parágrafo pra diretoria sobre os tickets."), true);
+  assert.equal(isResumoExecutivoIntent("Resumo de tickets por Gestão."), false);
+  assert.equal(isResumoExecutivoIntent("Resumo dos tickets por status."), false);
+});
+
+test("isResumoTicketIntent reconhece pedido de resumo/o que foi feito num ticket", () => {
+  assert.equal(isResumoTicketIntent("Resuma o ticket 4830."), true);
+  assert.equal(isResumoTicketIntent("O que foi feito no ticket 4830?"), true);
+  assert.equal(isResumoTicketIntent("Detalhe o ticket 4830."), false);
 });

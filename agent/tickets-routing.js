@@ -4492,6 +4492,63 @@ function createCompareDecision(intent, comparisons) {
   };
 }
 
+// "resumo executivo" ou um pedido de texto pra uma audiência de gestão —
+// pede pro modelo transformar os números já calculados por
+// resumo_operacional_tickets num parágrafo corrido, em vez de só exibir
+// os números. Lista de gatilhos deliberadamente conservadora: perder um
+// caso só mantém o comportamento de hoje (números puros, seguro); um
+// falso positivo só gasta 1 chamada extra ao Ollama.
+// "Resumo por Gestão." (achado testando o lote de perguntas ao vivo, com
+// dados reais): "Gestão" é o nome real de uma ÁREA e de um DEPARTAMENTO no
+// catálogo — a palavra "gestao" (normalizada) também era um dos gatilhos
+// de AUDIÊNCIA abaixo, aceita em QUALQUER lugar depois de "resumo"/
+// "parágrafo"/"texto"/"mensagem", sem exigir nenhuma preposição de
+// destinatário no meio — então "Resumo POR Gestão" (pedido de agrupar
+// por essa área/departamento, não uma audiência) disparava o resumo
+// EXECUTIVO do sistema inteiro por engano, sequestrando a intenção certa
+// (group-by) pra uma completamente diferente — não só um "falso positivo
+// barato" como o comentário original previa (aqui troca a TOOL inteira,
+// não só o formato da resposta). Corrigido exigindo a preposição de
+// DESTINATÁRIO de verdade (para/pra/pro/a/à/ao) logo antes da palavra de
+// audiência — "por Gestão" não tem essa preposição, só "pra gestão"/
+// "pro chefe"/"para a diretoria" (frases reais já aceitas, ver teste) têm.
+const AUDIENCIA_PREPOSICAO_SOURCE = "(?:para|pra|pro|a|[àá]|ao)";
+const AUDIENCIA_DESTINATARIO_SOURCE =
+  `${AUDIENCIA_PREPOSICAO_SOURCE}\\s+(?:o\\s+|a\\s+)?(?:chefe|diretoria|gestor(?:es)?|gestao|lideranca)\\b`;
+
+function isResumoExecutivoIntentFromText(text) {
+  return (
+    /\bresumo\s+executivo\b/.test(text)
+    || new RegExp(`\\b(?:paragrafo|texto|mensagem)\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text)
+    || new RegExp(`\\bresumo\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text)
+  );
+}
+
+// Exportada pro orquestrador do LLM de nuvem (agent/llm-router.js, Fase 3
+// do plano de migração): decide se a resposta de buscar_ticket_por_numero/
+// resumo_operacional_tickets deve ganhar uma síntese em prosa (via Ollama
+// local, que processa o conteúdo real do ticket) — essa decisão continua
+// puramente textual/determinística mesmo quando quem escolhe a TOOL é o
+// LLM, porque não depende de entender a pergunta como um todo, só de
+// reconhecer o pedido explícito de "resumo".
+export function isResumoExecutivoIntent(pergunta) {
+  return isResumoExecutivoIntentFromText(normalizeText(pergunta));
+}
+
+// "resuma"/"resumo do ticket"/"o que foi feito no ticket X" pede pro
+// modelo ler a descrição+comentários do ticket já buscado e escrever um
+// resumo curto, em vez de só devolver o detalhe cru. Mesma razão de
+// existir da exportação de isResumoExecutivoIntent acima.
+export function isResumoTicketIntent(pergunta) {
+  const text = normalizeText(pergunta);
+
+  return (
+    /\bresum[ao]\b|\bresumir\b|\bresumindo\b|\bsintetiz\w*\b/.test(text)
+    || /\bo\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text)
+    || /\bconte\s+o\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text)
+  );
+}
+
 function routeTicketQuestionCore(pergunta) {
   const text = normalizeText(pergunta);
 
@@ -6318,14 +6375,7 @@ function routeTicketQuestionCore(pergunta) {
   // DESTINATÁRIO de verdade (para/pra/pro/a/à/ao) logo antes da palavra de
   // audiência — "por Gestão" não tem essa preposição, só "pra gestão"/
   // "pro chefe"/"para a diretoria" (frases reais já aceitas, ver teste) têm.
-  const AUDIENCIA_PREPOSICAO_SOURCE = "(?:para|pra|pro|a|[àá]|ao)";
-  const AUDIENCIA_DESTINATARIO_SOURCE =
-    `${AUDIENCIA_PREPOSICAO_SOURCE}\\s+(?:o\\s+|a\\s+)?(?:chefe|diretoria|gestor(?:es)?|gestao|lideranca)\\b`;
-
-  const isResumoExecutivoIntent =
-    /\bresumo\s+executivo\b/.test(text)
-    || new RegExp(`\\b(?:paragrafo|texto|mensagem)\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text)
-    || new RegExp(`\\bresumo\\b.*\\b${AUDIENCIA_DESTINATARIO_SOURCE}`).test(text);
+  const isResumoExecutivoIntent = isResumoExecutivoIntentFromText(text);
 
   // "Resumo operacional dos tickets." + "Só os abertos" (achado testando o
   // lote de perguntas ao vivo — o chip de refinamento de kind:"operacional"
@@ -6599,21 +6649,13 @@ function routeTicketQuestionCore(pergunta) {
   }
 
   if (numero !== undefined) {
-    // "resuma"/"resumo do ticket"/"o que foi feito no ticket X" pede pro
-    // modelo ler a descrição+comentários do ticket já buscado e escrever um
-    // resumo curto, em vez de só devolver o detalhe cru.
-    const isResumoTicketIntent =
-      /\bresum[ao]\b|\bresumir\b|\bresumindo\b|\bsintetiz\w*\b/.test(text)
-      || /\bo\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text)
-      || /\bconte\s+o\s+que\s+(?:foi\s+feito|aconteceu|houve|rolou)\b/.test(text);
-
     const decision = createTicketDecision(
       "buscar_por_numero",
       "buscar_ticket_por_numero",
       { numero },
     );
 
-    if (isResumoTicketIntent) {
+    if (isResumoTicketIntent(pergunta)) {
       decision.synthesize = "resumo_ticket";
     }
 

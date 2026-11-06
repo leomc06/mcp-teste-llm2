@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMcpClient } from "./mcp-client.js";
 import { createOllamaClient } from "./ollama-client.js";
-import { AgentError, runAgent, runCompare } from "./agent-loop.js";
+import { createAnthropicClient } from "./llm-client.js";
+import { interpretQuestion } from "./llm-router.js";
+import { AgentError, runAgent, runCompare, runDecidedTool } from "./agent-loop.js";
 import {
   selectToolDecision,
 } from "./tool-selector.js";
@@ -53,9 +55,29 @@ const configSchema = z.object({
     .int()
     .min(1000)
     .max(300000),
+  // Fase 3 do plano de migração pro LLM de nuvem: opt-in, default "regex"
+  // mantém o comportamento de hoje (roteador por regex decide a tool)
+  // inalterado. "llm" troca quem decide tool+argumentos pelo Claude (ver
+  // agent/llm-router.js) — compare/esclarecimento continuam vindo do
+  // roteador por regex nos dois modos (checagem determinística e sem
+  // custo, antes de qualquer chamada à API paga).
+  AGENT_INTERPRETER: z.enum(["regex", "llm"]).default("regex"),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_MODEL: z.string().min(1).max(100).default("claude-haiku-5-5"),
+  ANTHROPIC_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(300000)
+    .default(20000),
 });
 
 const config = configSchema.parse(process.env);
+
+if (config.AGENT_INTERPRETER === "llm" && !config.ANTHROPIC_API_KEY) {
+  console.error("AGENT_INTERPRETER=llm exige ANTHROPIC_API_KEY.");
+  process.exit(1);
+}
 
 const projectDir = fileURLToPath(new URL("../", import.meta.url));
 const webDir = fileURLToPath(new URL("../web/", import.meta.url));
@@ -77,6 +99,17 @@ const ollama = createOllamaClient({
 });
 
 const ollamaTools = ollama.formatTools(mcp.tools);
+
+const llm =
+  config.AGENT_INTERPRETER === "llm"
+    ? createAnthropicClient({
+        apiKey: config.ANTHROPIC_API_KEY,
+        model: config.ANTHROPIC_MODEL,
+        timeoutMs: config.ANTHROPIC_TIMEOUT_MS,
+      })
+    : null;
+
+const llmTools = llm ? llm.formatTools(mcp.tools) : null;
 
 const requestSchema = z
   .object({
@@ -196,15 +229,25 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     try {
       const ollamaStatus = await ollama.check();
+      const llmStatus = llm ? await llm.check().catch(() => null) : null;
 
       sendJson(response, 200, {
         status: "ok",
         servico: "agente-consulta-os",
+        interpretador: config.AGENT_INTERPRETER,
         modelo: config.OLLAMA_MODEL,
         ollama: {
           conectado: true,
           versao: ollamaStatus.version,
         },
+        ...(llm
+          ? {
+              llm: {
+                modelo: config.ANTHROPIC_MODEL,
+                conectado: llmStatus?.ok === true,
+              },
+            }
+          : {}),
         mcp: {
           conectado: true,
           quantidadeTools: mcp.tools.length,
@@ -487,6 +530,133 @@ const server = http.createServer(async (request, response) => {
           dadosConsultados: compareResult.dadosConsultados,
           toolsUtilizadas: compareResult.toolsUtilizadas,
           quantidadeChamadas: compareResult.quantidadeChamadas,
+          duracaoMs,
+        });
+        return;
+      }
+
+      // Fase 3 do plano de migração pro LLM de nuvem: com
+      // AGENT_INTERPRETER=llm, quem decide a tool+argumentos pra tudo que
+      // não é "compare"/esclarecimento (ambos acima, continuam vindo do
+      // roteador por regex nos dois modos) passa a ser o Claude (ver
+      // agent/llm-router.js), não mais o roteador por regex logo abaixo —
+      // esse branch sempre termina em `return`, então o código de hoje
+      // (routeToolArguments + runAgent) fica inalterado e só roda no modo
+      // "regex" (default).
+      if (config.AGENT_INTERPRETER === "llm") {
+        if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
+          const duracaoMs = Date.now() - startedAt;
+
+          audit({
+            requestId,
+            usuario: userResult.data,
+            resultado: "recusado",
+            motivo: "limite_concorrencia",
+            duracaoMs,
+          });
+
+          sendJson(response, 429, {
+            requestId,
+            erro: "agente_ocupado",
+            mensagem:
+              "O agente está processando outra consulta. Tente novamente em instantes.",
+          });
+          return;
+        }
+
+        const disconnectController = new AbortController();
+
+        response.on("close", () => {
+          if (!response.writableEnded) {
+            disconnectController.abort();
+          }
+        });
+
+        const signal = AbortSignal.any([
+          AbortSignal.timeout(config.AGENT_REQUEST_TIMEOUT_MS),
+          disconnectController.signal,
+        ]);
+
+        let llmDecision;
+
+        activeAgentRequests += 1;
+
+        try {
+          llmDecision = await interpretQuestion({
+            llm,
+            llmTools,
+            pergunta: perguntaEfetiva,
+            signal,
+          });
+        } finally {
+          activeAgentRequests -= 1;
+        }
+
+        if (llmDecision.resposta !== undefined) {
+          const duracaoMs = Date.now() - startedAt;
+
+          audit({
+            requestId,
+            usuario: userResult.data,
+            resultado: "esclarecimento",
+            motivo: "llm_sem_tool",
+            toolsUtilizadas: [],
+            quantidadeChamadas: 0,
+            continuacaoDetectada,
+            duracaoMs,
+          });
+
+          sendJson(response, 200, {
+            requestId,
+            resposta: llmDecision.resposta,
+            fontes: [],
+            dadosConsultados: [],
+            toolsUtilizadas: [],
+            quantidadeChamadas: 0,
+            esclarecimento: true,
+            perguntaEfetiva,
+            duracaoMs,
+          });
+          return;
+        }
+
+        let decidedResult;
+
+        activeAgentRequests += 1;
+
+        try {
+          decidedResult = await runDecidedTool({
+            mcp,
+            ollama,
+            name: llmDecision.toolName,
+            args: llmDecision.args,
+            synthesize: llmDecision.synthesize ?? null,
+            signal,
+          });
+        } finally {
+          activeAgentRequests -= 1;
+        }
+
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "sucesso",
+          toolsUtilizadas: decidedResult.toolsUtilizadas,
+          quantidadeChamadas: decidedResult.quantidadeChamadas,
+          continuacaoDetectada,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta: decidedResult.resposta,
+          fontes: decidedResult.fontes,
+          dadosConsultados: decidedResult.dadosConsultados,
+          toolsUtilizadas: decidedResult.toolsUtilizadas,
+          quantidadeChamadas: decidedResult.quantidadeChamadas,
+          perguntaEfetiva,
           duracaoMs,
         });
         return;

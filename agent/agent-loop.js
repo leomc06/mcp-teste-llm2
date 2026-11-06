@@ -231,7 +231,83 @@ export async function runCompare({ mcp, comparisons }) {
   };
 }
 
+// Fase 3 do plano de migração pro LLM de nuvem (agent/llm-router.js):
+// executa 1 tool cuja escolha (nome + argumentos) já veio decidida de
+// fora — hoje, pelo LLM de nuvem — sem passar pelo loop de decisão do
+// Ollama (`runAgent` abaixo). Diferente de runAgent, nunca chama o Ollama
+// pra DECIDIR nada (só, opcionalmente, pra sintetizar texto sobre um
+// resultado já obtido, igual ao synthesize de runAgent) — evita pagar a
+// latência do Ollama local (15-40s neste hardware) numa chamada cujo
+// resultado seria sempre descartado, já que não há mais nenhuma escolha
+// de tool pra "confirmar" depois do LLM de nuvem já ter decidido.
+export async function runDecidedTool({
+  mcp,
+  ollama,
+  name,
+  args,
+  synthesize = null,
+  verbosidade = null,
+  signal,
+}) {
+  let result;
 
+  try {
+    result = await mcp.callTool(name, args);
+  } catch {
+    throw new AgentError(
+      "falha_mcp",
+      "Não foi possível executar a tool MCP.",
+    );
+  }
+
+  const text = mcpContentToText(result);
+
+  if (result.isError === true) {
+    throw new AgentError(
+      "falha_mcp",
+      "A tool MCP retornou erro.",
+    );
+  }
+
+  const sources = new Map();
+  collectSources(text, name, sources);
+
+  let dados;
+
+  try {
+    dados = JSON.parse(text);
+  } catch {
+    throw new AgentError(
+      "resposta_mcp_invalida",
+      "A tool MCP não retornou JSON válido.",
+    );
+  }
+
+  const toolResults = [{ tool: name, dados }];
+  const baseResposta = formatToolResults(toolResults, { verbosidade });
+  let resposta = baseResposta;
+
+  if (synthesize) {
+    const spec = SYNTHESIS_SPECS[synthesize];
+
+    if (spec && name === spec.tool && spec.isEligible(dados)) {
+      const sourceText = spec.buildSourceText(dados);
+      const synthesisText = await trySynthesize({ ollama, spec, sourceText, signal });
+
+      resposta = synthesisText
+        ? `${spec.intro}: ${synthesisText}\n\n--- ${spec.label} ---\n${sourceText}`
+        : `${baseResposta}\n\n(resumo automático indisponível no momento; seguem os dados completos)`;
+    }
+  }
+
+  return {
+    resposta,
+    fontes: [...sources.values()],
+    dadosConsultados: toolResults,
+    toolsUtilizadas: [name],
+    quantidadeChamadas: 1,
+  };
+}
 
 function optionalArgumentWasRequested(
   key,
