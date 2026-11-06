@@ -211,7 +211,14 @@ server.registerTool(
   {
     title: "Buscar usuários por nome",
     description: "Busca usuários (operadores) do sistema de tickets cujo nome ou login contenham o texto informado.",
-    inputSchema: { nome: z.string().trim().min(1).max(100) },
+    inputSchema: {
+      nome: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe("Nome ou login (completo ou parcial) do usuário a buscar."),
+    },
   },
   async ({ nome }) => {
     try {
@@ -236,7 +243,14 @@ server.registerTool(
   {
     title: "Buscar ticket por número",
     description: "Busca o detalhe completo de um ticket (chamado) pelo número, incluindo SLA, comentários e anexos. Use sempre que a pergunta citar um número de ticket específico, mesmo que outros filtros também apareçam na frase.",
-    inputSchema: { numero: z.number().int().positive().max(2147483647) },
+    inputSchema: {
+      numero: z
+        .number()
+        .int()
+        .positive()
+        .max(2147483647)
+        .describe("Número identificador do ticket (chamado)."),
+    },
   },
   async ({ numero }) => {
     try {
@@ -258,17 +272,92 @@ server.registerTool(
     title: "Listar tickets",
     description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, cliente (nome do solicitante), prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD ou por extenso). Não filtra por coluna do Kanban. Use para listar registros individuais; para perguntas de contagem/agrupamento (\"quantos\", \"por status\", \"por área\" etc.) prefira as tools resumo_tickets_por_*.",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      numero: z.number().int().positive().max(2147483647).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      numero: z
+        .number()
+        .int()
+        .positive()
+        .max(2147483647)
+        .describe("Número identificador do ticket (chamado).")
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, numero, dataInicio, dataFim, limite, pagina }) => {
@@ -417,15 +506,69 @@ server.registerTool(
     title: "Resumo de tickets por status",
     description: "Agrupa os tickets (chamados) por status e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("Quantidade máxima de itens no resumo (top N); sem limite, mostra todos.")
+        .optional(),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
@@ -555,15 +698,69 @@ server.registerTool(
     title: "Resumo de tickets por prioridade",
     description: "Agrupa os tickets (chamados) por prioridade e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, área, departamento, operador, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("Quantidade máxima de itens no resumo (top N); sem limite, mostra todos.")
+        .optional(),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ status, area, departamento, operador, situacao, dataInicio, dataFim, limite, ordem }) => {
@@ -652,15 +849,69 @@ server.registerTool(
     title: "Resumo de tickets por área",
     description: "Agrupa os tickets (chamados) por área e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("Quantidade máxima de itens no resumo (top N); sem limite, mostra todos.")
+        .optional(),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ status, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
@@ -785,16 +1036,78 @@ server.registerTool(
     title: "Resumo de tickets por operador",
     description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador (restringe a 1 só, útil numa continuação depois do resumo geral), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N). Use para perguntas como \"quais operadores têm mais tickets?\", \"quantos tickets cada operador possui?\" ou \"quem tem mais chamados em aberto?\".",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).optional(),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("Quantidade máxima de itens no resumo (top N); sem limite, mostra todos.")
+        .optional(),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
@@ -920,11 +1233,44 @@ server.registerTool(
     title: "Resumo de tickets por departamento",
     description: "Conta os tickets (chamados) de cada departamento cadastrado e informa o percentual de cada um (ordenado do maior pro menor), com filtros opcionais por status, área, operador e limite (top N). Use para perguntas como \"quantos tickets existem em cada departamento?\". Não aceita prioridade, situação (aberto/fechado) nem período de abertura (custaria trocar N chamadas baratas por N buscas completas, já que o nome do departamento não vem na listagem em lote — só filtra no servidor).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      limite: z.number().int().min(1).max(100).optional(),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("Quantidade máxima de itens no resumo (top N); sem limite, mostra todos.")
+        .optional(),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ status, area, operador, limite, ordem }) => {
@@ -990,16 +1336,78 @@ server.registerTool(
     title: "Resumo de tickets por cliente",
     description: "Agrupa os tickets (chamados) por cliente/solicitante (contact_name) e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Diferente das outras dimensões (status/área/prioridade/operador/departamento), cliente não é um catálogo pequeno e fechado, por isso o resumo já vem limitado aos 20 primeiros por padrão (ajustável via limite).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(20),
-      ordem: z.enum(["asc", "desc"]).optional(),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Quantidade máxima de clientes no resumo (top N, padrão 20)."),
+      ordem: z
+        .enum(["asc", "desc"])
+        .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
+        .optional(),
     },
   },
   async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
@@ -1077,15 +1485,76 @@ server.registerTool(
     title: "Listar tickets sem operador atribuído",
     description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
@@ -1161,13 +1630,64 @@ server.registerTool(
     title: "Listar tickets abertos mais antigos",
     description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador, cliente (solicitante) e prioridade. Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      limite: z.number().int().min(1).max(50).default(10),
-      pagina: z.number().int().min(1).default(1),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Quantidade máxima de tickets retornados (top N)."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ area, departamento, operador, cliente, prioridade, limite, pagina }) => {
@@ -1240,17 +1760,89 @@ server.registerTool(
     description:
       "Lista os tickets (chamados) que realmente estouraram o SLA (de resposta ou de solução), usando o dado de SLA por ticket — ao contrário de listar_tickets_abertos_mais_antigos (que só aproxima \"atrasado\" pelos tickets ainda abertos há mais tempo, sem checar o SLA de verdade), esta tool considera TAMBÉM tickets já encerrados que estouraram o prazo antes de fechar. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Como o SLA só é obtido 1 ticket por vez, se o filtro resultar em mais de 1000 candidatos a tool avisa e pede pra restringir o filtro, em vez de fazer uma rajada grande de chamadas.",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(50).default(10),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Quantidade máxima de tickets retornados (top N)."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
@@ -1365,17 +1957,89 @@ server.registerTool(
     title: "Listar tickets mais recentes",
     description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(50).default(10),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Quantidade máxima de tickets retornados (top N)."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
@@ -1470,17 +2134,89 @@ server.registerTool(
     title: "Listar tickets mais antigos",
     description: "Lista os tickets (chamados) cronologicamente mais antigos pela data de abertura, entre TODOS os tickets (abertos e fechados) — ao contrário de listar_tickets_abertos_mais_antigos, que é restrita aos ainda não encerrados. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(50).default(10),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Quantidade máxima de tickets retornados (top N)."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
@@ -1580,16 +2316,85 @@ server.registerTool(
     title: "Listar tickets congelados",
     description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
@@ -1669,16 +2474,85 @@ server.registerTool(
     title: "Listar tickets abertos",
     description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
@@ -1758,16 +2632,85 @@ server.registerTool(
     title: "Listar tickets fechados",
     description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
     inputSchema: {
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
@@ -1848,18 +2791,95 @@ server.registerTool(
     title: "Buscar tickets por texto",
     description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim), limite e paginação (pagina). Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
     inputSchema: {
-      texto: z.string().trim().min(1).max(200),
-      status: z.string().trim().min(1).max(100).optional(),
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      operador: z.string().trim().min(1).max(100).optional(),
-      cliente: z.string().trim().min(1).max(100).optional(),
-      prioridade: z.string().trim().min(1).max(100).optional(),
-      situacao: z.enum(["aberto", "fechado"]).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      limite: z.number().int().min(1).max(100).default(50),
-      pagina: z.number().int().min(1).default(1),
+      texto: z
+        .string()
+        .trim()
+        .min(1)
+        .max(200)
+        .describe("Texto a buscar no assunto (issue) ou na descrição dos tickets."),
+      status: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome do status do ticket (ex.: "Aberto", "Em Atendimento", "Encerrado") — aceita correspondência parcial contra o catálogo real de status.',
+        )
+        .optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) responsável pelo ticket — aceita correspondência parcial contra o catálogo real de usuários.",
+        )
+        .optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante do ticket — aceita correspondência parcial contra o nome do contato.",
+        )
+        .optional(),
+      prioridade: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          'Nome da prioridade do ticket (ex.: "Alta", "Urgente") — aceita correspondência parcial contra o catálogo real de prioridades.',
+        )
+        .optional(),
+      situacao: z
+        .enum(["aberto", "fechado"])
+        .describe('Filtra pela situação do ticket: "aberto" (ainda não encerrado) ou "fechado" (encerrado).')
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      limite: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .describe("Quantidade máxima de itens retornados por página."),
+      pagina: z
+        .number()
+        .int()
+        .min(1)
+        .default(1)
+        .describe("Número da página de resultados, começando em 1."),
     },
   },
   async ({ texto, status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
@@ -1943,10 +2963,36 @@ server.registerTool(
     title: "Visão geral operacional dos tickets",
     description: "Retorna um retrato geral da operação de tickets (chamados): total, abertos, fechados, sem operador, com SLA congelado, distribuição por prioridade, quantidade de abertos há mais de 7 dias e os 5 tickets abertos mais antigos ainda sem solução. Use para perguntas amplas de gestão como \"como está a operação?\", \"tem algo preocupante?\", \"me dá uma visão geral\" ou \"quais os tickets mais antigos ainda sem solução?\", com filtros opcionais por área, departamento e período de abertura (dataInicio/dataFim).",
     inputSchema: {
-      area: z.string().trim().min(1).max(100).optional(),
-      departamento: z.string().trim().min(1).max(100).optional(),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      area: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome da área responsável pelo ticket — aceita correspondência parcial contra o catálogo real de áreas.",
+        )
+        .optional(),
+      departamento: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do departamento responsável pelo ticket — aceita correspondência parcial contra o catálogo real de departamentos.",
+        )
+        .optional(),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
     },
   },
   async ({ area, departamento, dataInicio, dataFim }) => {
@@ -2021,7 +3067,14 @@ server.registerTool(
     title: "Analisar carga de trabalho de um operador",
     description: "Retorna a carga de trabalho de um operador específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto). Use para perguntas como \"o Fábio está sobrecarregado?\" ou \"qual a carga do operador X?\".",
     inputSchema: {
-      operador: z.string().trim().min(1).max(100),
+      operador: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do operador (usuário) cuja carga de trabalho será analisada — aceita correspondência parcial contra o catálogo real de usuários.",
+        ),
     },
   },
   async ({ operador }) => {
@@ -2088,9 +3141,26 @@ server.registerTool(
     title: "Analisar atividade de um cliente",
     description: "Retorna a atividade de um cliente/solicitante específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto), com filtro opcional por período de abertura (dataInicio/dataFim). Use para perguntas como \"o cliente Acme abre muito chamado?\", \"qual a atividade do cliente X nos últimos 30 dias?\" ou comparações do tipo \"o cliente X abriu mais chamados que o cliente Y?\".",
     inputSchema: {
-      cliente: z.string().trim().min(1).max(100),
-      dataInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
-      dataFim: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.").optional(),
+      cliente: z
+        .string()
+        .trim()
+        .min(1)
+        .max(100)
+        .describe(
+          "Nome do cliente/solicitante cuja atividade será analisada — aceita correspondência parcial contra o nome do contato.",
+        ),
+      dataInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data inicial (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
+      dataFim: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
+        .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
+        .optional(),
     },
   },
   async ({ cliente, dataInicio, dataFim }) => {
