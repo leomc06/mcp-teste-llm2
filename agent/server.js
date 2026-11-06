@@ -6,6 +6,7 @@ import { createMcpClient } from "./mcp-client.js";
 import { createOllamaClient } from "./ollama-client.js";
 import { createAnthropicClient } from "./llm-client.js";
 import { interpretQuestion } from "./llm-router.js";
+import { decisionsConcordam, describeLlmDecision, describeRegexDecision } from "./shadow-compare.js";
 import { AgentError, runAgent, runCompare, runDecidedTool } from "./agent-loop.js";
 import {
   selectToolDecision,
@@ -62,6 +63,18 @@ const configSchema = z.object({
   // roteador por regex nos dois modos (checagem determinística e sem
   // custo, antes de qualquer chamada à API paga).
   AGENT_INTERPRETER: z.enum(["regex", "llm"]).default("regex"),
+  // Fase 4 do plano de migração: modo sombra — só tem efeito com
+  // AGENT_INTERPRETER=regex (produção continua respondendo pelo regex).
+  // Pra cada pergunta real, dispara em paralelo (sem bloquear a resposta
+  // ao usuário) a mesma interpretQuestion() do modo "llm" e loga a decisão
+  // dela ao lado da decisão do regex, pra comparar antes de confiar no
+  // corte de verdade. z.enum em vez de z.coerce.boolean() de propósito —
+  // coerce.boolean() trata QUALQUER string não-vazia (inclusive "false")
+  // como true, o que seria uma armadilha clássica de variável de ambiente.
+  AGENT_SHADOW_LLM: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   ANTHROPIC_MODEL: z.string().min(1).max(100).default("claude-haiku-5-5"),
   ANTHROPIC_TIMEOUT_MS: z.coerce
@@ -74,8 +87,10 @@ const configSchema = z.object({
 
 const config = configSchema.parse(process.env);
 
-if (config.AGENT_INTERPRETER === "llm" && !config.ANTHROPIC_API_KEY) {
-  console.error("AGENT_INTERPRETER=llm exige ANTHROPIC_API_KEY.");
+const precisaDoLlm = config.AGENT_INTERPRETER === "llm" || config.AGENT_SHADOW_LLM;
+
+if (precisaDoLlm && !config.ANTHROPIC_API_KEY) {
+  console.error("AGENT_INTERPRETER=llm ou AGENT_SHADOW_LLM=true exige ANTHROPIC_API_KEY.");
   process.exit(1);
 }
 
@@ -101,7 +116,7 @@ const ollama = createOllamaClient({
 const ollamaTools = ollama.formatTools(mcp.tools);
 
 const llm =
-  config.AGENT_INTERPRETER === "llm"
+  precisaDoLlm
     ? createAnthropicClient({
         apiKey: config.ANTHROPIC_API_KEY,
         model: config.ANTHROPIC_MODEL,
@@ -201,6 +216,58 @@ function audit(data) {
       ...data,
     }),
   );
+}
+
+function logSombra(data) {
+  console.log(
+    JSON.stringify({
+      tipo: "sombra_llm",
+      horario: new Date().toISOString(),
+      ...data,
+    }),
+  );
+}
+
+// Fase 4 do plano de migração: nunca bloqueia nem afeta a resposta real ao
+// usuário (fire-and-forget) — só loga, pra comparar depois, o que o Claude
+// teria decidido pra essa MESMA pergunta que o regex já decidiu e já está
+// respondendo. Timeout independente do ciclo de vida da resposta HTTP (não
+// usa o AbortSignal da requisição) — mesmo que o usuário já tenha recebido
+// a resposta, a comparação ainda vale ser registrada.
+function dispararComparacaoSombra({ requestId, perguntaEfetiva, route }) {
+  // Só faz sentido comparando contra o regex, que é quem decide de
+  // verdade nesse modo — com AGENT_INTERPRETER=llm o Claude já é a
+  // decisão real, então sombrear ele contra ele mesmo seria 1 chamada
+  // paga a mais sem nenhuma informação nova.
+  if (!config.AGENT_SHADOW_LLM || config.AGENT_INTERPRETER !== "regex") {
+    return;
+  }
+
+  const regexDesc = describeRegexDecision(route);
+
+  interpretQuestion({
+    llm,
+    llmTools,
+    pergunta: perguntaEfetiva,
+    signal: AbortSignal.timeout(config.ANTHROPIC_TIMEOUT_MS),
+  })
+    .then((llmDecision) => {
+      const llmDesc = describeLlmDecision(llmDecision);
+
+      logSombra({
+        requestId,
+        regex: regexDesc,
+        llm: llmDesc,
+        concordam: decisionsConcordam(regexDesc, llmDesc),
+      });
+    })
+    .catch((error) => {
+      logSombra({
+        requestId,
+        regex: regexDesc,
+        erroLlm: error?.message ?? String(error),
+      });
+    });
 }
 
 const server = http.createServer(async (request, response) => {
@@ -438,6 +505,12 @@ const server = http.createServer(async (request, response) => {
         perguntaEfetiva,
         ollamaTools,
       );
+
+      dispararComparacaoSombra({
+        requestId,
+        perguntaEfetiva,
+        route: toolDecision.route,
+      });
 
       // Itens 3 e 4 do plano de correção da auditoria de interpretação: a
       // rota determinística detectou uma negação que nenhuma tool sustenta
