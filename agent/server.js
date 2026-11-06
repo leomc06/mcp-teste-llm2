@@ -476,8 +476,11 @@ const server = http.createServer(async (request, response) => {
       // "Compare X e Y" — a rota já decidiu as 2 chamadas (mesma tool, dois
       // conjuntos de argumentos) de forma totalmente determinística; roda
       // direto via runCompare, sem passar pelo Ollama (não há nada a
-      // escolher) e sem o caminho de 1 tool só logo abaixo.
-      if (toolDecision.route?.compare) {
+      // escolher) e sem o caminho de 1 tool só logo abaixo. Só no modo
+      // "regex" — no modo "llm" (AGENT_INTERPRETER=llm) é o próprio Claude
+      // quem decide fazer as 2+ chamadas (ver agent/llm-router.js), tratado
+      // mais abaixo, no branch desse modo.
+      if (toolDecision.route?.compare && config.AGENT_INTERPRETER === "regex") {
         if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
           const duracaoMs = Date.now() - startedAt;
 
@@ -614,6 +617,50 @@ const server = http.createServer(async (request, response) => {
             toolsUtilizadas: [],
             quantidadeChamadas: 0,
             esclarecimento: true,
+            perguntaEfetiva,
+            duracaoMs,
+          });
+          return;
+        }
+
+        // O Claude decidiu fazer 2+ chamadas da mesma tool na mesma
+        // resposta (comparação entre itens nomeados, ver system prompt em
+        // agent/llm-router.js) — reaproveita o MESMO runCompare/
+        // formatComparison usado pelo modo "regex", já genérico pra N
+        // itens, não só 2.
+        if (llmDecision.compare !== undefined) {
+          let compareResult;
+
+          activeAgentRequests += 1;
+
+          try {
+            compareResult = await runCompare({
+              mcp,
+              comparisons: llmDecision.compare,
+            });
+          } finally {
+            activeAgentRequests -= 1;
+          }
+
+          const duracaoMs = Date.now() - startedAt;
+
+          audit({
+            requestId,
+            usuario: userResult.data,
+            resultado: "sucesso",
+            toolsUtilizadas: compareResult.toolsUtilizadas,
+            quantidadeChamadas: compareResult.quantidadeChamadas,
+            continuacaoDetectada,
+            duracaoMs,
+          });
+
+          sendJson(response, 200, {
+            requestId,
+            resposta: compareResult.resposta,
+            fontes: compareResult.fontes,
+            dadosConsultados: compareResult.dadosConsultados,
+            toolsUtilizadas: compareResult.toolsUtilizadas,
+            quantidadeChamadas: compareResult.quantidadeChamadas,
             perguntaEfetiva,
             duracaoMs,
           });

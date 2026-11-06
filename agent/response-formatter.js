@@ -795,14 +795,15 @@ const COMPARISON_FORMATTERS = {
 };
 
 export function formatComparison(toolName, dadosArray) {
-  const formatter = COMPARISON_FORMATTERS[toolName];
-
-  if (!formatter) {
-    throw new AgentError(
-      "comparacao_nao_suportada",
-      `Comparação não suportada para a tool "${toolName}".`,
-    );
-  }
+  // As 4 tools abaixo têm formatter dedicado porque o resultado delas já é
+  // auto-contido (carga de 1 operador, detalhe de 1 ticket etc.) — mais
+  // legível lado a lado que o formatOne genérico. Pra qualquer outra tool
+  // (ex.: o LLM de nuvem — agent/llm-router.js — pode escolher uma tool de
+  // resumo/listagem pra comparar área/departamento em vez de listar_tickets)
+  // cai no formatOne genérico, que já sabe formatar as 27 tools — evita
+  // recusar uma comparação só porque a tool escolhida não está nesta lista
+  // específica.
+  const formatter = COMPARISON_FORMATTERS[toolName] ?? ((dados) => formatOne({ tool: toolName, dados }));
 
   return dadosArray
     .map((dados, index) => `--- ${index + 1} ---\n${formatter(dados)}`)

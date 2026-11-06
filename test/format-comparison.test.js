@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { formatComparison } from "../agent/response-formatter.js";
-import { AgentError } from "../agent/agent-error.js";
 
 test("formatComparison combina 2 cargas de operador lado a lado, sem apontar 'vencedor'", () => {
   const resposta = formatComparison("analisar_carga_operador", [
@@ -125,16 +124,36 @@ test("formatComparison combina 2 detalhes de ticket lado a lado", () => {
   assert.match(resposta, /VPN caindo/);
 });
 
-test("formatComparison lança erro claro pra tool não suportada (evita comparação sem sentido)", () => {
-  assert.throws(
-    () => formatComparison("resumo_tickets_por_status", [{}, {}]),
-    /não suportada/,
-  );
-});
+// Achado ao ligar o LLM de nuvem (Fase 3 do plano de migração, ver
+// agent/llm-router.js): "qual área tem mais tickets, WEB ou Suporte?"
+// fazia o Claude escolher resumo_tickets_por_area (não listar_tickets,
+// que é o que o roteador por regex usaria) pra comparação — uma escolha
+// de tool razoável, mas fora das 4 com formatter dedicado em
+// COMPARISON_FORMATTERS, e isso derrubava a comparação inteira com
+// "comparacao_nao_suportada" ao vivo. formatComparison agora cai no
+// formatOne genérico (o mesmo usado pra formatar qualquer uma das 27
+// tools fora de comparação) pra qualquer tool sem formatter dedicado, em
+// vez de recusar.
+test("formatComparison cai no formatOne genérico pra tool sem formatter dedicado, em vez de recusar (achado ao vivo com o LLM de nuvem)", () => {
+  const resposta = formatComparison("resumo_tickets_por_area", [
+    {
+      filtros: { area: "WEB" },
+      total_tickets: 10,
+      abertos: 3,
+      fechados: 7,
+      resumo: [{ chave: "Aberta", quantidade: 10, percentual: 100 }],
+    },
+    {
+      filtros: { area: "Suporte" },
+      total_tickets: 20,
+      abertos: 5,
+      fechados: 15,
+      resumo: [{ chave: "Aberta", quantidade: 20, percentual: 100 }],
+    },
+  ]);
 
-test("P14 da auditoria: erros de formatação lançam AgentError (código próprio), não Error genérico", () => {
-  assert.throws(
-    () => formatComparison("resumo_tickets_por_status", [{}, {}]),
-    (error) => error instanceof AgentError && error.code === "comparacao_nao_suportada",
-  );
+  assert.match(resposta, /--- 1 ---/);
+  assert.match(resposta, /--- 2 ---/);
+  assert.match(resposta, /10 ticket/);
+  assert.match(resposta, /20 ticket/);
 });

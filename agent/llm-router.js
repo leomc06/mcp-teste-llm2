@@ -21,15 +21,20 @@ export function buildSystemPrompt({ today = todayIsoDate() } = {}) {
     "Para responder uma consulta, escolha exatamente UMA das ferramentas disponibilizadas e preencha os argumentos a partir do texto da pergunta.",
     "Nunca invente nome de pessoa, área, departamento, cliente ou número de ticket que não esteja na pergunta — se o nome citado não existir no sistema, a própria ferramenta avisa isso depois, não é algo que você precisa adivinhar.",
     "Resolva datas relativas (ex.: \"mês passado\", \"essa semana\", \"última quinzena\", \"ano passado\") sozinho a partir da data de hoje informada acima, sempre no formato AAAA-MM-DD exigido pelos parâmetros de data.",
+    "Se a pergunta pedir uma COMPARAÇÃO entre 2 (ou mais) itens nomeados — ex.: \"compare o operador X com o Y\", \"qual área tem mais tickets, X ou Y\", \"detalhe os tickets 100 e 200\" — chame a MESMA ferramenta uma vez para cada item, na mesma resposta, cada chamada com o nome de só UM item isolado no argumento (nunca inclua palavras como \"a carga de trabalho do\" dentro do nome — só o nome da pessoa/área/departamento em si).",
+    "Para comparar OPERADOR use analisar_carga_operador (argumento operador); para CLIENTE use analisar_atividade_cliente (argumento cliente); para ÁREA ou DEPARTAMENTO use listar_tickets com limite:1 (argumento area OU departamento) — NUNCA use uma ferramenta de resumo/agrupamento (ex.: resumo_tickets_por_area) para comparar, porque ela agrupa por aquela dimensão em vez de filtrar por um valor específico dela, e vai ignorar o nome que você passar.",
     "Se a pergunta for ambígua (puder significar duas coisas diferentes de um jeito que mudaria qual ferramenta ou argumento usar) ou claramente não for sobre tickets, não chame nenhuma ferramenta — responda em texto, em português, pedindo esclarecimento ou explicando objetivamente que este sistema só responde consultas sobre tickets.",
     "Nunca inclua na sua resposta em texto nenhum dado concreto de ticket (número, status, nome de operador/cliente etc.) que não tenha vindo do resultado de uma ferramenta — se ainda não chamou nenhuma, você não tem esse dado.",
     "Responda sempre em português, de forma objetiva.",
   ].join(" ");
 }
 
-// {toolName, args, synthesize?} quando o modelo escolheu uma ferramenta,
-// ou {resposta} (texto livre — esclarecimento ou resposta fora do domínio)
-// quando não chamou nenhuma.
+// {toolName, args, synthesize?} quando o modelo escolheu 1 ferramenta,
+// {compare: [{toolName,args}, ...]} quando pediu a MESMA ferramenta 2+
+// vezes na mesma resposta (comparação entre itens nomeados — reaproveita
+// runCompare/formatComparison, já genéricos pra N itens, ver agent/
+// agent-loop.js), ou {resposta} (texto livre — esclarecimento ou resposta
+// fora do domínio) quando não chamou nenhuma.
 export async function interpretQuestion({ llm, llmTools, pergunta, signal }) {
   const response = await llm.chat({
     messages: [
@@ -40,9 +45,9 @@ export async function interpretQuestion({ llm, llmTools, pergunta, signal }) {
     signal,
   });
 
-  const toolCall = response.message.tool_calls?.[0];
+  const toolCalls = response.message.tool_calls ?? [];
 
-  if (!toolCall) {
+  if (toolCalls.length === 0) {
     const resposta = response.message.content.trim();
 
     if (!resposta) {
@@ -55,9 +60,18 @@ export async function interpretQuestion({ llm, llmTools, pergunta, signal }) {
     return { resposta };
   }
 
+  if (toolCalls.length > 1) {
+    return {
+      compare: toolCalls.map((toolCall) => ({
+        toolName: toolCall.function.name,
+        args: toolCall.function.arguments,
+      })),
+    };
+  }
+
   const decision = {
-    toolName: toolCall.function.name,
-    args: toolCall.function.arguments,
+    toolName: toolCalls[0].function.name,
+    args: toolCalls[0].function.arguments,
   };
 
   // Mesma decisão de síntese que o roteador regex já tomava (ver

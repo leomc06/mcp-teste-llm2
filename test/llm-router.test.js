@@ -93,6 +93,58 @@ test("interpretQuestion marca synthesize:'resumo_executivo' quando a pergunta pe
   assert.equal(decision.synthesize, "resumo_executivo");
 });
 
+test("interpretQuestion devolve {compare} quando o LLM chama a mesma tool 2 vezes na mesma resposta", async () => {
+  const llm = {
+    async chat() {
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { function: { name: "analisar_carga_operador", arguments: { operador: "Fábio Gali" } } },
+            { function: { name: "analisar_carga_operador", arguments: { operador: "Cesar Augusto" } } },
+          ],
+        },
+      };
+    },
+  };
+
+  const decision = await interpretQuestion({
+    llm,
+    llmTools: [],
+    pergunta: "Compare a carga de trabalho do Fábio Gali com a do Cesar Augusto.",
+  });
+
+  assert.deepEqual(decision, {
+    compare: [
+      { toolName: "analisar_carga_operador", args: { operador: "Fábio Gali" } },
+      { toolName: "analisar_carga_operador", args: { operador: "Cesar Augusto" } },
+    ],
+  });
+});
+
+test("interpretQuestion devolve {compare} com 3+ chamadas (ex.: detalhar vários tickets de uma vez)", async () => {
+  const llm = {
+    async chat() {
+      return {
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { function: { name: "buscar_ticket_por_numero", arguments: { numero: 100 } } },
+            { function: { name: "buscar_ticket_por_numero", arguments: { numero: 200 } } },
+            { function: { name: "buscar_ticket_por_numero", arguments: { numero: 300 } } },
+          ],
+        },
+      };
+    },
+  };
+
+  const decision = await interpretQuestion({ llm, llmTools: [], pergunta: "Detalhe os tickets 100, 200 e 300." });
+
+  assert.equal(decision.compare.length, 3);
+});
+
 test("interpretQuestion não marca synthesize quando a pergunta não pede resumo", async () => {
   const llm = {
     async chat() {

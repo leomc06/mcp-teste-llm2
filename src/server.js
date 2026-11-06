@@ -109,7 +109,7 @@ server.registerTool(
   {
     title: "Listar áreas de tickets",
     description: "Lista as áreas cadastradas para tickets (chamados) no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -126,7 +126,7 @@ server.registerTool(
   {
     title: "Listar prioridades de tickets",
     description: "Lista as prioridades cadastradas para tickets (chamados) no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -143,7 +143,7 @@ server.registerTool(
   {
     title: "Listar canais de tickets",
     description: "Lista os canais de entrada cadastrados para tickets (chamados) no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -160,7 +160,7 @@ server.registerTool(
   {
     title: "Listar status de tickets",
     description: "Lista os status possíveis para tickets (chamados) no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -177,7 +177,7 @@ server.registerTool(
   {
     title: "Listar departamentos de tickets",
     description: "Lista os departamentos cadastrados para tickets (chamados) no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -194,7 +194,7 @@ server.registerTool(
   {
     title: "Listar usuários de tickets",
     description: "Lista os usuários (operadores) cadastrados no sistema de tickets.",
-    inputSchema: {},
+    inputSchema: z.object({}).strict(),
   },
   async () => {
     try {
@@ -211,14 +211,14 @@ server.registerTool(
   {
     title: "Buscar usuários por nome",
     description: "Busca usuários (operadores) do sistema de tickets cujo nome ou login contenham o texto informado.",
-    inputSchema: {
+    inputSchema: z.object({
       nome: z
         .string()
         .trim()
         .min(1)
         .max(100)
         .describe("Nome ou login (completo ou parcial) do usuário a buscar."),
-    },
+    }).strict(),
   },
   async ({ nome }) => {
     try {
@@ -243,14 +243,14 @@ server.registerTool(
   {
     title: "Buscar ticket por número",
     description: "Busca o detalhe completo de um ticket (chamado) pelo número, incluindo SLA, comentários e anexos. Use sempre que a pergunta citar um número de ticket específico, mesmo que outros filtros também apareçam na frase.",
-    inputSchema: {
+    inputSchema: z.object({
       numero: z
         .number()
         .int()
         .positive()
         .max(2147483647)
         .describe("Número identificador do ticket (chamado)."),
-    },
+    }).strict(),
   },
   async ({ numero }) => {
     try {
@@ -271,7 +271,7 @@ server.registerTool(
   {
     title: "Listar tickets",
     description: "Lista tickets (chamados), com filtros opcionais por status, área, departamento, operador responsável, cliente (nome do solicitante), prioridade, número e período de abertura (dataInicio/dataFim, formato AAAA-MM-DD ou por extenso). Não filtra por coluna do Kanban. Use para listar registros individuais; para perguntas de contagem/agrupamento (\"quantos\", \"por status\", \"por área\" etc.) prefira as tools resumo_tickets_por_*.",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -358,7 +358,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, numero, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -505,7 +505,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por status",
     description: "Agrupa os tickets (chamados) por status e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por área, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
-    inputSchema: {
+    inputSchema: z.object({
       area: z
         .string()
         .trim()
@@ -569,7 +569,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
@@ -697,7 +697,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por prioridade",
     description: "Agrupa os tickets (chamados) por prioridade e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, área, departamento, operador, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -761,7 +761,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
@@ -848,7 +848,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por área",
     description: "Agrupa os tickets (chamados) por área e informa a quantidade e o percentual em cada uma (ordenado do maior pro menor), além do total de tickets abertos e fechados, com filtros opcionais por status, departamento, operador, prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -912,7 +912,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ status, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
@@ -1035,7 +1035,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por operador",
     description: "Agrupa os tickets (chamados) por operador responsável e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador (restringe a 1 só, útil numa continuação depois do resumo geral), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim) e limite (top N). Use para perguntas como \"quais operadores têm mais tickets?\", \"quantos tickets cada operador possui?\" ou \"quem tem mais chamados em aberto?\".",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -1108,7 +1108,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
@@ -1232,7 +1232,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por departamento",
     description: "Conta os tickets (chamados) de cada departamento cadastrado e informa o percentual de cada um (ordenado do maior pro menor), com filtros opcionais por status, área, operador e limite (top N). Use para perguntas como \"quantos tickets existem em cada departamento?\". Não aceita prioridade, situação (aberto/fechado) nem período de abertura (custaria trocar N chamadas baratas por N buscas completas, já que o nome do departamento não vem na listagem em lote — só filtra no servidor).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -1271,7 +1271,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ status, area, operador, limite, ordem }) => {
     try {
@@ -1335,7 +1335,7 @@ server.registerTool(
   {
     title: "Resumo de tickets por cliente",
     description: "Agrupa os tickets (chamados) por cliente/solicitante (contact_name) e informa a quantidade e o percentual em cada um (ordenado do maior pro menor), com filtros opcionais por status, área, departamento, operador, prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Diferente das outras dimensões (status/área/prioridade/operador/departamento), cliente não é um catálogo pequeno e fechado, por isso o resumo já vem limitado aos 20 primeiros por padrão (ajustável via limite).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -1408,7 +1408,7 @@ server.registerTool(
         .enum(["asc", "desc"])
         .describe('Ordem de classificação do resumo: "desc" (do maior pro menor, padrão) ou "asc" (do menor pro maior).')
         .optional(),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, prioridade, situacao, dataInicio, dataFim, limite, ordem }) => {
     try {
@@ -1484,7 +1484,7 @@ server.registerTool(
   {
     title: "Listar tickets sem operador atribuído",
     description: "Lista e conta os tickets (chamados) que ainda não têm operador atribuído, com filtros opcionais por status, área, departamento, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -1555,7 +1555,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -1629,7 +1629,7 @@ server.registerTool(
   {
     title: "Listar tickets abertos mais antigos",
     description: "Lista os tickets (chamados) ainda não encerrados ordenados do mais antigo para o mais novo pela data de abertura, com filtros opcionais por área, departamento, operador, cliente (solicitante) e prioridade. Suporta paginação (pagina) quando o total passa do limite.",
-    inputSchema: {
+    inputSchema: z.object({
       area: z
         .string()
         .trim()
@@ -1688,7 +1688,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ area, departamento, operador, cliente, prioridade, limite, pagina }) => {
     try {
@@ -1759,7 +1759,7 @@ server.registerTool(
     title: "Listar tickets com SLA vencido",
     description:
       "Lista os tickets (chamados) que realmente estouraram o SLA (de resposta ou de solução), usando o dado de SLA por ticket — ao contrário de listar_tickets_abertos_mais_antigos (que só aproxima \"atrasado\" pelos tickets ainda abertos há mais tempo, sem checar o SLA de verdade), esta tool considera TAMBÉM tickets já encerrados que estouraram o prazo antes de fechar. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Como o SLA só é obtido 1 ticket por vez, se o filtro resultar em mais de 1000 candidatos a tool avisa e pede pra restringir o filtro, em vez de fazer uma rajada grande de chamadas.",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -1843,7 +1843,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -1956,7 +1956,7 @@ server.registerTool(
   {
     title: "Listar tickets mais recentes",
     description: "Lista os tickets (chamados) mais recentemente abertos, do mais novo para o mais antigo pela data de abertura, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -2040,7 +2040,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2133,7 +2133,7 @@ server.registerTool(
   {
     title: "Listar tickets mais antigos",
     description: "Lista os tickets (chamados) cronologicamente mais antigos pela data de abertura, entre TODOS os tickets (abertos e fechados) — ao contrário de listar_tickets_abertos_mais_antigos, que é restrita aos ainda não encerrados. Aceita filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado) e período de abertura (dataInicio/dataFim). Suporta paginação (pagina) quando o total passa do limite.",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -2217,7 +2217,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2315,7 +2315,7 @@ server.registerTool(
   {
     title: "Listar tickets congelados",
     description: "Lista os tickets (chamados) com o relógio de SLA congelado (is_frozen), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -2395,7 +2395,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2473,7 +2473,7 @@ server.registerTool(
   {
     title: "Listar tickets abertos",
     description: "Lista e conta os tickets (chamados) ainda não encerrados (sem data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de abertura (dataInicio/dataFim), limite e paginação (pagina).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -2553,7 +2553,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2631,7 +2631,7 @@ server.registerTool(
   {
     title: "Listar tickets fechados",
     description: "Lista e conta os tickets (chamados) já encerrados (com data de fechamento), com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, período de fechamento (dataInicio/dataFim), limite e paginação (pagina).",
-    inputSchema: {
+    inputSchema: z.object({
       status: z
         .string()
         .trim()
@@ -2711,7 +2711,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ status, area, departamento, operador, cliente, prioridade, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2790,7 +2790,7 @@ server.registerTool(
   {
     title: "Buscar tickets por texto",
     description: "Busca tickets (chamados) cujo assunto (issue) ou descrição contenham o texto informado, com filtros opcionais por status, área, departamento, operador, cliente (solicitante), prioridade, situação (aberto/fechado), período de abertura (dataInicio/dataFim), limite e paginação (pagina). Use para perguntas como \"tickets sobre impressora\", \"chamados relacionados a rede\" ou \"tickets abertos sobre queda de energia\".",
-    inputSchema: {
+    inputSchema: z.object({
       texto: z
         .string()
         .trim()
@@ -2880,7 +2880,7 @@ server.registerTool(
         .min(1)
         .default(1)
         .describe("Número da página de resultados, começando em 1."),
-    },
+    }).strict(),
   },
   async ({ texto, status, area, departamento, operador, cliente, prioridade, situacao, dataInicio, dataFim, limite, pagina }) => {
     try {
@@ -2962,7 +2962,7 @@ server.registerTool(
   {
     title: "Visão geral operacional dos tickets",
     description: "Retorna um retrato geral da operação de tickets (chamados): total, abertos, fechados, sem operador, com SLA congelado, distribuição por prioridade, quantidade de abertos há mais de 7 dias e os 5 tickets abertos mais antigos ainda sem solução. Use para perguntas amplas de gestão como \"como está a operação?\", \"tem algo preocupante?\", \"me dá uma visão geral\" ou \"quais os tickets mais antigos ainda sem solução?\", com filtros opcionais por área, departamento e período de abertura (dataInicio/dataFim).",
-    inputSchema: {
+    inputSchema: z.object({
       area: z
         .string()
         .trim()
@@ -2993,7 +2993,7 @@ server.registerTool(
         .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
         .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
         .optional(),
-    },
+    }).strict(),
   },
   async ({ area, departamento, dataInicio, dataFim }) => {
     try {
@@ -3066,7 +3066,7 @@ server.registerTool(
   {
     title: "Analisar carga de trabalho de um operador",
     description: "Retorna a carga de trabalho de um operador específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto). Use para perguntas como \"o Fábio está sobrecarregado?\" ou \"qual a carga do operador X?\".",
-    inputSchema: {
+    inputSchema: z.object({
       operador: z
         .string()
         .trim()
@@ -3075,7 +3075,7 @@ server.registerTool(
         .describe(
           "Nome do operador (usuário) cuja carga de trabalho será analisada — aceita correspondência parcial contra o catálogo real de usuários.",
         ),
-    },
+    }).strict(),
   },
   async ({ operador }) => {
     try {
@@ -3140,7 +3140,7 @@ server.registerTool(
   {
     title: "Analisar atividade de um cliente",
     description: "Retorna a atividade de um cliente/solicitante específico: total de tickets, abertos, fechados, congelados, quantos são de prioridade alta/urgente e qual o ticket aberto mais antigo dele (com quantos dias em aberto), com filtro opcional por período de abertura (dataInicio/dataFim). Use para perguntas como \"o cliente Acme abre muito chamado?\", \"qual a atividade do cliente X nos últimos 30 dias?\" ou comparações do tipo \"o cliente X abriu mais chamados que o cliente Y?\".",
-    inputSchema: {
+    inputSchema: z.object({
       cliente: z
         .string()
         .trim()
@@ -3161,7 +3161,7 @@ server.registerTool(
         .regex(/^\d{4}-\d{2}-\d{2}$/u, "Use o formato AAAA-MM-DD.")
         .describe("Data final (inclusive) do período de abertura do ticket, no formato AAAA-MM-DD.")
         .optional(),
-    },
+    }).strict(),
   },
   async ({ cliente, dataInicio, dataFim }) => {
     try {
