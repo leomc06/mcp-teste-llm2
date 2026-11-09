@@ -410,6 +410,37 @@ function formatUsersList(data) {
   ].join("\n");
 }
 
+const FILTRO_LABELS = {
+  status: "status",
+  area: "área",
+  departamento: "departamento",
+  operador: "operador",
+  cliente: "cliente",
+  prioridade: "prioridade",
+  situacao: "situação",
+  dataInicio: "data inicial",
+  dataFim: "data final",
+};
+
+// "Nenhum ticket foi encontrado para calcular o resumo por operador." (achado
+// ao vivo): quando o filtro é um NOME específico (ex.: operador: "Bruno de
+// Souza Castro", situacao: "aberto") e o resultado é vazio porque aquela
+// pessoa/filtro realmente não tem tickets correspondentes — não porque o
+// nome não existe no catálogo (isso já cai no `encontrado === false` acima)
+// — a mensagem genérica por dimensão soa como erro/não-reconhecimento, não
+// como "0 tickets batem com esse filtro". Lista os filtros ativos quando há
+// algum, pra deixar claro o que foi de fato consultado.
+function describeFiltrosAtivos(filtros) {
+  if (!filtros || typeof filtros !== "object") {
+    return "";
+  }
+
+  return Object.entries(filtros)
+    .filter(([, valor]) => valor !== undefined && valor !== null && valor !== "")
+    .map(([campo, valor]) => `${FILTRO_LABELS[campo] ?? campo}: "${valor}"`)
+    .join(", ");
+}
+
 function formatTicketSummary(data, dimensaoLabel) {
   if (data.encontrado === false) {
     return data.motivo ?? "Não foi possível aplicar os filtros informados.";
@@ -418,7 +449,12 @@ function formatTicketSummary(data, dimensaoLabel) {
   const resumo = data.resumo ?? [];
 
   if (resumo.length === 0) {
-    return mensagemVazia(data, `Nenhum ticket foi encontrado para calcular o resumo por ${dimensaoLabel}.`);
+    const filtrosAtivos = describeFiltrosAtivos(data.filtros);
+    const semResultado = filtrosAtivos
+      ? `Nenhum ticket encontrado com os filtros informados (${filtrosAtivos}).`
+      : `Nenhum ticket foi encontrado para calcular o resumo por ${dimensaoLabel}.`;
+
+    return mensagemVazia(data, semResultado);
   }
 
   const truncadoAviso = data.truncado
