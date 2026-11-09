@@ -22,14 +22,13 @@ const modelsResponseSchema = z.object({
   data: z.array(z.object({ id: z.string() })),
 });
 
-// Cliente pro interpretador de pergunta em nuvem (Claude, via API paga da
-// Anthropic — ver Fase 2/3 do plano de migração). Contrato igual ao de
-// `createOllamaClient` (`agent/ollama-client.js`): `formatTools(mcpTools)`
-// e `chat({messages, tools, signal})` devolvendo `{message: {role,
-// content, tool_calls}}` — quem chama (e os testes) não precisa conhecer
-// o formato nativo de blocos de conteúdo da Anthropic, nem o fato de que
-// ela exige um campo `system` separado em vez de `role: "system"` dentro
-// de `messages`.
+// Cliente pro interpretador de pergunta e pra síntese de conteúdo de
+// ticket, ambos em nuvem (Claude, via API paga da Anthropic). Contrato:
+// `formatTools(mcpTools)` e `chat({messages, tools, signal})` devolvendo
+// `{message: {role, content, tool_calls}}` — quem chama (e os testes) não
+// precisa conhecer o formato nativo de blocos de conteúdo da Anthropic,
+// nem o fato de que ela exige um campo `system` separado em vez de
+// `role: "system"` dentro de `messages`.
 //
 // Só cobre 1 chamada por pergunta (decidir tool+args OU responder texto
 // livre) — não há round-trip de `tool_result` porque esta camada nunca

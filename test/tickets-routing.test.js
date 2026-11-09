@@ -6139,11 +6139,10 @@ test("espaço duplo entre a palavra-chave e o conector de formato (achado ao viv
   assert.equal(comEspacoDuplo.entities.operador, undefined);
 });
 
-// Extraídas da rota (Fase 3 do plano de migração pro LLM de nuvem, ver
-// agent/llm-router.js) pra decidir se vale a pena sintetizar em prosa
-// (via Ollama local) a resposta de buscar_ticket_por_numero/
-// resumo_operacional_tickets, mesmo quando é o LLM — não mais o regex —
-// quem decide a tool/argumentos.
+// Extraídas da rota (ver agent/llm-router.js) pra decidir se vale a pena
+// sintetizar em prosa (via Claude) a resposta de buscar_ticket_por_numero/
+// resumo_operacional_tickets, mesmo quando é o Claude — não regex — quem
+// decide a tool/argumentos.
 test("isResumoExecutivoIntent reconhece pedido de resumo executivo/texto pra audiência de gestão", () => {
   assert.equal(isResumoExecutivoIntent("Resumo executivo dos tickets."), true);
   assert.equal(isResumoExecutivoIntent("Escreva um parágrafo pra diretoria sobre os tickets."), true);

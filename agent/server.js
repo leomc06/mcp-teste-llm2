@@ -3,17 +3,10 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { createMcpClient } from "./mcp-client.js";
-import { createOllamaClient } from "./ollama-client.js";
 import { createAnthropicClient } from "./llm-client.js";
 import { interpretQuestion } from "./llm-router.js";
-import { decisionsConcordam, describeLlmDecision, describeRegexDecision } from "./shadow-compare.js";
-import { AgentError, runAgent, runCompare, runDecidedTool } from "./agent-loop.js";
-import {
-  selectToolDecision,
-} from "./tool-selector.js";
-import {
-  buildToolArguments,
-} from "./routing-utils.js";
+import { AgentError, runCompare, runDecidedTool } from "./agent-loop.js";
+import { routeTicketQuestion } from "./tickets-routing.js";
 import { isCapabilityQuestion, isExternalActionRequest, isWriteRequest } from "./write-policy.js";
 import { detectsContinuation, mergeContinuation } from "./continuation.js";
 import { serveStaticFile } from "./static-files.js";
@@ -27,7 +20,6 @@ const configSchema = z.object({
     .int()
     .min(1000)
     .max(300000),
-  AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(10),
   AGENT_MAX_CONCURRENT_REQUESTS: z.coerce
     .number()
     .int()
@@ -48,34 +40,7 @@ const configSchema = z.object({
     .min(1)
     .max(1000)
     .default(30),
-  OLLAMA_BASE_URL: z.string().url(),
-  OLLAMA_MODEL: z.string().min(1).max(100),
-  OLLAMA_NUM_THREAD: z.coerce.number().int().min(1).max(4),
-  OLLAMA_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .min(1000)
-    .max(300000),
-  // Fase 3 do plano de migração pro LLM de nuvem: opt-in, default "regex"
-  // mantém o comportamento de hoje (roteador por regex decide a tool)
-  // inalterado. "llm" troca quem decide tool+argumentos pelo Claude (ver
-  // agent/llm-router.js) — compare/esclarecimento continuam vindo do
-  // roteador por regex nos dois modos (checagem determinística e sem
-  // custo, antes de qualquer chamada à API paga).
-  AGENT_INTERPRETER: z.enum(["regex", "llm"]).default("regex"),
-  // Fase 4 do plano de migração: modo sombra — só tem efeito com
-  // AGENT_INTERPRETER=regex (produção continua respondendo pelo regex).
-  // Pra cada pergunta real, dispara em paralelo (sem bloquear a resposta
-  // ao usuário) a mesma interpretQuestion() do modo "llm" e loga a decisão
-  // dela ao lado da decisão do regex, pra comparar antes de confiar no
-  // corte de verdade. z.enum em vez de z.coerce.boolean() de propósito —
-  // coerce.boolean() trata QUALQUER string não-vazia (inclusive "false")
-  // como true, o que seria uma armadilha clássica de variável de ambiente.
-  AGENT_SHADOW_LLM: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((value) => value === "true"),
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1),
   ANTHROPIC_MODEL: z.string().min(1).max(100).default("claude-haiku-5-5"),
   ANTHROPIC_TIMEOUT_MS: z.coerce
     .number()
@@ -86,13 +51,6 @@ const configSchema = z.object({
 });
 
 const config = configSchema.parse(process.env);
-
-const precisaDoLlm = config.AGENT_INTERPRETER === "llm" || config.AGENT_SHADOW_LLM;
-
-if (precisaDoLlm && !config.ANTHROPIC_API_KEY) {
-  console.error("AGENT_INTERPRETER=llm ou AGENT_SHADOW_LLM=true exige ANTHROPIC_API_KEY.");
-  process.exit(1);
-}
 
 const projectDir = fileURLToPath(new URL("../", import.meta.url));
 const webDir = fileURLToPath(new URL("../web/", import.meta.url));
@@ -106,25 +64,13 @@ try {
   process.exit(1);
 }
 
-const ollama = createOllamaClient({
-  baseUrl: config.OLLAMA_BASE_URL,
-  model: config.OLLAMA_MODEL,
-  timeoutMs: config.OLLAMA_TIMEOUT_MS,
-  numThread: config.OLLAMA_NUM_THREAD,
+const llm = createAnthropicClient({
+  apiKey: config.ANTHROPIC_API_KEY,
+  model: config.ANTHROPIC_MODEL,
+  timeoutMs: config.ANTHROPIC_TIMEOUT_MS,
 });
 
-const ollamaTools = ollama.formatTools(mcp.tools);
-
-const llm =
-  precisaDoLlm
-    ? createAnthropicClient({
-        apiKey: config.ANTHROPIC_API_KEY,
-        model: config.ANTHROPIC_MODEL,
-        timeoutMs: config.ANTHROPIC_TIMEOUT_MS,
-      })
-    : null;
-
-const llmTools = llm ? llm.formatTools(mcp.tools) : null;
+const llmTools = llm.formatTools(mcp.tools);
 
 const requestSchema = z
   .object({
@@ -218,58 +164,6 @@ function audit(data) {
   );
 }
 
-function logSombra(data) {
-  console.log(
-    JSON.stringify({
-      tipo: "sombra_llm",
-      horario: new Date().toISOString(),
-      ...data,
-    }),
-  );
-}
-
-// Fase 4 do plano de migração: nunca bloqueia nem afeta a resposta real ao
-// usuário (fire-and-forget) — só loga, pra comparar depois, o que o Claude
-// teria decidido pra essa MESMA pergunta que o regex já decidiu e já está
-// respondendo. Timeout independente do ciclo de vida da resposta HTTP (não
-// usa o AbortSignal da requisição) — mesmo que o usuário já tenha recebido
-// a resposta, a comparação ainda vale ser registrada.
-function dispararComparacaoSombra({ requestId, perguntaEfetiva, route }) {
-  // Só faz sentido comparando contra o regex, que é quem decide de
-  // verdade nesse modo — com AGENT_INTERPRETER=llm o Claude já é a
-  // decisão real, então sombrear ele contra ele mesmo seria 1 chamada
-  // paga a mais sem nenhuma informação nova.
-  if (!config.AGENT_SHADOW_LLM || config.AGENT_INTERPRETER !== "regex") {
-    return;
-  }
-
-  const regexDesc = describeRegexDecision(route);
-
-  interpretQuestion({
-    llm,
-    llmTools,
-    pergunta: perguntaEfetiva,
-    signal: AbortSignal.timeout(config.ANTHROPIC_TIMEOUT_MS),
-  })
-    .then((llmDecision) => {
-      const llmDesc = describeLlmDecision(llmDecision);
-
-      logSombra({
-        requestId,
-        regex: regexDesc,
-        llm: llmDesc,
-        concordam: decisionsConcordam(regexDesc, llmDesc),
-      });
-    })
-    .catch((error) => {
-      logSombra({
-        requestId,
-        regex: regexDesc,
-        erroLlm: error?.message ?? String(error),
-      });
-    });
-}
-
 const server = http.createServer(async (request, response) => {
   const startedAt = Date.now();
   const requestId = randomUUID();
@@ -295,39 +189,28 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "GET" && request.url === "/health") {
     try {
-      const ollamaStatus = await ollama.check();
-      const llmStatus = llm ? await llm.check().catch(() => null) : null;
+      const llmStatus = await llm.check();
 
       sendJson(response, 200, {
         status: "ok",
         servico: "agente-consulta-os",
-        interpretador: config.AGENT_INTERPRETER,
-        modelo: config.OLLAMA_MODEL,
-        ollama: {
-          conectado: true,
-          versao: ollamaStatus.version,
+        llm: {
+          modelo: config.ANTHROPIC_MODEL,
+          conectado: llmStatus.ok === true,
         },
-        ...(llm
-          ? {
-              llm: {
-                modelo: config.ANTHROPIC_MODEL,
-                conectado: llmStatus?.ok === true,
-              },
-            }
-          : {}),
         mcp: {
           conectado: true,
           quantidadeTools: mcp.tools.length,
           tools: mcp.tools.map((tool) => tool.name),
         },
-        quantidadeToolsModelo: ollamaTools.length,
+        quantidadeToolsModelo: llmTools.length,
         horario: new Date().toISOString(),
       });
     } catch {
       sendJson(response, 503, {
         status: "degradado",
         servico: "agente-consulta-os",
-        ollama: {
+        llm: {
           conectado: false,
         },
         mcp: {
@@ -501,31 +384,21 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const toolDecision = selectToolDecision(
-        perguntaEfetiva,
-        ollamaTools,
-      );
-
-      dispararComparacaoSombra({
-        requestId,
-        perguntaEfetiva,
-        route: toolDecision.route,
-      });
-
-      // Itens 3 e 4 do plano de correção da auditoria de interpretação: a
-      // rota determinística detectou uma negação que nenhuma tool sustenta
+      // Pré-filtro determinístico e sem custo (sem chamada à API paga): a
+      // rota por regex detectou uma negação que nenhuma tool sustenta
       // (ex.: "tickets diferentes de cancelados") ou um termo ambíguo sem
       // contexto suficiente (ex.: "parado" sozinho) — responde pedindo
-      // esclarecimento direto, sem chamar tool nem o Ollama.
-      if (toolDecision.route?.clarification) {
+      // esclarecimento direto, sem chamar o Claude.
+      const route = routeTicketQuestion(perguntaEfetiva);
+
+      if (route?.clarification) {
         const duracaoMs = Date.now() - startedAt;
 
         audit({
           requestId,
           usuario: userResult.data,
           resultado: "esclarecimento",
-          motivo: toolDecision.route.intent,
-          quantidadeToolsDisponibilizadas: 0,
+          motivo: route.intent,
           toolsUtilizadas: [],
           quantidadeChamadas: 0,
           continuacaoDetectada,
@@ -534,7 +407,7 @@ const server = http.createServer(async (request, response) => {
 
         sendJson(response, 200, {
           requestId,
-          resposta: toolDecision.route.clarification,
+          resposta: route.clarification,
           fontes: [],
           dadosConsultados: [],
           toolsUtilizadas: [],
@@ -546,360 +419,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      // "Compare X e Y" — a rota já decidiu as 2 chamadas (mesma tool, dois
-      // conjuntos de argumentos) de forma totalmente determinística; roda
-      // direto via runCompare, sem passar pelo Ollama (não há nada a
-      // escolher) e sem o caminho de 1 tool só logo abaixo. Só no modo
-      // "regex" — no modo "llm" (AGENT_INTERPRETER=llm) é o próprio Claude
-      // quem decide fazer as 2+ chamadas (ver agent/llm-router.js), tratado
-      // mais abaixo, no branch desse modo.
-      if (toolDecision.route?.compare && config.AGENT_INTERPRETER === "regex") {
-        if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
-          const duracaoMs = Date.now() - startedAt;
-
-          audit({
-            requestId,
-            usuario: userResult.data,
-            resultado: "recusado",
-            motivo: "limite_concorrencia",
-            duracaoMs,
-          });
-
-          sendJson(response, 429, {
-            requestId,
-            erro: "agente_ocupado",
-            mensagem:
-              "O agente está processando outra consulta. Tente novamente em instantes.",
-          });
-          return;
-        }
-
-        let compareResult;
-
-        activeAgentRequests += 1;
-
-        try {
-          compareResult = await runCompare({
-            mcp,
-            comparisons: toolDecision.route.compare,
-          });
-        } finally {
-          activeAgentRequests -= 1;
-        }
-
-        const duracaoMs = Date.now() - startedAt;
-
-        audit({
-          requestId,
-          usuario: userResult.data,
-          resultado: "sucesso",
-          quantidadeToolsDisponibilizadas: 0,
-          toolsUtilizadas: compareResult.toolsUtilizadas,
-          quantidadeChamadas: compareResult.quantidadeChamadas,
-          duracaoMs,
-        });
-
-        sendJson(response, 200, {
-          requestId,
-          resposta: compareResult.resposta,
-          fontes: compareResult.fontes,
-          dadosConsultados: compareResult.dadosConsultados,
-          toolsUtilizadas: compareResult.toolsUtilizadas,
-          quantidadeChamadas: compareResult.quantidadeChamadas,
-          duracaoMs,
-        });
-        return;
-      }
-
-      // Fase 3 do plano de migração pro LLM de nuvem: com
-      // AGENT_INTERPRETER=llm, quem decide a tool+argumentos pra tudo que
-      // não é "compare"/esclarecimento (ambos acima, continuam vindo do
-      // roteador por regex nos dois modos) passa a ser o Claude (ver
-      // agent/llm-router.js), não mais o roteador por regex logo abaixo —
-      // esse branch sempre termina em `return`, então o código de hoje
-      // (routeToolArguments + runAgent) fica inalterado e só roda no modo
-      // "regex" (default).
-      if (config.AGENT_INTERPRETER === "llm") {
-        if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
-          const duracaoMs = Date.now() - startedAt;
-
-          audit({
-            requestId,
-            usuario: userResult.data,
-            resultado: "recusado",
-            motivo: "limite_concorrencia",
-            duracaoMs,
-          });
-
-          sendJson(response, 429, {
-            requestId,
-            erro: "agente_ocupado",
-            mensagem:
-              "O agente está processando outra consulta. Tente novamente em instantes.",
-          });
-          return;
-        }
-
-        const disconnectController = new AbortController();
-
-        response.on("close", () => {
-          if (!response.writableEnded) {
-            disconnectController.abort();
-          }
-        });
-
-        const signal = AbortSignal.any([
-          AbortSignal.timeout(config.AGENT_REQUEST_TIMEOUT_MS),
-          disconnectController.signal,
-        ]);
-
-        let llmDecision;
-
-        activeAgentRequests += 1;
-
-        try {
-          llmDecision = await interpretQuestion({
-            llm,
-            llmTools,
-            pergunta: perguntaEfetiva,
-            signal,
-          });
-        } finally {
-          activeAgentRequests -= 1;
-        }
-
-        if (llmDecision.resposta !== undefined) {
-          const duracaoMs = Date.now() - startedAt;
-
-          audit({
-            requestId,
-            usuario: userResult.data,
-            resultado: "esclarecimento",
-            motivo: "llm_sem_tool",
-            toolsUtilizadas: [],
-            quantidadeChamadas: 0,
-            continuacaoDetectada,
-            duracaoMs,
-          });
-
-          sendJson(response, 200, {
-            requestId,
-            resposta: llmDecision.resposta,
-            fontes: [],
-            dadosConsultados: [],
-            toolsUtilizadas: [],
-            quantidadeChamadas: 0,
-            esclarecimento: true,
-            perguntaEfetiva,
-            duracaoMs,
-          });
-          return;
-        }
-
-        // O Claude decidiu fazer 2+ chamadas da mesma tool na mesma
-        // resposta (comparação entre itens nomeados, ver system prompt em
-        // agent/llm-router.js) — reaproveita o MESMO runCompare/
-        // formatComparison usado pelo modo "regex", já genérico pra N
-        // itens, não só 2.
-        if (llmDecision.compare !== undefined) {
-          let compareResult;
-
-          activeAgentRequests += 1;
-
-          try {
-            compareResult = await runCompare({
-              mcp,
-              comparisons: llmDecision.compare,
-            });
-          } finally {
-            activeAgentRequests -= 1;
-          }
-
-          const duracaoMs = Date.now() - startedAt;
-
-          audit({
-            requestId,
-            usuario: userResult.data,
-            resultado: "sucesso",
-            toolsUtilizadas: compareResult.toolsUtilizadas,
-            quantidadeChamadas: compareResult.quantidadeChamadas,
-            continuacaoDetectada,
-            duracaoMs,
-          });
-
-          sendJson(response, 200, {
-            requestId,
-            resposta: compareResult.resposta,
-            fontes: compareResult.fontes,
-            dadosConsultados: compareResult.dadosConsultados,
-            toolsUtilizadas: compareResult.toolsUtilizadas,
-            quantidadeChamadas: compareResult.quantidadeChamadas,
-            perguntaEfetiva,
-            duracaoMs,
-          });
-          return;
-        }
-
-        let decidedResult;
-
-        activeAgentRequests += 1;
-
-        try {
-          decidedResult = await runDecidedTool({
-            mcp,
-            ollama,
-            name: llmDecision.toolName,
-            args: llmDecision.args,
-            synthesize: llmDecision.synthesize ?? null,
-            signal,
-          });
-        } finally {
-          activeAgentRequests -= 1;
-        }
-
-        const duracaoMs = Date.now() - startedAt;
-
-        audit({
-          requestId,
-          usuario: userResult.data,
-          resultado: "sucesso",
-          toolsUtilizadas: decidedResult.toolsUtilizadas,
-          quantidadeChamadas: decidedResult.quantidadeChamadas,
-          continuacaoDetectada,
-          duracaoMs,
-        });
-
-        sendJson(response, 200, {
-          requestId,
-          resposta: decidedResult.resposta,
-          fontes: decidedResult.fontes,
-          dadosConsultados: decidedResult.dadosConsultados,
-          toolsUtilizadas: decidedResult.toolsUtilizadas,
-          quantidadeChamadas: decidedResult.quantidadeChamadas,
-          perguntaEfetiva,
-          duracaoMs,
-        });
-        return;
-      }
-
-      let routeToolArguments = null;
-
-      if (
-        toolDecision.route !== null
-        && toolDecision.route.toolNames.length === 1
-      ) {
-        const routeToolName =
-          toolDecision.route.toolNames[0];
-
-        const buildResult = buildToolArguments(
-          routeToolName,
-          toolDecision.route.entities,
-          toolDecision.tools,
-        );
-
-        const toolUnavailable =
-          buildResult.errors.some(
-            ({ code }) =>
-              code === "tool_not_available",
-          );
-
-        if (toolUnavailable) {
-          throw new AgentError(
-            "tool_rota_indisponivel",
-            "A tool selecionada não está disponível.",
-          );
-        }
-
-        if (!buildResult.ok) {
-          const invalidFields = [
-            ...new Set(
-              buildResult.errors
-                .map(({ field }) => field)
-                .filter(Boolean),
-            ),
-          ];
-
-          const duracaoMs = Date.now() - startedAt;
-          // "min"/"max" do próprio erro (achado testando o lote de
-          // perguntas ao vivo): "Liste os 1000 tickets mais antigos."
-          // (limite acima do máximo da tool) virava "Revise os seguintes
-          // filtros: limite." — genérico demais, não diz qual é o limite
-          // aceito. Cada campo ganha o intervalo aceito quando o erro é
-          // exatamente de limite (min/max presentes), senão cai no texto
-          // antigo (campo sozinho, ex.: campo obrigatório ausente).
-          const fieldsText = invalidFields.length > 0
-            ? invalidFields
-                .map((field) => {
-                  const erroDoCampo = buildResult.errors.find((erro) => erro.field === field);
-
-                  if (erroDoCampo?.min !== undefined || erroDoCampo?.max !== undefined) {
-                    const minTexto = erroDoCampo.min !== undefined ? `pelo menos ${erroDoCampo.min}` : null;
-                    const maxTexto = erroDoCampo.max !== undefined ? `no máximo ${erroDoCampo.max}` : null;
-                    const faixa = [minTexto, maxTexto].filter(Boolean).join(" e ");
-
-                    return `${field} (precisa ser ${faixa})`;
-                  }
-
-                  return field;
-                })
-                .join(", ")
-            : "filtros";
-
-          audit({
-            requestId,
-            usuario: userResult.data,
-            resultado: "esclarecimento",
-            motivo: "filtros_rota_invalidos",
-            quantidadeToolsDisponibilizadas: 0,
-            toolsUtilizadas: [],
-            quantidadeChamadas: 0,
-            continuacaoDetectada,
-            duracaoMs,
-          });
-
-          sendJson(response, 200, {
-            requestId,
-            resposta:
-              `Revise os seguintes filtros: ${fieldsText}.`,
-            fontes: [],
-            dadosConsultados: [],
-            toolsUtilizadas: [],
-            quantidadeChamadas: 0,
-            esclarecimento: true,
-            perguntaEfetiva,
-            duracaoMs,
-          });
-
-          return;
-        }
-
-        routeToolArguments = {
-          name: routeToolName,
-          args: buildResult.args,
-        };
-      }
-
-      // Separado de routeToolArguments de propósito — este tem outro
-      // contrato (é comparado com o nome da tool que o modelo propôs,
-      // dentro de resolveToolArguments); `synthesize` só diz pro loop se,
-      // depois da tool já ter respondido com sucesso, vale a pena fazer
-      // uma 2ª chamada ao Ollama pra sintetizar o resultado em texto.
-      const synthesize = toolDecision.route?.synthesize ?? null;
-
-      // Cosmético, não auditado (diferente de synthesize): só diz pro
-      // frontend qual visão abrir por padrão (texto/tabela/gráfico), não
-      // muda nenhum dado consultado nem passa por runAgent.
-      const visualizacaoPreferida = toolDecision.route?.formato ?? null;
-
-      // Diferente de `formato`, passa por runAgent de verdade — quem decide
-      // incluir ou não a descrição de cada ticket é o formatter, chamado lá
-      // dentro, não o server.
-      const verbosidade = toolDecision.route?.verbosidade ?? null;
-
-      if (
-        activeAgentRequests
-        >= config.AGENT_MAX_CONCURRENT_REQUESTS
-      ) {
+      if (activeAgentRequests >= config.AGENT_MAX_CONCURRENT_REQUESTS) {
         const duracaoMs = Date.now() - startedAt;
 
         audit({
@@ -919,18 +439,6 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      // Sem isso, cancelar a pergunta no navegador não parava nada no
-      // servidor: a chamada ao Ollama (até 2, com a síntese) continuava
-      // rodando sozinha até o timeout de 5 minutos, segurando a única vaga
-      // de concorrência (AGENT_MAX_CONCURRENT_REQUESTS=1) e o CPU inteiro —
-      // achado ao vivo (lote de perguntas): cancelar um "resumo executivo"
-      // demorado deixava o PC fazendo barulho e impedia até reiniciar o
-      // backend em seguida. Escuta em `response` (não em `request`) de
-      // propósito — testado ao vivo que `request.on("close")` não dispara
-      // nesse cenário (o corpo da requisição já foi todo recebido antes
-      // daqui), enquanto `response.on("close")` dispara tanto num
-      // cancelamento quanto numa resposta normal — o `!response.writableEnded`
-      // evita abortar à toa depois que a resposta já foi enviada com sucesso.
       const disconnectController = new AbortController();
 
       response.on("close", () => {
@@ -944,23 +452,103 @@ const server = http.createServer(async (request, response) => {
         disconnectController.signal,
       ]);
 
-      const selectedOllamaTools =
-        toolDecision.tools;
-
-      let agentResult;
+      let llmDecision;
 
       activeAgentRequests += 1;
 
       try {
-        agentResult = await runAgent({
+        llmDecision = await interpretQuestion({
+          llm,
+          llmTools,
           pergunta: perguntaEfetiva,
+          signal,
+        });
+      } finally {
+        activeAgentRequests -= 1;
+      }
+
+      if (llmDecision.resposta !== undefined) {
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "esclarecimento",
+          motivo: "llm_sem_tool",
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          continuacaoDetectada,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta: llmDecision.resposta,
+          fontes: [],
+          dadosConsultados: [],
+          toolsUtilizadas: [],
+          quantidadeChamadas: 0,
+          esclarecimento: true,
+          perguntaEfetiva,
+          duracaoMs,
+        });
+        return;
+      }
+
+      // O Claude decidiu fazer 2+ chamadas da mesma tool na mesma resposta
+      // (comparação entre itens nomeados, ver system prompt em
+      // agent/llm-router.js) — runCompare/formatComparison já são
+      // genéricos pra N itens.
+      if (llmDecision.compare !== undefined) {
+        let compareResult;
+
+        activeAgentRequests += 1;
+
+        try {
+          compareResult = await runCompare({
+            mcp,
+            comparisons: llmDecision.compare,
+          });
+        } finally {
+          activeAgentRequests -= 1;
+        }
+
+        const duracaoMs = Date.now() - startedAt;
+
+        audit({
+          requestId,
+          usuario: userResult.data,
+          resultado: "sucesso",
+          toolsUtilizadas: compareResult.toolsUtilizadas,
+          quantidadeChamadas: compareResult.quantidadeChamadas,
+          continuacaoDetectada,
+          duracaoMs,
+        });
+
+        sendJson(response, 200, {
+          requestId,
+          resposta: compareResult.resposta,
+          fontes: compareResult.fontes,
+          dadosConsultados: compareResult.dadosConsultados,
+          toolsUtilizadas: compareResult.toolsUtilizadas,
+          quantidadeChamadas: compareResult.quantidadeChamadas,
+          perguntaEfetiva,
+          duracaoMs,
+        });
+        return;
+      }
+
+      let decidedResult;
+
+      activeAgentRequests += 1;
+
+      try {
+        decidedResult = await runDecidedTool({
           mcp,
-          ollama,
-          ollamaTools: selectedOllamaTools,
-          routeToolArguments,
-          synthesize,
-          verbosidade,
-          maxToolCalls: config.AGENT_MAX_TOOL_CALLS,
+          llm,
+          name: llmDecision.toolName,
+          args: llmDecision.args,
+          synthesize: llmDecision.synthesize ?? null,
           signal,
         });
       } finally {
@@ -973,21 +561,19 @@ const server = http.createServer(async (request, response) => {
         requestId,
         usuario: userResult.data,
         resultado: "sucesso",
-        quantidadeToolsDisponibilizadas: selectedOllamaTools.length,
-        toolsUtilizadas: agentResult.toolsUtilizadas,
-        quantidadeChamadas: agentResult.quantidadeChamadas,
+        toolsUtilizadas: decidedResult.toolsUtilizadas,
+        quantidadeChamadas: decidedResult.quantidadeChamadas,
         continuacaoDetectada,
         duracaoMs,
       });
 
       sendJson(response, 200, {
         requestId,
-        resposta: agentResult.resposta,
-        fontes: agentResult.fontes,
-        dadosConsultados: agentResult.dadosConsultados,
-        toolsUtilizadas: agentResult.toolsUtilizadas,
-        quantidadeChamadas: agentResult.quantidadeChamadas,
-        visualizacaoPreferida,
+        resposta: decidedResult.resposta,
+        fontes: decidedResult.fontes,
+        dadosConsultados: decidedResult.dadosConsultados,
+        toolsUtilizadas: decidedResult.toolsUtilizadas,
+        quantidadeChamadas: decidedResult.quantidadeChamadas,
         perguntaEfetiva,
         duracaoMs,
       });

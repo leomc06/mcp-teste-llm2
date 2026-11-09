@@ -106,7 +106,7 @@ test("chat() repassa as tools formatadas quando presentes", async () => {
   });
 });
 
-test("chat() converte bloco tool_use em tool_calls no formato normalizado (igual ao do Ollama)", async () => {
+test("chat() converte bloco tool_use em tool_calls no formato normalizado", async () => {
   mock.method(globalThis, "fetch", async () =>
     jsonResponse({
       role: "assistant",

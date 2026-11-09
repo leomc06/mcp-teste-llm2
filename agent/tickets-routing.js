@@ -4497,7 +4497,7 @@ function createCompareDecision(intent, comparisons) {
 // resumo_operacional_tickets num parágrafo corrido, em vez de só exibir
 // os números. Lista de gatilhos deliberadamente conservadora: perder um
 // caso só mantém o comportamento de hoje (números puros, seguro); um
-// falso positivo só gasta 1 chamada extra ao Ollama.
+// falso positivo só gasta 1 chamada extra ao Claude.
 // "Resumo por Gestão." (achado testando o lote de perguntas ao vivo, com
 // dados reais): "Gestão" é o nome real de uma ÁREA e de um DEPARTAMENTO no
 // catálogo — a palavra "gestao" (normalizada) também era um dos gatilhos
@@ -4524,13 +4524,13 @@ function isResumoExecutivoIntentFromText(text) {
   );
 }
 
-// Exportada pro orquestrador do LLM de nuvem (agent/llm-router.js, Fase 3
-// do plano de migração): decide se a resposta de buscar_ticket_por_numero/
-// resumo_operacional_tickets deve ganhar uma síntese em prosa (via Ollama
-// local, que processa o conteúdo real do ticket) — essa decisão continua
-// puramente textual/determinística mesmo quando quem escolhe a TOOL é o
-// LLM, porque não depende de entender a pergunta como um todo, só de
-// reconhecer o pedido explícito de "resumo".
+// Exportada pro orquestrador do LLM de nuvem (agent/llm-router.js): decide
+// se a resposta de buscar_ticket_por_numero/resumo_operacional_tickets deve
+// ganhar uma síntese em prosa (via Claude, que processa o conteúdo real do
+// ticket) — essa decisão continua puramente textual/determinística mesmo
+// quando quem escolhe a TOOL também é o Claude, porque não depende de
+// entender a pergunta como um todo, só de reconhecer o pedido explícito de
+// "resumo".
 export function isResumoExecutivoIntent(pergunta) {
   return isResumoExecutivoIntentFromText(normalizeText(pergunta));
 }
@@ -6360,7 +6360,7 @@ function routeTicketQuestionCore(pergunta) {
   // resumo_operacional_tickets num parágrafo corrido, em vez de só exibir
   // os números. Lista de gatilhos deliberadamente conservadora: perder um
   // caso só mantém o comportamento de hoje (números puros, seguro); um
-  // falso positivo só gasta 1 chamada extra ao Ollama.
+  // falso positivo só gasta 1 chamada extra ao Claude.
   // "Resumo por Gestão." (achado testando o lote de perguntas ao vivo, com
   // dados reais): "Gestão" é o nome real de uma ÁREA e de um DEPARTAMENTO no
   // catálogo — a palavra "gestao" (normalizada) também era um dos gatilhos

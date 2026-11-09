@@ -655,7 +655,9 @@ fundo nem confirmado com um par diferente.
      1`). Causa: em `agent/agent-loop.js`, mesmo quando o roteador
      determinístico já decidiu sozinho qual tool/argumentos usar
      (`routeToolArguments`), o loop ainda consulta o modelo local (Ollama)
-     de verdade — e o texto da continuação mesclada (2 perguntas
+     de verdade (nota: esse caminho — `routeToolArguments`/Ollama — foi
+     removido na Fase 5 do plano de migração; achado histórico, válido na
+     época) — e o texto da continuação mesclada (2 perguntas
      concatenadas) às vezes faz o modelo pedir a tool 2 VEZES na mesma
      troca; cada chamada é forçada a usar os MESMOS argumentos do roteador
      (`resolveToolArguments`), então as 2 chamadas são idênticas e

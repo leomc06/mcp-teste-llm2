@@ -15,13 +15,13 @@ function mcpMock(dados) {
   };
 }
 
-test("runDecidedTool chama a tool 1 vez só, com os argumentos recebidos, sem chamar o Ollama", async () => {
+test("runDecidedTool chama a tool 1 vez só, com os argumentos recebidos, sem chamar o LLM", async () => {
   const mcp = mcpMock({ total: 5, abertos: 2, fechados: 3, resumo: [] });
-  const ollama = { chat: async () => { throw new Error("não deveria ser chamado"); } };
+  const llm = { chat: async () => { throw new Error("não deveria ser chamado"); } };
 
   const result = await runDecidedTool({
     mcp,
-    ollama,
+    llm,
     name: "resumo_tickets_por_status",
     args: { area: "Suporte" },
   });
@@ -41,7 +41,7 @@ test("runDecidedTool lança AgentError se a tool retornar isError", async () => 
   };
 
   await assert.rejects(
-    () => runDecidedTool({ mcp, ollama: {}, name: "listar_tickets", args: {} }),
+    () => runDecidedTool({ mcp, llm: {}, name: "listar_tickets", args: {} }),
     (error) => error instanceof AgentError && error.code === "falha_mcp",
   );
 });
@@ -54,7 +54,7 @@ test("runDecidedTool lança AgentError se a chamada MCP falhar (exceção de tra
   };
 
   await assert.rejects(
-    () => runDecidedTool({ mcp, ollama: {}, name: "listar_tickets", args: {} }),
+    () => runDecidedTool({ mcp, llm: {}, name: "listar_tickets", args: {} }),
     (error) => error instanceof AgentError && error.code === "falha_mcp",
   );
 });
@@ -64,7 +64,7 @@ test("runDecidedTool coleta fontes (número de ticket) do resultado", async () =
 
   const result = await runDecidedTool({
     mcp,
-    ollama: {},
+    llm: {},
     name: "buscar_ticket_por_numero",
     args: { numero: 4830 },
   });
@@ -72,7 +72,7 @@ test("runDecidedTool coleta fontes (número de ticket) do resultado", async () =
   assert.deepEqual(result.fontes.map((fonte) => fonte.numero), [4830]);
 });
 
-test("runDecidedTool com synthesize chama o Ollama só pra sintetizar o resultado já obtido (nunca pra decidir a tool)", async () => {
+test("runDecidedTool com synthesize chama o LLM só pra sintetizar o resultado já obtido (nunca pra decidir a tool)", async () => {
   const mcp = mcpMock({
     encontrado: true,
     ticket: {
@@ -84,7 +84,7 @@ test("runDecidedTool com synthesize chama o Ollama só pra sintetizar o resultad
   });
 
   const chatCalls = [];
-  const ollama = {
+  const llm = {
     async chat({ messages }) {
       chatCalls.push(messages);
       return { message: { role: "assistant", content: "Resumo sintético do ticket." } };
@@ -93,7 +93,7 @@ test("runDecidedTool com synthesize chama o Ollama só pra sintetizar o resultad
 
   const result = await runDecidedTool({
     mcp,
-    ollama,
+    llm,
     name: "buscar_ticket_por_numero",
     args: { numero: 4830 },
     synthesize: "resumo_ticket",
@@ -103,12 +103,12 @@ test("runDecidedTool com synthesize chama o Ollama só pra sintetizar o resultad
   assert.match(result.resposta, /Resumo sintético do ticket\./);
 });
 
-test("runDecidedTool sem synthesize não chama o Ollama", async () => {
+test("runDecidedTool sem synthesize não chama o LLM", async () => {
   const mcp = mcpMock({ encontrado: true, ticket: { number: 4830 } });
   let chatCalled = false;
-  const ollama = { async chat() { chatCalled = true; return { message: { role: "assistant", content: "x" } }; } };
+  const llm = { async chat() { chatCalled = true; return { message: { role: "assistant", content: "x" } }; } };
 
-  await runDecidedTool({ mcp, ollama, name: "buscar_ticket_por_numero", args: { numero: 4830 } });
+  await runDecidedTool({ mcp, llm, name: "buscar_ticket_por_numero", args: { numero: 4830 } });
 
   assert.equal(chatCalled, false);
 });
