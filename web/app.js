@@ -412,9 +412,19 @@ function renderResponse(data) {
   renderViewToggle(shape);
   renderRefinementChips(shape);
 
+  // "grafico" só é uma visão de verdade pras formas "resumo"/"operacional"/
+  // "individual" (mesma condição que já escondia o botão de gráfico em
+  // renderViewToggle, linha abaixo) — pra "lista"/"catalogo" (ex.: "liste os
+  // tickets abertos em gráfico") o botão nem aparece, mas sem essa checagem
+  // aqui a interface tentava trocar pra uma aba de gráfico inexistente/vazia
+  // mesmo assim, parecendo que o pedido de gráfico "não funcionou".
   const viewPreferida = data.visualizacaoPreferida;
-  if (shape && (viewPreferida === "tabela" || viewPreferida === "grafico")) {
-    setActiveView(viewPreferida);
+  const chartDisponivel = shape && shape.kind !== "lista" && shape.kind !== "catalogo";
+
+  if (viewPreferida === "tabela" && shape) {
+    setActiveView("tabela");
+  } else if (viewPreferida === "grafico" && chartDisponivel) {
+    setActiveView("grafico");
   }
 
   responsePanel.hidden = false;
