@@ -6,7 +6,7 @@ import { createMcpClient } from "./mcp-client.js";
 import { createAnthropicClient } from "./llm-client.js";
 import { interpretQuestion } from "./llm-router.js";
 import { AgentError, runCompare, runDecidedTool } from "./agent-loop.js";
-import { routeTicketQuestion } from "./tickets-routing.js";
+import { detectFormatoSolicitado, routeTicketQuestion } from "./tickets-routing.js";
 import { isCapabilityQuestion, isExternalActionRequest, isWriteRequest } from "./write-policy.js";
 import { detectsContinuation, mergeContinuation } from "./continuation.js";
 import { serveStaticFile } from "./static-files.js";
@@ -391,6 +391,13 @@ const server = http.createServer(async (request, response) => {
       // esclarecimento direto, sem chamar o Claude.
       const route = routeTicketQuestion(perguntaEfetiva);
 
+      // Cosmético, nunca decidido pelo Claude (nem inferido por ele) — só
+      // diz pro frontend abrir direto em tabela/gráfico quando o usuário
+      // pediu EXPLICITAMENTE isso na frase ("em tabela"/"gráfico"...);
+      // sem pedido explícito, fica undefined e a interface abre em texto
+      // por padrão, como sempre (o toggle manual continua disponível).
+      const formatoSolicitado = detectFormatoSolicitado(perguntaEfetiva) ?? null;
+
       if (route?.clarification) {
         const duracaoMs = Date.now() - startedAt;
 
@@ -532,6 +539,7 @@ const server = http.createServer(async (request, response) => {
           dadosConsultados: compareResult.dadosConsultados,
           toolsUtilizadas: compareResult.toolsUtilizadas,
           quantidadeChamadas: compareResult.quantidadeChamadas,
+          visualizacaoPreferida: formatoSolicitado,
           perguntaEfetiva,
           duracaoMs,
         });
@@ -574,6 +582,7 @@ const server = http.createServer(async (request, response) => {
         dadosConsultados: decidedResult.dadosConsultados,
         toolsUtilizadas: decidedResult.toolsUtilizadas,
         quantidadeChamadas: decidedResult.quantidadeChamadas,
+        visualizacaoPreferida: formatoSolicitado,
         perguntaEfetiva,
         duracaoMs,
       });

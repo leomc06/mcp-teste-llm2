@@ -4323,6 +4323,16 @@ export function isBareFormatoRequest(pergunta) {
   return detectFormatoPreferido(text) !== undefined && !TICKET_DOMAIN_VOCABULARY_PATTERN.test(text);
 }
 
+// Exportada pro orquestrador do LLM de nuvem (agent/server.js): diz se o
+// usuário pediu EXPLICITAMENTE tabela/gráfico na frase ("em tabela", "faça
+// um gráfico", "por planilha"...) — nunca inferido/adivinhado, nem pelo
+// regex nem pelo Claude. undefined quando a frase não pede formato nenhum,
+// e nesse caso a interface abre em texto por padrão (sem auto-abrir em
+// tabela/gráfico à toa).
+export function detectFormatoSolicitado(pergunta) {
+  return detectFormatoPreferido(normalizeText(pergunta));
+}
+
 // "Faz uma análise mais aprofundada nisso." depois de um resumo (achado
 // testando o lote de perguntas ao vivo — Lote 16, bug T17): mesmo problema
 // do isBareFormatoRequest acima, só que pedindo mais PROFUNDIDADE de
